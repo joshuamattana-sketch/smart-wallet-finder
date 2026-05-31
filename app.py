@@ -146,8 +146,120 @@ PAPER_EVENTS_FILE = DATA_DIR / "paper_trading_events.json"
 MY_WALLETS_FILE = DATA_DIR / "my_wallets.json"
 
 
-from storage import (load_json_list, save_json_list, load_json_dict, 
-                     save_json_dict, log_event, storage_status)
+
+# ─────────────────────────────────────────
+# SUPABASE STORAGE LAYER (inline)
+# ─────────────────────────────────────────
+from datetime import datetime as _dt
+
+@st.cache_resource
+def _get_sb():
+    try:
+        from supabase import create_client
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_KEY", "")
+        if url and key:
+            return create_client(url, key)
+    except Exception:
+        pass
+    return None
+
+def _sb_now():
+    return _dt.utcnow().isoformat()
+
+def _sb_load(key):
+    try:
+        sb = _get_sb()
+        if not sb:
+            return None
+        res = sb.table("app_state").select("value").eq("key", key).execute()
+        if res.data:
+            return json.loads(res.data[0]["value"])
+    except Exception:
+        pass
+    return None
+
+def _sb_save(key, value):
+    try:
+        sb = _get_sb()
+        if not sb:
+            return False
+        sb.table("app_state").upsert({
+            "key": key,
+            "value": json.dumps(value, default=str),
+            "updated_at": _sb_now()
+        }).execute()
+        return True
+    except Exception:
+        return False
+
+def load_json_list(file_path):
+    result = _sb_load(file_path.stem)
+    if result is not None:
+        return result if isinstance(result, list) else []
+    try:
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+def save_json_list(file_path, data):
+    _sb_save(file_path.stem, data)
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+def load_json_dict(file_path):
+    result = _sb_load(file_path.stem)
+    if result is not None:
+        return result if isinstance(result, dict) else {}
+    try:
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def save_json_dict(file_path, data):
+    _sb_save(file_path.stem, data)
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+def log_event(event_type, data):
+    try:
+        sb = _get_sb()
+        if sb:
+            sb.table("events").insert({
+                "event_type": event_type,
+                "data": json.dumps(data, default=str),
+                "created_at": _sb_now()
+            }).execute()
+    except Exception:
+        pass
+
+def storage_status():
+    sb = _get_sb()
+    if sb:
+        try:
+            sb.table("app_state").select("key").limit(1).execute()
+            return {"connected": True, "mode": "Supabase"}
+        except Exception:
+            pass
+    return {"connected": False, "mode": "Local JSON"}
+
+# ─────────────────────────────────────────
 
 # Early numeric helpers used during session-state boot.
 # The full helpers are defined again later, but these keep startup safe.
