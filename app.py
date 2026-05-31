@@ -5902,32 +5902,19 @@ require_beta_login()
 
 st.markdown("""
 <style>
-/* ════ GLOBAL DESIGN SYSTEM ════ */
-
-/* Buttons */
+/* ═══ GLOBAL DESIGN SYSTEM ═══ */
 div.stButton > button {
     border-radius: 10px !important;
     font-weight: 500 !important;
     font-size: 13px !important;
-    letter-spacing: 0.01em !important;
-    transition:
-        background 0.12s ease,
-        color 0.12s ease,
-        border-color 0.12s ease,
-        transform 0.09s cubic-bezier(.34,1.56,.64,1),
-        box-shadow 0.12s ease !important;
+    transition: background 0.12s ease, color 0.12s ease,
+                border-color 0.12s ease, box-shadow 0.12s ease !important;
 }
 div.stButton > button:hover {
     background: rgba(124,92,252,0.13) !important;
     border-color: rgba(124,92,252,0.55) !important;
     color: #c4b5fd !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 14px rgba(124,92,252,0.18) !important;
-}
-div.stButton > button:active {
-    transform: scale(0.95) !important;
-    background: rgba(124,92,252,0.22) !important;
-    box-shadow: none !important;
+    box-shadow: 0 3px 12px rgba(124,92,252,0.18) !important;
 }
 div.stButton > button[kind="primary"] {
     background: rgba(124,92,252,0.20) !important;
@@ -5936,43 +5923,15 @@ div.stButton > button[kind="primary"] {
 }
 div.stButton > button[kind="primary"]:hover {
     background: rgba(124,92,252,0.32) !important;
-    box-shadow: 0 0 22px rgba(124,92,252,0.30) !important;
+    box-shadow: 0 0 22px rgba(124,92,252,0.28) !important;
 }
-
-/* Sidebar nav */
-section[data-testid="stSidebar"] div.stButton > button {
-    background: transparent !important;
-    border: 1px solid transparent !important;
-    text-align: left !important;
-    color: #7a7b82 !important;
-    border-radius: 10px !important;
-    padding: 8px 12px !important;
-    margin-bottom: 2px !important;
-    font-size: 13px !important;
-    box-shadow: none !important;
-}
-section[data-testid="stSidebar"] div.stButton > button:hover {
-    background: rgba(124,92,252,0.12) !important;
-    border-color: rgba(124,92,252,0.28) !important;
-    color: #d0d0d5 !important;
-    transform: none !important;
-    box-shadow: none !important;
-}
-section[data-testid="stSidebar"] div.stButton > button:active {
-    transform: scale(0.97) !important;
-    background: rgba(124,92,252,0.20) !important;
-}
-
-/* Page fade-in */
 [data-testid="stAppViewBlockContainer"] {
-    animation: pgIn 0.20s ease both;
+    animation: pgIn 0.22s ease both;
 }
 @keyframes pgIn {
     from { opacity:0; transform:translateY(6px); }
     to   { opacity:1; transform:translateY(0); }
 }
-
-/* Metrics */
 [data-testid="stMetric"] {
     border-radius: 14px !important;
     transition: transform 0.14s ease, box-shadow 0.14s ease !important;
@@ -5981,8 +5940,6 @@ section[data-testid="stSidebar"] div.stButton > button:active {
     transform: translateY(-3px) !important;
     box-shadow: 0 6px 22px rgba(124,92,252,0.18) !important;
 }
-
-/* Text inputs */
 div.stTextInput input {
     border-radius: 10px !important;
     transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
@@ -5991,39 +5948,33 @@ div.stTextInput input:focus {
     border-color: rgba(124,92,252,0.7) !important;
     box-shadow: 0 0 0 3px rgba(124,92,252,0.14) !important;
 }
-
-/* Tabs */
 button[data-baseweb="tab"] {
     border-radius: 8px 8px 0 0 !important;
-    transition: background 0.12s ease, color 0.12s ease !important;
     font-weight: 500 !important;
+    transition: background 0.12s ease, color 0.12s ease !important;
 }
 button[data-baseweb="tab"]:hover {
     background: rgba(124,92,252,0.09) !important;
     color: #c4b5fd !important;
 }
-
-/* Expanders */
-details > summary {
-    border-radius: 10px !important;
-    transition: background 0.12s ease !important;
-}
-details > summary:hover {
-    background: rgba(124,92,252,0.07) !important;
-}
-
-/* Sliders */
-div.stSlider [data-testid="stThumbValue"] {
-    background: rgba(124,92,252,0.85) !important;
-}
-
-/* Selectbox */
 div.stSelectbox > div > div {
     border-radius: 10px !important;
     transition: border-color 0.12s ease !important;
 }
-div.stSelectbox > div > div:hover {
-    border-color: rgba(124,92,252,0.5) !important;
+section[data-testid="stSidebar"] div.stButton > button {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    text-align: left !important;
+    color: #7a7b82 !important;
+    border-radius: 10px !important;
+    font-size: 13px !important;
+    box-shadow: none !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:hover {
+    background: rgba(124,92,252,0.12) !important;
+    border-color: rgba(124,92,252,0.28) !important;
+    color: #d0d0d5 !important;
+    box-shadow: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -10000,6 +9951,7 @@ def render_wallet_documentation_cards(limit=10, only_pinned=False, compact=True,
                 with b2:
                     if st.button("Open", key=journal_button_key("wallet_doc_open", row_idx, full_wallet, key_scope)):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
                         st.rerun()
@@ -10420,6 +10372,7 @@ def render_monitor_wallet_memory_cards(wallet_df, limit=8):
                 with b3:
                     if st.button("Open wallet", key=f"monitor_mem_open_{row_idx}_{full_wallet}"):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
                         st.rerun()
@@ -11125,27 +11078,32 @@ with safe_section(section):
     elif section == "Smart Wallets":
         st.markdown("""
         <style>
-        .sw-page-title { font-size:24px; font-weight:600; color:#f5f5f7; padding:28px 0 4px; }
-        .sw-page-sub { font-size:14px; color:#5a5b62; margin-bottom:20px; }
-        .sw-scan-box { background:#1a1b1f; border:1px solid #2a2b30; border-radius:16px; padding:20px; margin-bottom:16px; }
-        .sw-result { background:#1e1f23; border:1px solid #2a2b30; border-radius:14px; padding:20px; margin-bottom:12px; }
-        .sw-result-name { font-size:15px; font-weight:600; color:#f5f5f7; margin-bottom:2px; }
-        .sw-result-addr { font-size:12px; color:#4a4b52; margin-bottom:10px; font-family:monospace; }
-        .sw-badge { display:inline-block; padding:4px 12px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:0.04em; margin-bottom:12px; }
-        .sw-badge.alpha { background:rgba(124,92,252,0.15); color:#a78bfa; border:1px solid rgba(124,92,252,0.3); }
-        .sw-badge.watch { background:rgba(34,197,94,0.12); color:#4ade80; border:1px solid rgba(34,197,94,0.25); }
-        .sw-badge.paper { background:rgba(251,191,36,0.12); color:#fbbf24; border:1px solid rgba(251,191,36,0.25); }
-        .sw-badge.risky { background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); }
-        .sw-stats { display:flex; gap:16px; flex-wrap:wrap; }
-        .sw-stat { display:flex; flex-direction:column; }
-        .sw-stat span { font-size:11px; color:#4a4b52; }
-        .sw-stat b { font-size:14px; font-weight:600; color:#c0c0c8; }
-        .sw-label { font-size:11px; font-weight:600; color:#3a3b42; letter-spacing:0.07em; text-transform:uppercase; margin:20px 0 8px; }
+        .sw-page-title{font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px}
+        .sw-page-sub{font-size:14px;color:#5a5b62;margin-bottom:20px}
+        .sw-result{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:20px;margin-bottom:12px}
+        .sw-result-name{font-size:15px;font-weight:600;color:#f5f5f7;margin-bottom:2px}
+        .sw-result-addr{font-size:12px;color:#4a4b52;margin-bottom:10px;font-family:monospace}
+        .sw-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:12px}
+        .sw-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
+        .sw-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
+        .sw-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
+        .sw-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+        .sw-stats{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px}
+        .sw-stat{display:flex;flex-direction:column}
+        .sw-stat span{font-size:11px;color:#4a4b52}
+        .sw-stat b{font-size:14px;font-weight:600;color:#c0c0c8}
+        .sw-label{font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.07em;text-transform:uppercase;margin:20px 0 8px}
+        .sw-recent-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid #2a2b30;border-radius:10px;margin-bottom:6px}
+        .sw-recent-name{font-size:13px;color:#c0c0c8;font-weight:500}
+        .sw-recent-addr{font-size:11px;color:#4a4b52;font-family:monospace}
         </style>
         """, unsafe_allow_html=True)
 
         st.markdown('<div class="sw-page-title">Smart Wallets</div>', unsafe_allow_html=True)
         st.markdown('<div class="sw-page-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
+
+        # Pre-fill from session state if wallet was opened from elsewhere
+        _prefill = st.session_state.get("wallet_address_input", "")
 
         tab_scan, tab_disc, tab_recent = st.tabs(["Scan wallet", "Discover from token", "Recent"])
 
@@ -11154,6 +11112,7 @@ with safe_section(section):
             with col_in:
                 wallet_addr = st.text_input(
                     "Wallet address",
+                    value=_prefill,
                     placeholder="Paste Solana wallet address...",
                     label_visibility="collapsed",
                     key="sw_addr_input"
@@ -11161,13 +11120,16 @@ with safe_section(section):
             with col_btn:
                 do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
 
-            if do_scan and wallet_addr.strip():
+            # Auto-scan if pre-filled from Journal/Watchlist "Open" button
+            _auto_scan = st.session_state.pop("_sw_auto_scan", False)
+
+            if (do_scan or _auto_scan) and wallet_addr.strip():
                 st.session_state.wallet_address_input = wallet_addr.strip()
                 add_recent_item("recent_wallets", wallet_addr.strip())
                 with st.spinner("Fetching from Helius..."):
                     wtx, werr = fetch_wallet_transactions(wallet_addr.strip())
                 if werr or wtx is None or wtx.empty:
-                    st.error("Could not fetch wallet. Check address or Helius API key.")
+                    st.error("Could not fetch wallet data. Check the address or your Helius API key.")
                 else:
                     ttx, tfr, tsw, tun, tlvl = summarize_wallet_activity(wtx)
                     wsig, wscore, wreason = get_wallet_signal(ttx, tfr, tsw, tun)
@@ -11191,7 +11153,7 @@ with safe_section(section):
                         <div class="sw-stats">
                             <div class="sw-stat"><span>Score</span><b>{sc}/100</b></div>
                             <div class="sw-stat"><span>Signal</span><b>{wsig}</b></div>
-                            <div class="sw-stat"><span>Total Tx</span><b>{ttx}</b></div>
+                            <div class="sw-stat"><span>Tx</span><b>{ttx}</b></div>
                             <div class="sw-stat"><span>Swaps</span><b>{tsw}</b></div>
                             <div class="sw-stat"><span>Volume</span><b>{format_usd(vol)}</b></div>
                             <div class="sw-stat"><span>Largest</span><b>{format_usd(lrg)}</b></div>
@@ -11225,14 +11187,15 @@ with safe_section(section):
                             st.session_state.main_navigation = "Wallet Journal"
                             st.rerun()
 
-            elif st.session_state.get("wallet_address_input"):
-                st.caption(f"Last scanned: {compact_address(st.session_state.wallet_address_input)} — paste a new address to scan again.")
+            elif _prefill and not do_scan:
+                st.caption(f"Pre-loaded: {compact_address(_prefill)} — click Scan to analyse.")
 
         with tab_disc:
-            st.caption("Find wallets that bought a token early — paste a token mint address.")
+            st.caption("Find wallets that bought early — paste a token mint address.")
             dc1, dc2 = st.columns([0.8, 0.2])
             with dc1:
-                mint_in = st.text_input("Token mint", placeholder="Paste token mint...", label_visibility="collapsed", key="sw_mint_input")
+                mint_in = st.text_input("Token mint", placeholder="Paste token mint...",
+                                        label_visibility="collapsed", key="sw_mint_input")
             with dc2:
                 do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
 
@@ -11247,8 +11210,7 @@ with safe_section(section):
                 else:
                     st.success(f"Found {len(disc)} early wallets.")
                     if isinstance(disc, list) and disc and isinstance(disc[0], dict):
-                        disc_df = pd.DataFrame(disc)
-                        st.dataframe(disc_df.head(15), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(disc).head(15), use_container_width=True, hide_index=True)
                     else:
                         for w in disc[:10]:
                             st.code(str(w))
@@ -11256,17 +11218,25 @@ with safe_section(section):
         with tab_recent:
             recent_ws = st.session_state.get("recent_wallets", [])
             if not recent_ws:
-                st.info("No recently scanned wallets. Scan one first.")
+                st.info("No recently scanned wallets yet.")
             else:
                 st.markdown('<div class="sw-label">Recently scanned</div>', unsafe_allow_html=True)
                 for rw in recent_ws[:10]:
                     rw_str = str(rw).strip()
-                    r1, r2 = st.columns([0.8, 0.2])
+                    r1, r2 = st.columns([0.82, 0.18])
                     with r1:
-                        st.markdown(f"`{compact_address(rw_str, 10, 6)}` · {wallet_display_name(rw_str)}")
+                        st.markdown(f"""
+                        <div class="sw-recent-row">
+                            <div>
+                                <div class="sw-recent-name">{wallet_display_name(rw_str)}</div>
+                                <div class="sw-recent-addr">{compact_address(rw_str, 10, 6)}</div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
                     with r2:
-                        if st.button("Load", key=f"sw_load_{rw_str[-8:]}", use_container_width=True):
+                        if st.button("Open", key=f"sw_load_{rw_str[-8:]}", use_container_width=True):
                             st.session_state.wallet_address_input = rw_str
+                            st.session_state._sw_auto_scan = True
                             st.rerun()
 
 
@@ -11629,6 +11599,7 @@ with safe_section(section):
                 with recent_open_col:
                     if st.button("Open", key=f"recent_open_wallet_{index}_{full_wallet}", type="secondary"):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
                         st.rerun()
@@ -11657,8 +11628,8 @@ with safe_section(section):
 
 
     elif section == "Watchlist":
-        st.title("Watchlist")
-        st.caption("Dein Kontrollzentrum: erst Überblick, dann Aktionen, Details nur aufklappen wenn du sie brauchst.")
+        st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Watchlist</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">Your radar — wallets worth watching, sorted by activity.</p>', unsafe_allow_html=True)
 
         with st.expander("Start here: How to use the Watchlist", expanded=False):
             st.markdown(
@@ -12101,7 +12072,7 @@ with safe_section(section):
 
     elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
         st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Token Finder</p>', unsafe_allow_html=True)
-        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:20px;">DexScreener radar — find fresh tokens early, then trace which wallets bought in first.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:20px;">DexScreener radar — find early tokens, trace which wallets bought first.</p>', unsafe_allow_html=True)
 
         st.markdown(
             """
@@ -12681,8 +12652,8 @@ with safe_section(section):
 
     elif section == "Paper Trading":
         with safe_section("Paper Trading"):
-            st.title("Paper Trading")
-            st.caption("Fake wallet, real market prices: test journal-copy ideas without connecting a real wallet or risking money.")
+            st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Paper Trading</p>', unsafe_allow_html=True)
+            st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">Fake money, real prices — test wallet ideas before risking anything real.</p>', unsafe_allow_html=True)
 
             st.markdown(
                 """
@@ -13092,8 +13063,8 @@ with safe_section(section):
 
     elif section == "Wallet Journal":
         with safe_section("Wallet Journal"):
-            st.title("Wallet Journal")
-            st.caption("Your beginner-friendly wallet thesis board: simple opinions, proof history, P/L estimates and clear next actions.")
+            st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Wallet Journal</p>', unsafe_allow_html=True)
+            st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">Your scouting book — wallets with evidence, verdicts and next steps.</p>', unsafe_allow_html=True)
 
             st.markdown(
                 """
