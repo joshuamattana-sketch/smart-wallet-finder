@@ -32,8 +32,9 @@ def copy_btn_html(text, label="Copy", short=True):
     text = str(text or "").strip()
     if not text: return ""
     display = f"{text[:6]}...{text[-4:]}" if short and len(text) > 20 else text
-    safe_text = text.replace("\\", "\\\\").replace("'", "\\'").replace('"', '&quot;')
-    return f'''<span class="copy-btn" onclick="window._copyAddr('{safe_text}','{label}')" title="{text}">{display} &#x2398;</span>'''
+    # Escape: replace backslash first, then single quotes
+    s = text.replace("\\", "\\\\").replace("'", "\\'")
+    return f'''<span class="copy-btn" onclick="window._copyAddr('{s}','{label}')" title="{text}">{display} &#x2398;</span>'''
 
 def human_error_message(section_name, error):
     return (
@@ -10705,11 +10706,15 @@ def render_wallet_candidate_row(row, idx, key_prefix="auto_wallets"):
         with b3:
             if st.button("Open", key=f"{key_prefix}_open_{idx}_{full_wallet}"):
                 st.session_state.wallet_address_input = full_wallet
+                st.session_state.sw_detail_wallet = full_wallet
+                st.session_state._sw_auto_scan = True
                 add_recent_item("recent_wallets", full_wallet)
-                st.session_state.section_override = "Smart Wallets"
+                st.session_state.main_navigation = "Smart Wallets"
                 st.rerun()
         with b4:
-            st.caption(read)
+            # Copy button for wallet address
+            _cpy = copy_btn_html(full_wallet, "Wallet address")
+            st.markdown(f'<div style="padding:8px 0;font-size:12px;color:#5a5b62">{_cpy} {read[:60]}</div>', unsafe_allow_html=True)
 
 def render_discovered_wallet_candidates(wallet_df, title="Wallet candidates", caption="Wallets found around filtered early tokens.", key_prefix="auto_wallets", limit=12):
     if wallet_df is None or wallet_df.empty:
@@ -11198,265 +11203,6 @@ with safe_section(section):
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-
-
-    elif section == "Smart Wallets":
-        st.markdown("""<style>
-.sw-title{font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px}
-.sw-sub{font-size:14px;color:#5a5b62;margin-bottom:20px}
-.sw-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:12px}
-.sw-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-.sw-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-.sw-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-.sw-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-.disc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:12px 0}
-.disc-card{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:14px;transition:border-color .15s,transform .12s}
-.disc-card:hover{border-color:#3a3b50;transform:translateY(-2px)}
-.disc-score{font-size:22px;font-weight:700;color:#a78bfa}
-.disc-score-lbl{font-size:10px;color:#4a4b52;text-align:right}
-.disc-name{font-size:12px;font-weight:600;color:#f5f5f7;font-family:monospace}
-.disc-rank{font-size:10px;color:#4a4b52;margin-top:2px}
-.disc-badge{display:inline-block;padding:3px 10px;border-radius:16px;font-size:10px;font-weight:700;margin:6px 0}
-.disc-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-.disc-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-.disc-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-.disc-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-.wd-name{font-size:22px;font-weight:600;color:#f5f5f7;margin-bottom:4px}
-.wd-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:700;margin-bottom:14px}
-.wd-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-.wd-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-.wd-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-.wd-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-.wd-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0}
-.wd-stat{background:#1e1f23;border:1px solid #2a2b30;border-radius:12px;padding:12px}
-.wd-stat span{display:block;font-size:10px;color:#4a4b52;margin-bottom:4px;text-transform:uppercase}
-.wd-stat b{display:block;font-size:17px;font-weight:600;color:#f5f5f7}
-.wd-reason{background:#1a1b1f;border:1px solid #2a2b30;border-left:3px solid rgba(124,92,252,.5);border-radius:10px;padding:14px;font-size:13px;color:#9090a0;line-height:1.6;margin-bottom:14px}
-.wd-reason b{color:#c0c0c8}
-.wd-tx{background:#1e1f23;border:1px solid #2a2b30;border-radius:10px;padding:9px 12px;margin-bottom:5px;display:flex;align-items:center;gap:10px}
-.wd-tx-side{width:42px;font-size:9px;font-weight:700;text-align:center;padding:3px 4px;border-radius:6px;flex-shrink:0}
-.wd-tx-side.BUY{background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-.wd-tx-side.SELL{background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-.wd-tx-side.SWAP{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-.wd-tx-side.OTHER{background:rgba(100,116,139,.12);color:#5a5b62;border:1px solid rgba(100,116,139,.2)}
-.wd-tx-main{flex:1;min-width:0}
-.wd-tx-desc{font-size:11px;color:#c0c0c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wd-tx-time{font-size:10px;color:#4a4b52;margin-top:1px}
-.wd-tx-amt{font-size:12px;font-weight:600;color:#c0c0c8;white-space:nowrap}
-@media(max-width:768px){.wd-stats{grid-template-columns:repeat(2,1fr)}.disc-grid{grid-template-columns:1fr}}
-</style>""", unsafe_allow_html=True)
-
-        _detail = st.session_state.get("sw_detail_wallet", "")
-        _prefill = st.session_state.get("wallet_address_input", "")
-        _auto = st.session_state.pop("_sw_auto_scan", False)
-        if _auto and _prefill and not _detail:
-            _detail = _prefill
-            st.session_state.sw_detail_wallet = _detail
-
-        if _detail:
-            if st.button("Back", key="sw_back"):
-                st.session_state.sw_detail_wallet = ""
-                st.rerun()
-            _dw = _detail.strip()
-            _dname = wallet_display_name(_dw)
-            _addr_short = f"{_dw[:10]}...{_dw[-6:]}"
-            _copy_html = copy_btn_html(_dw, "Wallet address")
-            st.markdown(f"""<div style="padding:20px 0 16px">
-<div class="wd-name">{_dname}</div>
-<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-  <span style="font-size:12px;color:#4a4b52;font-family:monospace">{_addr_short}</span>
-  {_copy_html}
-</div></div>""", unsafe_allow_html=True)
-
-            with st.spinner("Loading wallet data..."):
-                _wtx, _werr = fetch_wallet_transactions(_dw, limit=20)
-
-            if _werr or _wtx is None or _wtx.empty:
-                st.error(f"Could not load: {_werr or 'No transactions found'}")
-                st.caption("Check address or Helius API key in Settings.")
-            else:
-                _ttx, _tfr, _tsw, _tun, _tlvl = summarize_wallet_activity(_wtx)
-                _wsig, _wscore, _wreason = get_wallet_signal(_ttx, _tfr, _tsw, _tun)
-                _usd = estimate_wallet_usd_stats(_wtx)
-                _nb, _ns, _nr = wallet_trade_counts(_wtx)
-                _sc = safe_int(_wscore)
-                _vol = safe_float(_usd.get("Total USD Volume", 0))
-                _lrg = safe_float(_usd.get("Largest USD Tx", 0))
-                _avg = safe_float(_usd.get("Average USD Tx", 0))
-                _dname2 = wallet_display_name(_dw)
-                _vcls = "alpha" if _sc >= 80 else "watch" if _sc >= 65 else "paper" if _sc >= 45 else "risky"
-                _vtxt = {"alpha":"Alpha Scout","watch":"Worth watching","paper":"Paper trade first","risky":"Needs more proof"}[_vcls]
-
-                st.markdown(f'<div class="wd-badge {_vcls}">{_vtxt}</div>', unsafe_allow_html=True)
-                st.markdown(f"""<div class="wd-stats">
-  <div class="wd-stat"><span>Score</span><b>{_sc}/100</b></div>
-  <div class="wd-stat"><span>Signal</span><b style="font-size:13px">{_wsig}</b></div>
-  <div class="wd-stat"><span>Total Tx</span><b>{_ttx}</b></div>
-  <div class="wd-stat"><span>Swaps</span><b>{_tsw}</b></div>
-  <div class="wd-stat"><span>Est. Volume</span><b style="font-size:13px">{format_usd(_vol)}</b></div>
-  <div class="wd-stat"><span>Largest Tx</span><b style="font-size:13px">{format_usd(_lrg)}</b></div>
-  <div class="wd-stat"><span>Avg Tx</span><b style="font-size:13px">{format_usd(_avg)}</b></div>
-  <div class="wd-stat"><span>Activity</span><b style="font-size:12px">{_tlvl}</b></div>
-</div>""", unsafe_allow_html=True)
-
-                _bc1, _bc2, _bc3 = st.columns(3)
-                with _bc1: st.metric("Buys", _nb)
-                with _bc2: st.metric("Sells", _ns)
-                with _bc3: st.metric("Rotations", _nr)
-
-                st.markdown(f'<div class="wd-reason"><b>Verdict:</b> {_wreason}<br><b>Activity:</b> {_tlvl}</div>', unsafe_allow_html=True)
-
-                _hist = wallet_history_dataframe(_dw)
-                if _hist is not None and not _hist.empty:
-                    st.markdown('<p style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:16px 0 8px">Score history</p>', unsafe_allow_html=True)
-                    render_smart_wallet_chart(_dw, item={"Full Wallet": _dw}, compact=False)
-                else:
-                    st.caption("No score history yet. Add to Watchlist and run Auto Scan.")
-
-                with st.expander(f"Recent transactions ({len(_wtx)})", expanded=False):
-                    for _, _row in _wtx.iterrows():
-                        _side2 = str(_row.get("Trade Side","OTHER")).upper()
-                        _sc2 = _side2 if _side2 in ["BUY","SELL","SWAP"] else "OTHER"
-                        _hint2 = str(_row.get("Trade Hint","") or "")[:80]
-                        _desc2 = str(_row.get("Description","") or "")[:80]
-                        _time2 = str(_row.get("Timestamp","-"))
-                        _main_tok2 = str(_row.get("Main Token","-"))
-                        _main_mint2 = str(_row.get("Main Token Mint","") or "")
-                        _main_amt2 = safe_float(_row.get("Main Token Amount",0))
-                        _amt_str2 = f"{_main_amt2:,.4f} {_main_tok2}" if _main_amt2 else "-"
-                        _mcopy2 = copy_btn_html(_main_mint2, "Token") if len(_main_mint2) > 10 else ""
-                        st.markdown(f'<div class="wd-tx"><div class="wd-tx-side {_sc2}">{_sc2}</div><div class="wd-tx-main"><div class="wd-tx-desc">{_hint2 or _desc2} {_mcopy2}</div><div class="wd-tx-time">{_time2}</div></div><div class="wd-tx-amt">{_amt_str2}</div></div>', unsafe_allow_html=True)
-
-                st.markdown('<p style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:16px 0 8px">Actions</p>', unsafe_allow_html=True)
-                _a1, _a2, _a3 = st.columns(3)
-                with _a1:
-                    if st.button("Add to Watchlist", key="wd_add", use_container_width=True):
-                        add_wallet_to_watchlist({
-                            "Wallet":_dname2,"Name":_dname2,"Wallet Alias":_dname2,
-                            "Full Wallet":_dw,"Signal":_wsig,"Score":_sc,
-                            "Transfers":safe_int(_tfr),"Swaps":safe_int(_tsw),
-                            "USD Volume":_vol,"Largest Tx":_lrg,
-                            "Last Checked":pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                            "Check Count":1,"Pinned":False,
-                        })
-                        st.session_state.watchlist_message = f"Added {_dname2} to Watchlist"
-                        st.rerun()
-                with _a2:
-                    if st.button("Paper trade", key="wd_paper", use_container_width=True):
-                        st.session_state._paper_copy_wallet = {"address":_dw,"name":_dname2,"score":_sc}
-                        st.session_state.main_navigation = "Paper Trading"
-                        st.rerun()
-                with _a3:
-                    if st.button("Open in Journal", key="wd_journal", use_container_width=True):
-                        st.session_state.main_navigation = "Wallet Journal"
-                        st.rerun()
-
-                _wl_msg = st.session_state.pop("watchlist_message", "")
-                if _wl_msg:
-                    st.success(_wl_msg)
-
-        else:
-            st.markdown('<div class="sw-title">Smart Wallets</div>', unsafe_allow_html=True)
-            st.markdown('<div class="sw-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
-
-            _tab_s, _tab_d, _tab_r = st.tabs(["Scan wallet", "Discover from token", "Recent"])
-
-            with _tab_s:
-                _c1, _c2 = st.columns([0.8, 0.2])
-                with _c1:
-                    _w_addr = st.text_input("addr", value=_prefill,
-                        placeholder="Paste Solana wallet address...",
-                        label_visibility="collapsed", key="sw_addr_input")
-                with _c2:
-                    _do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
-                if _do_scan and _w_addr.strip():
-                    st.session_state.wallet_address_input = _w_addr.strip()
-                    st.session_state.sw_detail_wallet = _w_addr.strip()
-                    add_recent_item("recent_wallets", _w_addr.strip())
-                    st.rerun()
-
-            with _tab_d:
-                st.caption("Finds wallets that bought this token early. Solscan first, Helius as fallback.")
-                _dc1, _dc2 = st.columns([0.8, 0.2])
-                with _dc1:
-                    _mint = st.text_input("mint", placeholder="Paste token mint address...",
-                        label_visibility="collapsed", key="sw_mint_input")
-                with _dc2:
-                    _do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
-
-                if _do_disc and _mint.strip():
-                    _ddf, _derr = None, None
-                    with st.spinner("Solscan - earliest buyers first..."):
-                        _ddf, _derr = discover_wallets_from_token_solscan(_mint.strip(), max_wallets=15)
-                    if _derr or _ddf is None or (hasattr(_ddf,"empty") and _ddf.empty):
-                        with st.spinner("Helius fallback..."):
-                            _ddf, _derr = discover_wallets_from_token_helius(_mint.strip(), max_wallets=15)
-                    if _derr or _ddf is None or (hasattr(_ddf,"empty") and _ddf.empty):
-                        st.warning(f"No wallets found. {_derr or 'Try a different mint.'}")
-                    else:
-                        st.success(f"Found {len(_ddf)} early wallets.")
-                        _grid_html = '<div class="disc-grid">'
-                        for _di, _dr in _ddf.head(12).iterrows():
-                            _dfw = str(_dr.get("Full Wallet","")).strip()
-                            _dwn = str(_dr.get("Wallet",_dfw[:12])).strip()
-                            _dsc = safe_int(_dr.get("Score",0))
-                            _drank = safe_int(_dr.get("Early Rank",_di+1))
-                            _dverd = str(_dr.get("Verdict","Watch"))
-                            _dtype = str(_dr.get("Type","Buyer"))
-                            _dsaved = str(_dr.get("Saved?","New"))
-                            _dbcls = "alpha" if _dsc>=75 else "watch" if _dsc>=60 else "paper" if _dsc>=40 else "risky"
-                            _dcopy = copy_btn_html(_dfw,"Wallet") if len(_dfw)>10 else ""
-                            _saved_col = "#4ade80" if _dsaved=="New" else "#5a5b62"
-                            _grid_html += f'<div class="disc-card"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px"><div><div style="display:flex;align-items:center;gap:6px"><div class="disc-name">{_dwn}</div>{_dcopy}</div><div class="disc-rank">#{_drank} early - {_dtype}</div></div><div style="text-align:right"><div class="disc-score">{_dsc}</div><div class="disc-score-lbl">score</div></div></div><div class="disc-badge {_dbcls}">{_dverd}</div><div style="display:flex;gap:10px;margin-top:4px"><div><span style="font-size:10px;color:#4a4b52;display:block;text-transform:uppercase">Swaps</span><b style="font-size:12px;color:#c0c0c8">{_dr.get("Swaps",0)}</b></div><div><span style="font-size:10px;color:#4a4b52;display:block;text-transform:uppercase">Transfers</span><b style="font-size:12px;color:#c0c0c8">{safe_int(_dr.get("Transfers",0))}</b></div><div><span style="font-size:10px;color:#4a4b52;display:block;text-transform:uppercase">Status</span><b style="font-size:12px;color:{_saved_col}">{_dsaved}</b></div></div></div>'
-                        _grid_html += '</div>'
-                        st.markdown(_grid_html, unsafe_allow_html=True)
-
-                        st.markdown('<p style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:18px 0 8px">Open a wallet</p>', unsafe_allow_html=True)
-                        for _di, _dr in _ddf.head(8).iterrows():
-                            _dfw = str(_dr.get("Full Wallet","")).strip()
-                            _dwn = str(_dr.get("Wallet",_dfw[:12])).strip()
-                            if not _dfw: continue
-                            _rb1, _rb2, _rb3 = st.columns([0.5,0.25,0.25])
-                            with _rb1:
-                                st.markdown(f'`{_dwn}` — **{safe_int(_dr.get("Score",0))}** pts')
-                            with _rb2:
-                                if st.button("Open", key=f"dw_{_dfw[-8:]}", use_container_width=True, type="primary"):
-                                    st.session_state.sw_detail_wallet = _dfw
-                                    st.session_state.wallet_address_input = _dfw
-                                    add_recent_item("recent_wallets", _dfw)
-                                    st.rerun()
-                            with _rb3:
-                                if st.button("Watchlist", key=f"dwl_{_dfw[-8:]}", use_container_width=True):
-                                    add_wallet_to_watchlist({
-                                        "Wallet":_dwn,"Name":_dwn,"Wallet Alias":_dwn,
-                                        "Full Wallet":_dfw,"Signal":str(_dr.get("Type","Watch")),
-                                        "Score":safe_int(_dr.get("Score",30)),
-                                        "Transfers":safe_int(_dr.get("Transfers",0)),"Swaps":0,
-                                        "USD Volume":0,"Largest Tx":0,
-                                        "Last Checked":pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                                        "Check Count":1,"Pinned":False,
-                                    })
-                                    st.success("Added.")
-
-            with _tab_r:
-                _rws = st.session_state.get("recent_wallets", [])
-                if not _rws:
-                    st.info("No recently scanned wallets yet.")
-                else:
-                    st.markdown('<p style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:0 0 10px">Recently viewed</p>', unsafe_allow_html=True)
-                    for _rw in _rws[:10]:
-                        _rs = str(_rw).strip()
-                        _rn = wallet_display_name(_rs)
-                        _rc = copy_btn_html(_rs, "Wallet")
-                        _rr1, _rr2 = st.columns([0.82, 0.18])
-                        with _rr1:
-                            st.markdown(f'<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="font-size:12px;color:#c0c0c8;font-family:monospace">{_rs[:8]}...{_rs[-6:]}</span>{_rc}<span style="font-size:12px;color:#5a5b62">{_rn}</span></div>', unsafe_allow_html=True)
-                        with _rr2:
-                            if st.button("Open", key=f"sw_r_{_rs[-8:]}", use_container_width=True, type="primary"):
-                                st.session_state.sw_detail_wallet = _rs
-                                st.session_state.wallet_address_input = _rs
-                                st.rerun()
-
 
     elif section == "Market Dashboard":
         st.title("Market Dashboard")
@@ -12883,414 +12629,366 @@ with safe_section(section):
 
     elif section == "Paper Trading":
         with safe_section("Paper Trading"):
-            st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Paper Trading</p>', unsafe_allow_html=True)
-            st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">Fake money, real prices — test wallet ideas before risking anything real.</p>', unsafe_allow_html=True)
+            st.markdown("""<style>
+/* Paper Trading design */
+.pt-header{padding:24px 0 16px}
+.pt-h1{font-size:24px;font-weight:600;color:#f5f5f7;margin-bottom:4px}
+.pt-sub{font-size:14px;color:#5a5b62;margin-bottom:20px}
+.pt-safe{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:12px;padding:10px 14px;font-size:12px;color:#f87171;margin-bottom:16px}
 
-            st.markdown(
-                """
-                <style>
-                .paper-hero{border:1px solid rgba(45,212,191,.24);background:linear-gradient(135deg,rgba(20,184,166,.14),rgba(15,23,42,.97) 55%,rgba(59,130,246,.10));border-radius:22px;padding:18px 20px;margin-bottom:14px}
-                .paper-title{color:#f8fafc;font-size:23px;font-weight:950;margin-bottom:5px}.paper-sub{color:#cbd5e1;font-size:13px;line-height:1.45;max-width:980px}
-                .paper-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:13px}.paper-flow div{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);border-radius:13px;padding:10px;color:#e5e7eb;font-size:12px}.paper-flow span{display:block;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
-                .paper-note{border:1px solid rgba(56,189,248,.22);background:rgba(56,189,248,.08);border-radius:15px;padding:10px 12px;color:#bae6fd;font-size:13px;line-height:1.45;margin:8px 0 14px}
-                .paper-danger{border:1px solid rgba(248,113,113,.25);background:rgba(127,29,29,.16);border-radius:15px;padding:10px 12px;color:#fecaca;font-size:13px;line-height:1.45;margin:8px 0 14px}
-                .paper-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:10px 0 14px}.paper-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);border-radius:16px;padding:12px 14px}.paper-card span{display:block;color:#94a3b8;font-size:11px}.paper-card b{display:block;color:#f8fafc;font-size:19px;margin-top:4px}.paper-card b.good{color:#4ade80}.paper-card b.bad{color:#f87171}
-                .paper-trade-card{border:1px solid rgba(255,255,255,.09);background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(30,41,59,.72));border-radius:18px;padding:13px 14px;margin-bottom:10px}.paper-trade-top{display:flex;justify-content:space-between;gap:10px}.paper-trade-name{font-size:16px;font-weight:950;color:#f8fafc}.paper-trade-sub{font-size:11px;color:#94a3b8;margin-top:2px}.paper-pill{border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900}.paper-pill.open{background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.32);color:#bbf7d0}.paper-pill.closed{background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.24);color:#cbd5e1}
-                .paper-mini{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin:10px 0}.paper-mini div{border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.035);border-radius:12px;padding:8px 9px}.paper-mini span{display:block;color:#94a3b8;font-size:10px;text-transform:uppercase}.paper-mini b{font-size:13px;color:#f8fafc}.paper-mini .good{color:#4ade80}.paper-mini .bad{color:#f87171}
-                .paper-status-strip{display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:10px;margin:0 0 15px 0}.paper-status-strip>div{border:1px solid rgba(255,255,255,.08);background:linear-gradient(145deg,rgba(15,23,42,.92),rgba(30,41,59,.52));border-radius:17px;padding:13px 15px}.paper-status-strip span{display:block;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}.paper-status-strip b{color:#f8fafc;font-size:15px}.paper-status-strip .good{color:#4ade80}.paper-status-strip .bad{color:#f87171}.paper-status-strip .watch{color:#fbbf24}
-                .paper-progress{height:9px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;margin:9px 0 4px}.paper-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);box-shadow:0 0 16px rgba(34,197,94,.20)}.paper-progress-label{display:flex;justify-content:space-between;color:#94a3b8;font-size:10px}
-                .paper-setup-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}.paper-preset-card{border:1px solid rgba(45,212,191,.18);background:linear-gradient(145deg,rgba(20,184,166,.10),rgba(15,23,42,.88));border-radius:16px;padding:12px}.paper-preset-card b{color:#f8fafc;font-size:14px}.paper-preset-card span{display:block;color:#94a3b8;font-size:12px;margin-top:4px;line-height:1.35}
-                .paper-manual-zone{border:1px solid rgba(56,189,248,.22);background:linear-gradient(135deg,rgba(56,189,248,.10),rgba(15,23,42,.92));border-radius:18px;padding:14px;margin:16px 0 10px}.paper-manual-zone b{color:#e0f2fe}.paper-manual-zone span{color:#94a3b8;font-size:12px}.paper-glow-buy{border:1px solid rgba(34,197,94,.35)!important;background:linear-gradient(135deg,rgba(34,197,94,.18),rgba(15,23,42,.92))!important}.paper-glow-sell{border:1px solid rgba(248,113,113,.35)!important;background:linear-gradient(135deg,rgba(248,113,113,.16),rgba(15,23,42,.92))!important}
-                .paper-depth-wrap{border:1px solid rgba(45,212,191,.18);background:linear-gradient(145deg,rgba(15,23,42,.94),rgba(2,6,23,.72));border-radius:17px;padding:13px;margin:9px 0 12px}.paper-depth-title{display:flex;justify-content:space-between;gap:10px;align-items:center;color:#f8fafc;font-weight:950;margin-bottom:7px}.paper-depth-title span{color:#94a3b8;font-size:11px;font-weight:700}.paper-depth-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0}.paper-depth-grid div{border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.035);border-radius:13px;padding:9px 10px}.paper-depth-grid span{display:block;color:#94a3b8;font-size:10px;text-transform:uppercase}.paper-depth-grid b{color:#f8fafc;font-size:14px}.paper-depth-grid .good{color:#4ade80}.paper-depth-grid .bad{color:#f87171}.paper-depth-grid .watch{color:#fbbf24}.paper-tape{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}.paper-tape-chip{border-radius:999px;padding:7px 9px;font-size:11px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#e5e7eb}.paper-tape-chip.good{border-color:rgba(34,197,94,.28);background:rgba(34,197,94,.10);color:#bbf7d0}.paper-tape-chip.bad{border-color:rgba(248,113,113,.28);background:rgba(248,113,113,.10);color:#fecaca}.paper-tape-chip.neutral{border-color:rgba(56,189,248,.28);background:rgba(56,189,248,.09);color:#bae6fd}.paper-action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.paper-ladder-note{color:#94a3b8;font-size:12px;line-height:1.4;margin-top:6px}.paper-trade-card .paper-note{margin-top:9px}
-                .paper-safety-panel{border:1px solid rgba(251,191,36,.26);background:linear-gradient(135deg,rgba(245,158,11,.10),rgba(15,23,42,.92));border-radius:17px;padding:13px 14px;margin:12px 0;color:#fde68a;font-size:13px;line-height:1.45}.paper-safety-panel b{color:#fef3c7}.paper-safety-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:9px}.paper-safety-grid div{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);border-radius:12px;padding:9px 10px}.paper-safety-grid span{display:block;color:#94a3b8;font-size:10px;text-transform:uppercase}.paper-safety-grid strong{color:#f8fafc;font-size:13px}
-                .paper-action-hint{border:1px solid rgba(34,197,94,.22);background:rgba(34,197,94,.08);color:#bbf7d0;border-radius:14px;padding:10px 12px;margin:8px 0 12px;font-size:12.5px;line-height:1.45}
-                .paper-impact{display:flex;justify-content:space-between;align-items:center;gap:12px;border-radius:18px;padding:12px 14px;margin:10px 0 14px;animation:paperImpactPop .55s ease-out both;box-shadow:0 14px 38px rgba(0,0,0,.22)}.paper-impact b{display:block;color:#f8fafc;font-size:14px}.paper-impact span{display:block;color:#cbd5e1;font-size:12px;margin-top:2px}.paper-impact em{color:#94a3b8;font-size:11px;white-space:nowrap}.paper-impact-soft{border:1px solid rgba(56,189,248,.24);background:linear-gradient(135deg,rgba(56,189,248,.13),rgba(15,23,42,.94))}.paper-impact-medium{border:1px solid rgba(45,212,191,.30);background:linear-gradient(135deg,rgba(20,184,166,.16),rgba(15,23,42,.94))}.paper-impact-strong{border:1px solid rgba(34,197,94,.38);background:linear-gradient(135deg,rgba(34,197,94,.22),rgba(15,23,42,.94));box-shadow:0 0 26px rgba(34,197,94,.16),0 14px 38px rgba(0,0,0,.22)}.paper-impact-danger{border:1px solid rgba(248,113,113,.38);background:linear-gradient(135deg,rgba(248,113,113,.20),rgba(15,23,42,.94));box-shadow:0 0 26px rgba(248,113,113,.12),0 14px 38px rgba(0,0,0,.22)}@keyframes paperImpactPop{0%{opacity:0;transform:translateY(8px) scale(.985);filter:saturate(.8)}45%{opacity:1;transform:translateY(-2px) scale(1.01);filter:saturate(1.25)}100%{opacity:1;transform:translateY(0) scale(1);filter:saturate(1)}}
-                div.stButton > button[kind="primary"]{border-radius:999px!important;font-weight:900!important;box-shadow:0 0 22px rgba(34,197,94,.16)!important}div.stButton > button{border-radius:999px!important;font-weight:800!important;transition:all .14s ease!important;position:relative!important;overflow:hidden!important} div.stButton > button:hover{transform:translateY(-1px) scale(1.015)!important;box-shadow:0 10px 26px rgba(15,23,42,.42)!important}div.stButton > button:active{transform:translateY(1px) scale(.985)!important;filter:brightness(1.22)!important} div.stButton > button:focus:not(:active){box-shadow:0 0 0 3px rgba(45,212,191,.20),0 0 24px rgba(45,212,191,.15)!important}
-                
-                @media(max-width:900px){.paper-flow,.paper-grid,.paper-mini{grid-template-columns:1fr 1fr}}
-                </style>
-                <div class="paper-hero">
-                    <div class="paper-title">Paper Trading Machine</div>
-                    <div class="paper-sub">Trade with fake money on live prices. Pick Journal wallets, let the copy machine simulate entries and exits, and learn which wallet signals actually work without risking real money.</div>
-                    <div class="paper-flow">
-                        <div><span>1</span><b>Pick wallets</b></div>
-                        <div><span>2</span><b>Copy machine trades</b></div>
-                        <div><span>3</span><b>Live P/L moves</b></div>
-                        <div><span>4</span><b>Keep what works</b></div>
-                    </div>
-                </div>
-                <div class="paper-danger"><b>Important:</b> no real wallet is connected, no private keys are used and no real trades are placed. This is a live-price simulator for learning and testing.</div>
-                """,
-                unsafe_allow_html=True
-            )
+/* Stats bar */
+.pt-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:20px}
+.pt-stat{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:14px}
+.pt-stat span{display:block;font-size:10px;color:#4a4b52;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.pt-stat b{display:block;font-size:20px;font-weight:700;color:#f5f5f7}
+.pt-stat b.g{color:#4ade80}.pt-stat b.r{color:#f87171}.pt-stat b.y{color:#fbbf24}
+
+/* Copy staging */
+.pt-copy-stage{background:rgba(124,92,252,.08);border:2px solid rgba(124,92,252,.4);border-radius:16px;padding:18px;margin-bottom:20px}
+.pt-copy-title{font-size:16px;font-weight:600;color:#f5f5f7;margin-bottom:4px}
+.pt-copy-sub{font-size:13px;color:#5a5b62;margin-bottom:12px}
+
+/* Trade cards */
+.pt-trade{background:#1a1b1f;border:1px solid #2a2b30;border-radius:14px;overflow:hidden;margin-bottom:12px;transition:border-color .15s}
+.pt-trade.profit{border-color:rgba(74,222,128,.35);animation:tradeProfit .6s ease}
+.pt-trade.loss{border-color:rgba(248,113,113,.35)}
+.pt-trade.near-sl{border-color:rgba(239,68,68,.6);animation:tradePulse 1.5s ease infinite}
+@keyframes tradeProfit{0%{box-shadow:0 0 0 rgba(74,222,128,0)}50%{box-shadow:0 0 24px rgba(74,222,128,.35)}100%{box-shadow:0 0 0 rgba(74,222,128,0)}}
+@keyframes tradePulse{0%,100%{box-shadow:0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 18px rgba(239,68,68,.3)}}
+.pt-trade-head{padding:12px 16px;border-bottom:1px solid #23242a;display:flex;justify-content:space-between;align-items:center}
+.pt-trade-name{font-size:14px;font-weight:600;color:#f5f5f7}
+.pt-trade-sub{font-size:11px;color:#4a4b52;margin-top:2px}
+.pt-trade-pl{font-size:18px;font-weight:700}
+.pt-trade-pl.g{color:#4ade80}.pt-trade-pl.r{color:#f87171}
+.pt-trade-body{padding:12px 16px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.pt-trade-stat span{font-size:10px;color:#4a4b52;display:block;text-transform:uppercase}
+.pt-trade-stat b{font-size:13px;font-weight:600;color:#c0c0c8}
+.pt-trade-footer{padding:8px 14px;display:flex;gap:8px;background:#17181c}
+.pt-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:700}
+.pt-badge.open{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
+.pt-badge.closed{background:rgba(100,116,139,.10);color:#64748b;border:1px solid rgba(100,116,139,.2)}
+.pt-badge.warn{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+
+/* Manual trade */
+.pt-manual{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:16px;margin-bottom:16px}
+.pt-manual-title{font-size:14px;font-weight:600;color:#f5f5f7;margin-bottom:10px}
+
+/* Section labels */
+.pt-label{font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 10px}
+
+/* P/L flash animation */
+@keyframes plFlash{0%{background:rgba(74,222,128,.25)}100%{background:transparent}}
+.pl-flash{animation:plFlash .8s ease}
+
+@media(max-width:768px){.pt-stats{grid-template-columns:repeat(2,1fr)}.pt-trade-body{grid-template-columns:repeat(2,1fr)}}
+</style>
+<script>
+// Profit flash animation when P/L is positive
+window._checkPLAnimations = function() {
+    document.querySelectorAll('[data-pl]').forEach(function(el) {
+        var pl = parseFloat(el.dataset.pl);
+        if (pl > 0) {
+            el.classList.add('pl-flash');
+            setTimeout(function(){el.classList.remove('pl-flash');}, 800);
+        }
+    });
+};
+setInterval(window._checkPLAnimations, 3000);
+</script>""", unsafe_allow_html=True)
+
+            # ── Auto-refresh if enabled ──────────────────────────
+            settings = st.session_state.get("paper_settings", {})
+            if settings.get("enabled"):
+                _refresh_ms = max(safe_int(settings.get("live_refresh_seconds", 2), 2), 1) * 1000
+                st_autorefresh(interval=_refresh_ms, key="paper_trading_autorefresh")
+            if settings.get("enabled") and settings.get("auto_copy"):
+                _cooldown = max(safe_int(settings.get("copy_cooldown_minutes", 10), 10), 1) * 60
+                _last_ts = safe_float(settings.get("last_bot_ts", 0), 0)
+                if time.time() - _last_ts >= _cooldown:
+                    paper_bot_scan_once()
+
+            # ── Update trade P/L ──────────────────────────────────
+            paper_update_open_trades(apply_rules=False)
+            summary = paper_wallet_summary()
+
+            # ── Safety notice ─────────────────────────────────────
+            st.markdown('<div class="pt-safe">No real wallet connected. No real money. This is a live-price simulator for learning.</div>', unsafe_allow_html=True)
+
+            # ── Copy staging area ─────────────────────────────────
+            _copy_target = st.session_state.pop("_paper_copy_wallet", None)
+            if _copy_target:
+                _ct_addr = str(_copy_target.get("address","")).strip()
+                _ct_name = str(_copy_target.get("name","")).strip() or wallet_display_name(_ct_addr)
+                _ct_score = safe_int(_copy_target.get("score", 0))
+                _ct_copy = copy_btn_html(_ct_addr, "Wallet")
+                st.markdown(f'''<div class="pt-copy-stage">
+<div class="pt-copy-title">Paper copy: {_ct_name}</div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+  <span style="font-family:monospace;font-size:12px;color:#a78bfa">{_ct_addr[:12]}...{_ct_addr[-6:]}</span>
+  {_ct_copy}
+  <span style="font-size:12px;color:#5a5b62">Score: {_ct_score}/100</span>
+</div>
+<div class="pt-copy-sub">Pick a trade size and place a fake trade to test this wallet.</div>
+</div>''', unsafe_allow_html=True)
+                _cq1, _cq2, _cq3 = st.columns(3)
+                with _cq1:
+                    if st.button("Place $25 fake trade", key="cstg_25", use_container_width=True, type="primary"):
+                        st.session_state.paper_settings["trade_size"] = 25
+                        st.session_state.paper_settings["selected_source_wallets"] = [_ct_addr]
+                        save_paper_settings()
+                        st.success(f"Set up $25 paper copy for {_ct_name}.")
+                with _cq2:
+                    if st.button("Place $50 fake trade", key="cstg_50", use_container_width=True):
+                        st.session_state.paper_settings["trade_size"] = 50
+                        st.session_state.paper_settings["selected_source_wallets"] = [_ct_addr]
+                        save_paper_settings()
+                        st.success(f"Set up $50 paper copy for {_ct_name}.")
+                with _cq3:
+                    if st.button("Dismiss", key="cstg_dismiss", use_container_width=True):
+                        st.rerun()
 
             render_paper_impact()
 
-            settings = st.session_state.get("paper_settings", {})
-            if settings.get("enabled"):
-                # P/L should feel live. Bot copying still respects its own cooldown below.
-                refresh_ms = max(safe_int(settings.get("live_refresh_seconds", 1), 1), 1) * 1000
-                st_autorefresh(interval=refresh_ms, key="paper_trading_autorefresh")
+            # ── Account summary ───────────────────────────────────
+            _pnl = summary["Total P/L"]
+            _pnl_cls = "g" if _pnl >= 0 else "r"
+            _open_pnl = summary["Open P/L"]
+            _open_cls = "g" if _open_pnl >= 0 else "r"
+            _wr = summary["Win Rate"]
+            _wr_cls = "g" if _wr >= 50 else "r"
+            st.markdown(f'''<div class="pt-stats">
+  <div class="pt-stat"><span>Account value</span><b>{format_usd(summary["Equity"])}</b></div>
+  <div class="pt-stat"><span>Total P/L</span><b class="{_pnl_cls}">{format_signed_usd(_pnl)}</b></div>
+  <div class="pt-stat"><span>Open P/L</span><b class="{_open_cls}">{format_signed_usd(_open_pnl)}</b></div>
+  <div class="pt-stat"><span>Win rate</span><b class="{_wr_cls}">{_wr:.0f}%</b></div>
+</div>''', unsafe_allow_html=True)
 
-            if settings.get("enabled") and settings.get("auto_copy"):
-                cooldown = max(safe_int(settings.get("copy_cooldown_minutes", 10), 10), 1) * 60
-                last_ts = safe_float(settings.get("last_bot_ts", 0), 0)
-                if time.time() - last_ts >= cooldown:
-                    paper_bot_scan_once()
+            # ── Tabs ──────────────────────────────────────────────
+            _tab_active, _tab_closed, _tab_manual, _tab_setup = st.tabs([
+                f"Active trades ({summary['Open Trades']})",
+                f"Closed ({summary['Closed Trades']})",
+                "Place trade",
+                "Settings"
+            ])
 
-            summary = paper_wallet_summary()
-            pnl_class = "good" if summary["Total P/L"] >= 0 else "bad"
-            open_pnl_class = "good" if summary["Open P/L"] >= 0 else "bad"
-            max_active_trades = max(safe_int(settings.get("max_open_trades", 5), 5), 1)
-            active_trades = safe_int(summary.get("Open Trades", 0), 0)
-            active_load_pct = min(max((active_trades / max_active_trades) * 100, 0), 100)
-            total_profit_pct = (safe_float(summary.get("Total P/L", 0), 0) / max(safe_float(summary.get("Start", 1000), 1000), 1)) * 100
-            if total_profit_pct > 3:
-                account_mood = "Healthy test run"
-                account_mood_class = "good"
-            elif total_profit_pct < -3:
-                account_mood = "Needs review"
-                account_mood_class = "bad"
-            else:
-                account_mood = "Still learning"
-                account_mood_class = "watch"
-            copy_state = "Auto-copy is ON" if settings.get("auto_copy") else "Manual mode"
-            refresh_read = f"prices every {safe_int(settings.get('live_refresh_seconds', 1), 1)} sec"
-
-            st.markdown(
-                f"""
-                <div class="paper-grid">
-                    <div class="paper-card"><span>Fake account value</span><b>{format_usd(summary["Equity"])}</b></div>
-                    <div class="paper-card"><span>Total fake profit</span><b class="{pnl_class}">{format_signed_usd(summary["Total P/L"])}</b></div>
-                    <div class="paper-card"><span>Live open profit</span><b class="{open_pnl_class}">{format_signed_usd(summary["Open P/L"])}</b></div>
-                    <div class="paper-card"><span>Win rate</span><b>{summary["Win Rate"]:.0f}%</b></div>
-                    <div class="paper-card"><span>Free play money</span><b>{format_usd(summary["Cash"])}</b></div>
-                    <div class="paper-card"><span>Money in trades</span><b>{format_usd(summary["Open Value"])}</b></div>
-                    <div class="paper-card"><span>Active trades</span><b>{summary["Open Trades"]}</b></div>
-                    <div class="paper-card"><span>Finished trades</span><b>{summary["Closed Trades"]}</b></div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div class="paper-status-strip">
-                    <div><span>Account mood</span><b class="{account_mood_class}">{account_mood}</b><div class="paper-progress"><div class="paper-progress-fill" style="width:{min(max(total_profit_pct + 50, 0), 100):.0f}%"></div></div><div class="paper-progress-label"><em>drawdown</em><em>{total_profit_pct:+.1f}%</em><em>profit</em></div></div>
-                    <div><span>Trade load</span><b>{active_trades}/{max_active_trades} active trades</b><div class="paper-progress"><div class="paper-progress-fill" style="width:{active_load_pct:.0f}%"></div></div><div class="paper-progress-label"><em>calm</em><em>busy</em></div></div>
-                    <div><span>Mode</span><b>{copy_state}</b><br><small style="color:#94a3b8">Live P/L updates from {refresh_read}. Signal checks use your selected speed.</small></div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            if safe_int(settings.get("live_refresh_seconds", 1), 1) <= 1 and active_trades >= 5:
-                st.warning("Turbo refresh is active with many fake trades. For smoother testing, use 2–5 sec refresh or reduce active trades.")
-
-            if st.session_state.get("paper_message"):
-                st.success(st.session_state.paper_message)
-                st.session_state.paper_message = ""
-
-            setup_tab, open_tab, closed_tab, bot_tab, own_tab, log_tab = st.tabs(["Control room", "Active fake trades", "Results", "Copy setup", "My wallets", "Trade diary"])
-
-            with setup_tab:
-                st.markdown('<div class="paper-note"><b>Simple setup:</b> start with $1,000 play money, small trade sizes, and only a few active trades. Let the copy machine follow your best Journal wallets first.</div>', unsafe_allow_html=True)
-                st.markdown('<div class="paper-setup-presets"><div class="paper-preset-card"><b>Safe learner</b><span>Small buys, slower checks, best for first tests.</span></div><div class="paper-preset-card"><b>Balanced copy</b><span>Good default for testing selected Journal wallets.</span></div><div class="paper-preset-card"><b>Fast scalp test</b><span>Faster checks and tighter exits for active sessions.</span></div></div>', unsafe_allow_html=True)
-                p1, p2, p3 = st.columns(3)
-                with p1:
-                    if st.button("Use safe learner", key="paper_preset_safe"):
-                        st.session_state.paper_settings.update({"trade_size": 10, "max_open_trades": 3, "stop_loss_pct": -20, "take_profit_pct": 30, "copy_cooldown_minutes": 10, "live_refresh_seconds": 2, "auto_copy": False})
-                        save_paper_settings()
-                        st.rerun()
-                with p2:
-                    if st.button("Use balanced copy", type="primary", key="paper_preset_balanced"):
-                        st.session_state.paper_settings.update({"trade_size": 25, "max_open_trades": 5, "stop_loss_pct": -25, "take_profit_pct": 50, "copy_cooldown_minutes": 5, "live_refresh_seconds": 1, "auto_copy": True})
-                        save_paper_settings()
-                        st.rerun()
-                with p3:
-                    if st.button("Use fast scalp test", key="paper_preset_fast"):
-                        st.session_state.paper_settings.update({"trade_size": 15, "max_open_trades": 4, "stop_loss_pct": -15, "take_profit_pct": 25, "copy_cooldown_minutes": 2, "live_refresh_seconds": 1, "auto_copy": True})
-                        save_paper_settings()
-                        st.rerun()
-                c1, c2, c3, c4, c5 = st.columns(5)
-                with c1:
-                    enabled = st.toggle("Turn simulator on", value=bool(settings.get("enabled", False)), key="paper_enabled_toggle")
-                with c2:
-                    auto_copy = st.toggle("Auto-copy signals", value=bool(settings.get("auto_copy", False)), key="paper_auto_copy_toggle")
-                with c3:
-                    source = st.selectbox("Wallet group", ["Journal pinned only", "Strong thesis only", "Strong + Promising"], index=["Journal pinned only", "Strong thesis only", "Strong + Promising"].index(settings.get("source", "Journal pinned only")) if settings.get("source", "Journal pinned only") in ["Journal pinned only", "Strong thesis only", "Strong + Promising"] else 0, key="paper_source_select")
-                with c4:
-                    cooldown = st.selectbox("Signal check speed", [2, 5, 10, 15, 30], index=[2,5,10,15,30].index(safe_int(settings.get("copy_cooldown_minutes", 10), 10)) if safe_int(settings.get("copy_cooldown_minutes", 10), 10) in [2,5,10,15,30] else 2, format_func=lambda x: f"Every {x} min", key="paper_cooldown_select")
-                with c5:
-                    live_refresh_options = [1, 2, 5, 10, 15, 30, 60]
-                    current_live_refresh = safe_int(settings.get("live_refresh_seconds", 1), 1)
-                    live_refresh = st.selectbox("Live P/L refresh", live_refresh_options, index=live_refresh_options.index(current_live_refresh) if current_live_refresh in live_refresh_options else 0, format_func=lambda x: f"Every {x} sec", key="paper_live_refresh_select")
-
-                r1, r2, r3, r4 = st.columns(4)
-                with r1:
-                    fake_balance = st.number_input("Play money start", min_value=100.0, max_value=100000.0, value=float(settings.get("fake_balance_start", 1000)), step=100.0, key="paper_start_balance_input")
-                with r2:
-                    trade_size = st.number_input("Play money per copied trade", min_value=1.0, max_value=10000.0, value=float(settings.get("trade_size", 25)), step=5.0, key="paper_trade_size_input")
-                with r3:
-                    max_open = st.number_input("Max active trades", min_value=1, max_value=50, value=int(settings.get("max_open_trades", 5)), step=1, key="paper_max_open_input")
-                with r4:
-                    take_profit = st.number_input("Take Profit %", min_value=5.0, max_value=1000.0, value=float(settings.get("take_profit_pct", 50)), step=5.0, key="paper_tp_input")
-
-                s1, s2, s3 = st.columns([0.25, 0.25, 0.50])
-                with s1:
-                    stop_loss = st.number_input("Stop Loss %", min_value=-95.0, max_value=-1.0, value=float(settings.get("stop_loss_pct", -25)), step=1.0, key="paper_sl_input")
-                with s2:
-                    max_trade_pct = st.number_input("Max trade size %", min_value=1.0, max_value=50.0, value=float(settings.get("max_trade_size_pct", 10)), step=1.0, key="paper_max_trade_pct_input")
-                with s3:
-                    min_liquidity = st.number_input("Min liquidity USD", min_value=0.0, max_value=1000000.0, value=float(settings.get("min_liquidity_usd", 1000)), step=500.0, key="paper_min_liquidity_input")
-
-                st.markdown(
-                    f"""
-                    <div class="paper-safety-panel"><b>Safety rails:</b> Paper Trading stays fake, but these limits train safer habits before real money ever exists.
-                      <div class="paper-safety-grid">
-                        <div><span>Per-trade cap</span><strong>{max_trade_pct:.0f}% of play money</strong></div>
-                        <div><span>Liquidity filter</span><strong>{format_usd(min_liquidity)} minimum</strong></div>
-                        <div><span>Risk rules</span><strong>Stop Loss + Take Profit active</strong></div>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                save_col, hint_col = st.columns([0.25, 0.75])
-                with save_col:
-                    if st.button("Save trading setup", type="primary", key="paper_save_setup"):
-                        first_time = not st.session_state.paper_settings.get("enabled")
-                        st.session_state.paper_settings.update({
-                            "enabled": bool(enabled),
-                            "auto_copy": bool(auto_copy),
-                            "source": source,
-                            "fake_balance_start": safe_float(fake_balance, 1000),
-                            "trade_size": safe_float(trade_size, 25),
-                            "max_open_trades": safe_int(max_open, 5),
-                            "stop_loss_pct": safe_float(stop_loss, -25),
-                            "take_profit_pct": safe_float(take_profit, 50),
-                            "max_trade_size_pct": safe_float(max_trade_pct, 10),
-                            "min_liquidity_usd": safe_float(min_liquidity, 1000),
-                            "copy_cooldown_minutes": safe_int(cooldown, 10),
-                            "live_refresh_seconds": safe_int(live_refresh, 1),
-                            "selected_source_wallets": settings.get("selected_source_wallets", []),
-                        })
-                        if first_time or safe_float(st.session_state.paper_settings.get("cash", 0)) <= 0 and not st.session_state.get("paper_trades"):
-                            st.session_state.paper_settings["cash"] = safe_float(fake_balance, 1000)
-                        save_paper_settings()
-                        paper_set_impact("setup", "Trading setup saved", "Stop Loss, Take Profit and safety limits are now active.", level="soft")
-                        st.success("Trading setup saved.")
-                        st.rerun()
-                with hint_col:
-                    st.caption("Changing play money does not reset old trades. Use reset only when you want a clean new test. Keep trade size small while testing new wallets.")
-
-                with st.expander("Reset practice account", expanded=False):
-                    st.warning("Safety check: this clears fake trades and the trade diary. It does not touch real wallets because this app does not trade real funds.")
-                    reset_balance = st.number_input("New play money balance", min_value=100.0, max_value=100000.0, value=float(settings.get("fake_balance_start", 1000)), step=100.0, key="paper_reset_balance")
-                    confirm_reset = st.text_input("Type RESET to confirm", key="paper_reset_confirm_text")
-                    if st.button("Reset practice account", key="paper_reset_wallet", disabled=(confirm_reset.strip().upper() != "RESET")):
-                        reset_paper_wallet(reset_balance)
-                        paper_set_impact("reset", "Practice account reset", f"New fake balance: {format_usd(reset_balance)}. Previous paper trades were cleared.", level="danger")
-                        st.rerun()
-
-                st.markdown('<div class="paper-manual-zone"><b>Place a fake trade</b><br><span>Paste a token address, choose your play-money buy size, then watch live P/L, pressure and the trade tape move.</span></div>', unsafe_allow_html=True)
-                m1, m2, m3 = st.columns([0.55, 0.20, 0.25])
-                with m1:
-                    manual_mint = st.text_input("Token address", placeholder="Paste Solana token address", key="paper_manual_mint")
-                with m2:
-                    manual_size = st.number_input("Play-money buy size", min_value=1.0, max_value=10000.0, value=float(settings.get("trade_size", 25)), step=5.0, key="paper_manual_size")
-                with m3:
-                    st.write("")
-                    if st.button("Place trade", type="primary", key="paper_manual_buy"):
-                        ok, msg = paper_open_trade(manual_mint, reason="Manual paper trade", size=manual_size, mode="Manual")
-                        paper_set_impact(
-                            "place_trade" if ok else "place_trade_failed",
-                            "Trade placed" if ok else "Trade not placed",
-                            msg,
-                            level="strong" if ok else "danger",
-                        )
-                        (st.success if ok else st.error)(msg)
-                        st.rerun()
-
-            with open_tab:
-                updated, closed = paper_update_open_trades(apply_rules=True)
-                open_trades = paper_open_trades()
-                if not open_trades:
-                    st.info("No live fake trades yet. Place a trade or let the copy machine follow selected Journal wallets.")
-                for idx, trade in enumerate(open_trades):
-                    pnl = safe_float(trade.get("P/L", 0))
-                    pnl_pct = safe_float(trade.get("P/L %", 0))
-                    pnl_cls = "good" if pnl >= 0 else "bad"
-                    tp_pct = max(safe_float(settings.get("take_profit_pct", 50), 50), 1)
-                    sl_pct = safe_float(settings.get("stop_loss_pct", -25), -25)
-                    denom = max(tp_pct - sl_pct, 1)
-                    progress_pct = min(max(((pnl_pct - sl_pct) / denom) * 100, 0), 100)
-                    trade_read = "Moving well" if pnl_pct >= tp_pct * 0.5 else "Needs patience" if pnl_pct >= 0 else "Under water"
-                    trade_card_extra_cls = "paper-glow-buy" if pnl >= 0 else "paper-glow-sell"
-                    token = str(trade.get("Token", "Token"))
-                    mint = str(trade.get("Token Mint", ""))
-                    source_name = str(trade.get("Source Name", "Manual"))
-                    st.markdown(
-                        f"""
-                        <div class="paper-trade-card {trade_card_extra_cls}">
-                            <div class="paper-trade-top">
-                                <div><div class="paper-trade-name">{token}</div><div class="paper-trade-sub">{short_address(mint)} · copied from {source_name}</div></div>
-                                <div class="paper-pill open">OPEN</div>
-                            </div>
-                            <div class="paper-mini">
-                                <div><span>Entry</span><b>{format_usd(trade.get("Entry Value", 0))}</b></div>
-                                <div><span>Current</span><b>{format_usd(trade.get("Current Value", 0))}</b></div>
-                                <div><span>Live P/L</span><b class="{pnl_cls}">{format_signed_usd(pnl)}</b></div>
-                                <div><span>Live P/L %</span><b class="{pnl_cls}">{pnl_pct:.1f}%</b></div>
-                                <div><span>Live price</span><b>{format_usd(trade.get("Current Price", 0))}</b></div>
-                                <div><span>Updated</span><b>{str(trade.get("Last Updated", "-"))[-8:-3]}</b></div>
-                            </div>
-                            <div class="paper-progress"><div class="paper-progress-fill" style="width:{progress_pct:.0f}%"></div></div>
-                            <div class="paper-progress-label"><em>Stop Loss {sl_pct:.0f}%</em><em>{trade_read}</em><em>Take Profit +{tp_pct:.0f}%</em></div>
-                            <div class="paper-note"><b>Why opened:</b> {trade.get("Reason", "-")}<br><b>Beginner read:</b> Watch if the copied wallet exits. Green is not proof until the exit is visible.</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                    st.markdown('<div class="paper-action-hint"><b>Trade controls:</b> Lock result closes this fake trade at the current live price. Stop Loss and Take Profit can still close it automatically.</div>', unsafe_allow_html=True)
-                    b1, b2 = st.columns([0.18, 0.82])
-                    with b1:
-                        if st.button("Lock result", key=f"paper_close_{trade.get('ID', idx)}"):
-                            ok, msg = paper_close_trade_by_id(trade.get("ID", ""), reason="Manual paper close")
-                            paper_set_impact(
-                                "lock_result" if ok else "lock_failed",
-                                "Result locked" if ok else "Result not locked",
-                                msg,
-                                level="medium" if ok else "danger",
-                            )
-                            (st.success if ok else st.error)(msg)
-                            st.rerun()
-                    with st.expander("Live P/L trail", expanded=False):
-                        paper_trade_live_pnl_chart(trade, key_suffix=str(trade.get("ID", idx)))
-                        st.caption("This updates from live DexScreener prices while the fake trade is open.")
-                    with st.expander("Live Market Depth", expanded=False):
-                        render_paper_trade_market_depth(trade, key_suffix=str(trade.get("ID", idx)))
-                    with b2:
-                        if trade.get("Token URL"):
-                            st.caption(f"DexScreener: {trade.get('Token URL')}")
-
-            with closed_tab:
-                closed_trades = sorted(paper_closed_trades(), key=lambda t: str(t.get("Exit Time", t.get("Entry Time", ""))), reverse=True)
-                if not closed_trades:
-                    st.info("No finished trades yet. Results appear after a fake trade is closed. This is where you learn which copied wallets actually helped.")
+            # ══ ACTIVE TRADES ═════════════════════════════════════
+            with _tab_active:
+                _open = paper_open_trades()
+                if not _open:
+                    st.markdown('''<div style="background:#1a1b1f;border:1px solid #2a2b30;border-radius:14px;padding:32px;text-align:center;color:#4a4b52;font-size:14px">
+No active trades yet.<br><span style="font-size:12px">Go to "Place trade" tab to start your first fake trade.</span>
+</div>''', unsafe_allow_html=True)
                 else:
-                    rows = []
-                    for trade in closed_trades:
-                        rows.append({
-                            "Token": trade.get("Token", "-"),
-                            "Source": trade.get("Source Name", "-"),
-                            "Entry": trade.get("Entry Time", "-"),
-                            "Exit": trade.get("Exit Time", "-"),
-                            "Entry Value": format_usd(trade.get("Entry Value", 0)),
-                            "Exit Value": format_usd(trade.get("Exit Value", trade.get("Current Value", 0))),
-                            "P/L": format_signed_usd(trade.get("P/L", 0)),
-                            "P/L %": f"{safe_float(trade.get('P/L %', 0)):.1f}%",
-                            "Reason": trade.get("Exit Reason", "-"),
-                            "Lesson": "Good signal" if safe_float(trade.get("P/L", 0)) > 0 else "Needs review",
-                        })
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-
-            with bot_tab:
-                st.markdown('<div class="paper-note"><b>Copy machine:</b> choose the exact Journal wallets you want to test. The copy machine reads their latest buy/sell evidence, opens fake positions on buy signals, and closes on sell signals or your risk rules.</div>', unsafe_allow_html=True)
-                all_candidate_wallets = paper_candidate_source_wallets(settings.get("source", "Journal pinned only"))
-                option_labels = {
-                    item.get("Wallet", ""): f"{item.get('Name', '-')} | {item.get('Verdict', '-')} | Trust {safe_float(item.get('Trust', 0)):.0f}/100"
-                    for item in all_candidate_wallets
-                    if item.get("Wallet")
-                }
-                current_selected = [w for w in settings.get("selected_source_wallets", []) if w in option_labels] if isinstance(settings.get("selected_source_wallets", []), list) else []
-                selected_wallets = st.multiselect(
-                    "Wallets to copy",
-                    options=list(option_labels.keys()),
-                    default=current_selected,
-                    format_func=lambda wallet: option_labels.get(wallet, compact_address(wallet)),
-                    help="Leave empty to copy every wallet from the selected source group.",
-                    key="paper_selected_source_wallets"
-                )
-                if selected_wallets != current_selected:
-                    settings["selected_source_wallets"] = selected_wallets
-                    st.session_state.paper_settings = settings
-                    save_paper_settings()
-
-                source_wallets = paper_source_wallets()
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Available wallet ideas", len(all_candidate_wallets))
-                c2.metric("Selected wallets", len(source_wallets))
-                c3.metric("Journal pinned", wallet_journal_pinned_count())
-                c4.metric("Active fake trades", len(paper_open_trades()))
-
-                if st.button("Check copy signals now", type="primary", key="paper_run_copier_once"):
-                    opened, closed, skipped = paper_bot_scan_once()
-                    paper_set_impact("copy_check", "Copy signals checked", f"{opened} opened, {closed} closed, {skipped} skipped.", level="medium")
-                    st.success(f"Copy check done: {opened} opened, {closed} closed, {skipped} skipped.")
-                    st.rerun()
-
-                if not source_wallets:
-                    st.info("No wallets selected yet. Go to Wallet Journal and use Journal pin on wallets you want to test.")
-                else:
-                    st.markdown("**Wallets currently being copied**")
-                    source_rows = []
-                    for source in source_wallets:
-                        signal = latest_copyable_wallet_signal(source.get("Wallet", ""))
-                        source_rows.append({
-                            "Wallet": source.get("Name", "-"),
-                            "Verdict": source.get("Verdict", "-"),
-                            "Trust": f"{safe_float(source.get('Trust', 0)):.0f}/100",
-                            "Latest signal": signal.get("Trade Side", "-") if signal else "-",
-                            "Token": token_label(signal.get("Trade Token Mint", "")) if signal else "-",
-                            "Signal time": signal.get("Timestamp", "-") if signal else "-",
-                        })
-                    st.dataframe(pd.DataFrame(source_rows), width="stretch", hide_index=True)
-
-            with own_tab:
-                st.markdown('<div class="paper-note"><b>My wallets:</b> add your own public wallet addresses read-only. No private key, no seed phrase. Later we can compare your behavior against the fake bot and Journal wallets.</div>', unsafe_allow_html=True)
-                w1, w2, w3 = st.columns([0.25, 0.45, 0.30])
-                with w1:
-                    my_name = st.text_input("Name", placeholder="My main wallet", key="my_wallet_name_input")
-                with w2:
-                    my_address = st.text_input("Public wallet address", placeholder="Paste public Solana wallet address", key="my_wallet_address_input")
-                with w3:
-                    my_note = st.text_input("Note", placeholder="optional", key="my_wallet_note_input")
-                if st.button("Add read-only wallet", key="add_my_readonly_wallet"):
-                    address = str(my_address or "").strip()
-                    if not address or len(address) < 32:
-                        st.error("Please paste a valid public wallet address.")
-                    else:
-                        st.session_state.my_wallets.append({
-                            "Name": my_name.strip() or wallet_auto_name(address, prefix="My Wallet"),
-                            "Address": address,
-                            "Note": my_note.strip(),
-                            "Added": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
-                        })
-                        save_my_wallets()
-                        st.success("Read-only wallet saved.")
-                        st.rerun()
-
-                wallets = st.session_state.get("my_wallets", [])
-                if not wallets:
-                    st.info("No read-only wallets saved yet.")
-                else:
-                    for idx, wallet in enumerate(wallets):
-                        st.markdown(f"**{wallet.get('Name', 'My Wallet')}**  \n`{wallet.get('Address', '')}`  \n{wallet.get('Note', '')}")
-                        c1, c2 = st.columns([0.18, 0.82])
-                        with c1:
-                            if st.button("Remove", key=f"remove_my_wallet_{idx}_{hashlib.sha1(str(wallet.get('Address','')).encode()).hexdigest()[:8]}"):
-                                st.session_state.my_wallets.pop(idx)
-                                save_my_wallets()
+                    for _t in _open:
+                        _tok = str(_t.get("Token","?"))
+                        _mint = str(_t.get("Token Mint",""))
+                        _entry = safe_float(_t.get("Entry Price",0))
+                        _live = safe_float(_t.get("Live Price",_entry))
+                        _pl = safe_float(_t.get("P/L",0))
+                        _pl_pct = safe_float(_t.get("live_pnl_pct", (_live/_entry-1)*100 if _entry>0 else 0))
+                        _size = safe_float(_t.get("Size",0))
+                        _sl = safe_float(_t.get("Stop Loss",-25))
+                        _tp = safe_float(_t.get("Take Profit",50))
+                        _src = str(_t.get("Source Wallet",""))
+                        _src_name = wallet_display_name(_src) if len(_src)>10 else _src or "Manual"
+                        _pl_cls = "g" if _pl >= 0 else "r"
+                        _near_sl = _pl_pct <= _sl * 0.8
+                        _card_cls = "near-sl" if _near_sl else ("profit" if _pl > 0 else "loss")
+                        _tok_copy = copy_btn_html(_mint, "Token") if len(_mint)>10 else ""
+                        _src_copy = copy_btn_html(_src, "Wallet") if len(_src)>20 else ""
+                        st.markdown(f'''<div class="pt-trade {_card_cls}">
+  <div class="pt-trade-head">
+    <div>
+      <div class="pt-trade-name">{_tok} {_tok_copy}</div>
+      <div class="pt-trade-sub">Copying: {_src_name[:20]} {_src_copy}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="pt-trade-pl {_pl_cls}" data-pl="{_pl}">{format_signed_usd(_pl)} ({_pl_pct:+.1f}%)</div>
+      <div class="pt-badge {'warn' if _near_sl else 'open'}">{"NEAR STOP LOSS" if _near_sl else "OPEN"}</div>
+    </div>
+  </div>
+  <div class="pt-trade-body">
+    <div class="pt-trade-stat"><span>Entry</span><b>${_entry:.6f}</b></div>
+    <div class="pt-trade-stat"><span>Live price</span><b>${_live:.6f}</b></div>
+    <div class="pt-trade-stat"><span>Size</span><b>{format_usd(_size)}</b></div>
+    <div class="pt-trade-stat"><span>Stop/Target</span><b style="font-size:11px">{_sl:+.0f}% / {_tp:+.0f}%</b></div>
+  </div>
+</div>''', unsafe_allow_html=True)
+                        _tc1, _tc2, _tc3 = st.columns(3)
+                        with _tc1:
+                            if st.button(f"Close at {_pl_pct:+.1f}%", key=f"pt_close_{_t.get('id','')[:8]}", use_container_width=True):
+                                for _i, _tr in enumerate(st.session_state.paper_trades):
+                                    if _tr.get("id") == _t.get("id"):
+                                        st.session_state.paper_trades[_i]["Status"] = "Closed"
+                                        st.session_state.paper_trades[_i]["P/L"] = _pl
+                                        st.session_state.paper_trades[_i]["Closed At"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+                                        break
+                                save_paper_trades()
                                 st.rerun()
+                        with _tc2:
+                            if st.button("Analyze token", key=f"pt_analyze_{_t.get('id','')[:8]}", use_container_width=True):
+                                if _mint:
+                                    st.session_state._token_finder_autoload = _mint
+                                    st.session_state.main_navigation = "Token Finder"
+                                    st.rerun()
+                        with _tc3:
+                            if st.button("Open wallet", key=f"pt_wallet_{_t.get('id','')[:8]}", use_container_width=True):
+                                if _src:
+                                    st.session_state.sw_detail_wallet = _src
+                                    st.session_state.wallet_address_input = _src
+                                    st.session_state.main_navigation = "Smart Wallets"
+                                    st.rerun()
 
-            with log_tab:
-                events = list(reversed(st.session_state.get("paper_events", [])[-100:]))
-                if not events:
-                    st.info("No learning log yet.")
+            # ══ CLOSED TRADES ═════════════════════════════════════
+            with _tab_closed:
+                _closed = paper_closed_trades()
+                if not _closed:
+                    st.info("No closed trades yet.")
                 else:
-                    st.dataframe(pd.DataFrame(events), width="stretch", hide_index=True)
+                    _wins = len([t for t in _closed if safe_float(t.get("P/L",0)) > 0])
+                    _losses = len(_closed) - _wins
+                    _total_pl = sum(safe_float(t.get("P/L",0)) for t in _closed)
+                    st.markdown(f'''<div class="pt-stats">
+  <div class="pt-stat"><span>Total closed</span><b>{len(_closed)}</b></div>
+  <div class="pt-stat"><span>Wins</span><b class="g">{_wins}</b></div>
+  <div class="pt-stat"><span>Losses</span><b class="r">{_losses}</b></div>
+  <div class="pt-stat"><span>Realized P/L</span><b class="{'g' if _total_pl>=0 else 'r'}">{format_signed_usd(_total_pl)}</b></div>
+</div>''', unsafe_allow_html=True)
+                    for _t in sorted(_closed, key=lambda x: x.get("Closed At",""), reverse=True)[:20]:
+                        _tok = str(_t.get("Token","?"))
+                        _pl = safe_float(_t.get("P/L",0))
+                        _pl_cls = "g" if _pl >= 0 else "r"
+                        _closed_at = str(_t.get("Closed At","-"))
+                        _mint2 = str(_t.get("Token Mint",""))
+                        _tok_copy2 = copy_btn_html(_mint2,"Token") if len(_mint2)>10 else ""
+                        st.markdown(f'''<div class="pt-trade">
+  <div class="pt-trade-head">
+    <div><div class="pt-trade-name">{_tok} {_tok_copy2}</div><div class="pt-trade-sub">{_closed_at}</div></div>
+    <div style="text-align:right"><div class="pt-trade-pl {_pl_cls}">{format_signed_usd(_pl)}</div><div class="pt-badge closed">CLOSED</div></div>
+  </div>
+</div>''', unsafe_allow_html=True)
+
+            # ══ PLACE TRADE ════════════════════════════════════════
+            with _tab_manual:
+                st.markdown('<div class="pt-label">Place a fake trade</div>', unsafe_allow_html=True)
+                st.caption("Enter any Solana token mint to place a fake trade at the current live price.")
+                _m1, _m2 = st.columns([0.7, 0.3])
+                with _m1:
+                    _manual_mint = st.text_input("Token mint", placeholder="Paste Solana token mint address...", key="pt_manual_mint", label_visibility="collapsed")
+                with _m2:
+                    _fetch_price = st.button("Get price", key="pt_get_price", use_container_width=True, type="primary")
+
+                if _fetch_price and _manual_mint.strip():
+                    with st.spinner("Getting live price from DexScreener..."):
+                        _quote, _qerr = dex_token_quote(_manual_mint.strip())
+                    if _qerr or not _quote:
+                        st.error(f"No live price found. {_qerr or ''}")
+                    else:
+                        st.session_state._pt_quote = _quote
+                        st.session_state._pt_mint = _manual_mint.strip()
+
+                _qt = st.session_state.get("_pt_quote")
+                if _qt:
+                    _tok_name = _qt.get("Token","?")
+                    _price = safe_float(_qt.get("Price",0))
+                    _liq = safe_float(_qt.get("Liquidity USD",0))
+                    _vol = safe_float(_qt.get("Volume 24h",0))
+                    _ch1 = safe_float(_qt.get("Change 1h",0))
+                    _ch24 = safe_float(_qt.get("Change 24h",0))
+                    _mint3 = str(st.session_state.get("_pt_mint",""))
+                    _m3copy = copy_btn_html(_mint3,"Token") if len(_mint3)>10 else ""
+
+                    st.markdown(f'''<div class="pt-manual">
+<div class="pt-manual-title">{_tok_name} {_m3copy}</div>
+<div class="pt-stats" style="margin-top:10px">
+  <div class="pt-stat"><span>Live price</span><b style="font-size:15px">${_price:.8f}</b></div>
+  <div class="pt-stat"><span>Liquidity</span><b style="font-size:15px">{format_usd(_liq)}</b></div>
+  <div class="pt-stat"><span>1h change</span><b class="{'g' if _ch1>=0 else 'r'}" style="font-size:15px">{_ch1:+.1f}%</b></div>
+  <div class="pt-stat"><span>24h change</span><b class="{'g' if _ch24>=0 else 'r'}" style="font-size:15px">{_ch24:+.1f}%</b></div>
+</div>
+</div>''', unsafe_allow_html=True)
+
+                    _ts_col, _sl_col, _tp_col = st.columns(3)
+                    with _ts_col:
+                        _trade_size = st.number_input("Trade size ($)", min_value=1.0, max_value=safe_float(settings.get("cash",1000),1000), value=float(settings.get("trade_size",25)), step=5.0, key="pt_trade_size")
+                    with _sl_col:
+                        _stop_loss = st.number_input("Stop Loss %", min_value=-90.0, max_value=-1.0, value=float(settings.get("stop_loss_pct",-25)), step=5.0, key="pt_sl")
+                    with _tp_col:
+                        _take_profit = st.number_input("Take Profit %", min_value=1.0, max_value=1000.0, value=float(settings.get("take_profit_pct",50)), step=10.0, key="pt_tp")
+
+                    if st.button(f"Place fake trade — {_tok_name} at ${_price:.6f}", key="pt_place_trade", use_container_width=True, type="primary"):
+                        _cash = safe_float(settings.get("cash",1000),1000)
+                        if _trade_size > _cash:
+                            st.error(f"Not enough play money. You have {format_usd(_cash)} available.")
+                        elif _price <= 0:
+                            st.error("No valid price. Cannot place trade.")
+                        else:
+                            _new_trade = {
+                                "id": paper_trade_id(_mint3, "manual"),
+                                "Token": _tok_name,
+                                "Token Mint": _mint3,
+                                "Entry Price": _price,
+                                "Live Price": _price,
+                                "Size": _trade_size,
+                                "Status": "Open",
+                                "P/L": 0.0,
+                                "live_pnl_pct": 0.0,
+                                "Stop Loss": _stop_loss,
+                                "Take Profit": _take_profit,
+                                "Source Wallet": "Manual",
+                                "Opened At": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                            }
+                            if "paper_trades" not in st.session_state:
+                                st.session_state.paper_trades = []
+                            st.session_state.paper_trades.append(_new_trade)
+                            st.session_state.paper_settings["cash"] = _cash - _trade_size
+                            save_paper_trades()
+                            save_paper_settings()
+                            st.session_state._pt_quote = None
+                            st.balloons()
+                            st.success(f"Fake trade placed: {_tok_name} at ${_price:.8f}")
+                            st.rerun()
+
+            # ══ SETTINGS ══════════════════════════════════════════
+            with _tab_setup:
+                st.markdown('<div class="pt-label">Play money</div>', unsafe_allow_html=True)
+                _s1, _s2 = st.columns(2)
+                with _s1:
+                    _start_bal = st.number_input("Starting balance ($)", min_value=100.0, max_value=100000.0,
+                        value=float(settings.get("fake_balance_start",1000)), step=100.0, key="pt_start_bal")
+                with _s2:
+                    _trade_sz = st.number_input("Default trade size ($)", min_value=1.0, max_value=10000.0,
+                        value=float(settings.get("trade_size",25)), step=5.0, key="pt_trade_sz")
+
+                st.markdown('<div class="pt-label">Risk limits</div>', unsafe_allow_html=True)
+                _r1, _r2, _r3 = st.columns(3)
+                with _r1:
+                    _sl_pct = st.number_input("Stop Loss %", min_value=-90.0, max_value=-1.0,
+                        value=float(settings.get("stop_loss_pct",-25)), step=5.0, key="pt_sl_set")
+                with _r2:
+                    _tp_pct = st.number_input("Take Profit %", min_value=1.0, max_value=1000.0,
+                        value=float(settings.get("take_profit_pct",50)), step=10.0, key="pt_tp_set")
+                with _r3:
+                    _max_trades = st.number_input("Max active trades", min_value=1, max_value=20,
+                        value=int(settings.get("max_open_trades",5)), step=1, key="pt_max_trades")
+
+                if st.button("Save settings", key="pt_save_settings", type="primary"):
+                    st.session_state.paper_settings.update({
+                        "fake_balance_start": _start_bal,
+                        "trade_size": _trade_sz,
+                        "stop_loss_pct": _sl_pct,
+                        "take_profit_pct": _tp_pct,
+                        "max_open_trades": int(_max_trades),
+                    })
+                    save_paper_settings()
+                    st.success("Settings saved.")
+
+                if st.button("Reset play money", key="pt_reset_cash"):
+                    _new_start = safe_float(settings.get("fake_balance_start",1000),1000)
+                    st.session_state.paper_settings["cash"] = _new_start
+                    save_paper_settings()
+                    st.success(f"Play money reset to {format_usd(_new_start)}.")
+
 
     elif section == "Wallet Journal":
         with safe_section("Wallet Journal"):
