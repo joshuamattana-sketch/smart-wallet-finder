@@ -20,6 +20,14 @@ except ImportError:
     _PRO_TERMINAL_AVAILABLE = False
     def _render_pro_terminal():
         st.warning("Pro Terminal UI not found. Make sure ui/pro_terminal.py is deployed.")
+# ── Pro Dashboard UI (Patch H/I) ──────────────────────────────────────────────
+try:
+    from ui.dashboard_pro import render_pro_dashboard as _render_pro_dashboard
+    _PRO_DASHBOARD_AVAILABLE = True
+except ImportError:
+    _PRO_DASHBOARD_AVAILABLE = False
+    def _render_pro_dashboard():
+        st.warning("Pro Dashboard not found. Make sure ui/dashboard_pro.py is deployed.")
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Smart Wallet Finder",
@@ -6136,6 +6144,7 @@ _NAV_ITEMS = [
     ("Watchlist",      "", "track"),
     ("Paper Trading",  "", "track"),
     ("Pro Terminal",   "", "pro"),
+    ("Pro Dashboard",  "", "pro"),
     ("Settings",       "", "system"),
 ]
 
@@ -13342,6 +13351,10 @@ No active trades yet.<br><span style="font-size:12px">Go to "Place trade" tab to
     elif section == "Pro Terminal":
         with safe_section("Pro Terminal"):
             _render_pro_terminal()
+
+    elif section == "Pro Dashboard":
+        with safe_section("Pro Dashboard"):
+            _render_pro_dashboard()
 
     elif section == "Settings":
         st.title("Settings")
