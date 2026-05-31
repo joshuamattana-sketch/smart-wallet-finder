@@ -146,8 +146,8 @@ PAPER_EVENTS_FILE = DATA_DIR / "paper_trading_events.json"
 MY_WALLETS_FILE = DATA_DIR / "my_wallets.json"
 
 
-from storage import load_json_list, save_json_list, load_json_dict, save_json_dict, log_event, storage_status
-
+from storage import (load_json_list, save_json_list, load_json_dict, 
+                     save_json_dict, log_event, storage_status)
 
 # Early numeric helpers used during session-state boot.
 # The full helpers are defined again later, but these keep startup safe.
