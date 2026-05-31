@@ -5902,59 +5902,44 @@ require_beta_login()
 
 st.markdown("""
 <style>
-/* ── Global buttons ── */
+/* ════ GLOBAL DESIGN SYSTEM ════ */
+
+/* Buttons */
 div.stButton > button {
     border-radius: 10px !important;
     font-weight: 500 !important;
     font-size: 13px !important;
     letter-spacing: 0.01em !important;
-    transition: background 0.13s ease, color 0.13s ease,
-                border-color 0.13s ease, transform 0.09s cubic-bezier(.34,1.56,.64,1) !important;
+    transition:
+        background 0.12s ease,
+        color 0.12s ease,
+        border-color 0.12s ease,
+        transform 0.09s cubic-bezier(.34,1.56,.64,1),
+        box-shadow 0.12s ease !important;
 }
 div.stButton > button:hover {
     background: rgba(124,92,252,0.13) !important;
     border-color: rgba(124,92,252,0.55) !important;
     color: #c4b5fd !important;
     transform: translateY(-1px) !important;
+    box-shadow: 0 4px 14px rgba(124,92,252,0.18) !important;
 }
 div.stButton > button:active {
-    transform: scale(0.95) translateY(0px) !important;
+    transform: scale(0.95) !important;
     background: rgba(124,92,252,0.22) !important;
+    box-shadow: none !important;
 }
-/* ── Primary action buttons ── */
 div.stButton > button[kind="primary"] {
-    background: rgba(124,92,252,0.18) !important;
-    border-color: rgba(124,92,252,0.6) !important;
+    background: rgba(124,92,252,0.20) !important;
+    border-color: rgba(124,92,252,0.65) !important;
     color: #c4b5fd !important;
 }
 div.stButton > button[kind="primary"]:hover {
-    background: rgba(124,92,252,0.28) !important;
-    box-shadow: 0 0 18px rgba(124,92,252,0.25) !important;
+    background: rgba(124,92,252,0.32) !important;
+    box-shadow: 0 0 22px rgba(124,92,252,0.30) !important;
 }
-/* ── Page fade-in ── */
-[data-testid="stAppViewBlockContainer"] {
-    animation: pgIn 0.20s ease both;
-}
-@keyframes pgIn {
-    from { opacity:0; transform:translateY(7px); }
-    to   { opacity:1; transform:translateY(0); }
-}
-/* ── Metric cards ── */
-[data-testid="stMetric"] {
-    border-radius: 14px !important;
-    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
-    cursor: default;
-}
-[data-testid="stMetric"]:hover {
-    transform: translateY(-3px) !important;
-    box-shadow: 0 6px 20px rgba(124,92,252,0.18) !important;
-}
-/* ── Text inputs ── */
-div.stTextInput input:focus {
-    border-color: rgba(124,92,252,0.7) !important;
-    box-shadow: 0 0 0 3px rgba(124,92,252,0.12) !important;
-}
-/* ── Sidebar nav ── */
+
+/* Sidebar nav */
 section[data-testid="stSidebar"] div.stButton > button {
     background: transparent !important;
     border: 1px solid transparent !important;
@@ -5963,34 +5948,82 @@ section[data-testid="stSidebar"] div.stButton > button {
     border-radius: 10px !important;
     padding: 8px 12px !important;
     margin-bottom: 2px !important;
-    width: 100% !important;
     font-size: 13px !important;
+    box-shadow: none !important;
 }
 section[data-testid="stSidebar"] div.stButton > button:hover {
     background: rgba(124,92,252,0.12) !important;
-    border-color: rgba(124,92,252,0.3) !important;
+    border-color: rgba(124,92,252,0.28) !important;
     color: #d0d0d5 !important;
     transform: none !important;
+    box-shadow: none !important;
 }
 section[data-testid="stSidebar"] div.stButton > button:active {
-    background: rgba(124,92,252,0.20) !important;
     transform: scale(0.97) !important;
+    background: rgba(124,92,252,0.20) !important;
 }
-/* ── Expanders ── */
-details summary {
+
+/* Page fade-in */
+[data-testid="stAppViewBlockContainer"] {
+    animation: pgIn 0.20s ease both;
+}
+@keyframes pgIn {
+    from { opacity:0; transform:translateY(6px); }
+    to   { opacity:1; transform:translateY(0); }
+}
+
+/* Metrics */
+[data-testid="stMetric"] {
+    border-radius: 14px !important;
+    transition: transform 0.14s ease, box-shadow 0.14s ease !important;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-3px) !important;
+    box-shadow: 0 6px 22px rgba(124,92,252,0.18) !important;
+}
+
+/* Text inputs */
+div.stTextInput input {
+    border-radius: 10px !important;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
+}
+div.stTextInput input:focus {
+    border-color: rgba(124,92,252,0.7) !important;
+    box-shadow: 0 0 0 3px rgba(124,92,252,0.14) !important;
+}
+
+/* Tabs */
+button[data-baseweb="tab"] {
+    border-radius: 8px 8px 0 0 !important;
+    transition: background 0.12s ease, color 0.12s ease !important;
+    font-weight: 500 !important;
+}
+button[data-baseweb="tab"]:hover {
+    background: rgba(124,92,252,0.09) !important;
+    color: #c4b5fd !important;
+}
+
+/* Expanders */
+details > summary {
     border-radius: 10px !important;
     transition: background 0.12s ease !important;
 }
-details summary:hover {
+details > summary:hover {
     background: rgba(124,92,252,0.07) !important;
 }
-/* ── Tabs ── */
-button[data-baseweb="tab"] {
-    border-radius: 8px 8px 0 0 !important;
-    transition: background 0.12s ease !important;
+
+/* Sliders */
+div.stSlider [data-testid="stThumbValue"] {
+    background: rgba(124,92,252,0.85) !important;
 }
-button[data-baseweb="tab"]:hover {
-    background: rgba(124,92,252,0.08) !important;
+
+/* Selectbox */
+div.stSelectbox > div > div {
+    border-radius: 10px !important;
+    transition: border-color 0.12s ease !important;
+}
+div.stSelectbox > div > div:hover {
+    border-color: rgba(124,92,252,0.5) !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -6012,13 +6045,13 @@ _SECTION_REMAP = {
 }
 
 _NAV_ITEMS = [
-    ("Today",          "·", "main"),
-    ("Token Finder",   "·", "main"),
-    ("Smart Wallets",  "·", "main"),
-    ("Wallet Journal", "·", "track"),
-    ("Watchlist",      "·", "track"),
-    ("Paper Trading",  "·", "track"),
-    ("Settings",       "·", "system"),
+    ("Today",          "", "main"),
+    ("Token Finder",   "", "main"),
+    ("Smart Wallets",  "", "main"),
+    ("Wallet Journal", "", "track"),
+    ("Watchlist",      "", "track"),
+    ("Paper Trading",  "", "track"),
+    ("Settings",       "", "system"),
 ]
 
 if "main_navigation" not in st.session_state:
@@ -11076,7 +11109,7 @@ with safe_section(section):
                     _wn  = wallet_watchlist_item_name(_item)
                     _, _sc, _tc, _vc, _lc = wallet_movement_values(_item)
                     st.markdown(f"""
-                    <div style="background:var(--color-bg-secondary,#1e1f23);border:1px solid var(--color-border,#2a2b30);border-radius:16px;padding:18px 20px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+                    <div style="background:#1e1f23;border:1px solid #2a2b30;border-radius:16px;padding:18px 20px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
                         <div>
                             <div style="font-size:14px;font-weight:600;color:#f5f5f7;margin-bottom:3px;">{_wn}</div>
                             <div style="font-size:12px;color:#5a5b62;">{_hint}</div>
@@ -11092,192 +11125,148 @@ with safe_section(section):
     elif section == "Smart Wallets":
         st.markdown("""
         <style>
-        .sw-header { padding: 28px 0 20px; }
-        .sw-header-title { font-size: 24px; font-weight: 600; color: #f5f5f7; margin-bottom: 4px; }
-        .sw-header-sub { font-size: 14px; color: #5a5b62; }
-        .sw-scan-box {
-            background: #1a1b1f;
-            border: 1px solid #2a2b30;
-            border-radius: 16px;
-            padding: 24px;
-            margin-bottom: 20px;
-        }
-        .sw-result-card {
-            background: #1e1f23;
-            border: 1px solid #2a2b30;
-            border-radius: 14px;
-            padding: 20px;
-            margin-bottom: 12px;
-        }
-        .sw-result-title { font-size: 15px; font-weight: 600; color: #f5f5f7; margin-bottom: 4px; }
-        .sw-result-sub { font-size: 12px; color: #5a5b62; margin-bottom: 12px; }
-        .sw-stat-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 10px; }
-        .sw-stat { display: flex; flex-direction: column; }
-        .sw-stat span { font-size: 11px; color: #5a5b62; }
-        .sw-stat b { font-size: 14px; font-weight: 600; color: #d0d0d5; }
-        .sw-verdict {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            margin-bottom: 10px;
-        }
-        .sw-verdict.alpha { background: rgba(124,92,252,0.15); color: #a78bfa; border: 1px solid rgba(124,92,252,0.3); }
-        .sw-verdict.watch { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
-        .sw-verdict.paper { background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
-        .sw-verdict.risky { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
-        .sw-section-label { font-size: 11px; font-weight: 600; color: #3a3b42; letter-spacing: 0.08em; text-transform: uppercase; margin: 24px 0 10px; }
+        .sw-page-title { font-size:24px; font-weight:600; color:#f5f5f7; padding:28px 0 4px; }
+        .sw-page-sub { font-size:14px; color:#5a5b62; margin-bottom:20px; }
+        .sw-scan-box { background:#1a1b1f; border:1px solid #2a2b30; border-radius:16px; padding:20px; margin-bottom:16px; }
+        .sw-result { background:#1e1f23; border:1px solid #2a2b30; border-radius:14px; padding:20px; margin-bottom:12px; }
+        .sw-result-name { font-size:15px; font-weight:600; color:#f5f5f7; margin-bottom:2px; }
+        .sw-result-addr { font-size:12px; color:#4a4b52; margin-bottom:10px; font-family:monospace; }
+        .sw-badge { display:inline-block; padding:4px 12px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:0.04em; margin-bottom:12px; }
+        .sw-badge.alpha { background:rgba(124,92,252,0.15); color:#a78bfa; border:1px solid rgba(124,92,252,0.3); }
+        .sw-badge.watch { background:rgba(34,197,94,0.12); color:#4ade80; border:1px solid rgba(34,197,94,0.25); }
+        .sw-badge.paper { background:rgba(251,191,36,0.12); color:#fbbf24; border:1px solid rgba(251,191,36,0.25); }
+        .sw-badge.risky { background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); }
+        .sw-stats { display:flex; gap:16px; flex-wrap:wrap; }
+        .sw-stat { display:flex; flex-direction:column; }
+        .sw-stat span { font-size:11px; color:#4a4b52; }
+        .sw-stat b { font-size:14px; font-weight:600; color:#c0c0c8; }
+        .sw-label { font-size:11px; font-weight:600; color:#3a3b42; letter-spacing:0.07em; text-transform:uppercase; margin:20px 0 8px; }
         </style>
         """, unsafe_allow_html=True)
 
-        st.markdown("""
-        <div class="sw-header">
-            <div class="sw-header-title">Smart Wallets</div>
-            <div class="sw-header-sub">Scan a Solana wallet address or discover wallets from a token mint.</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div class="sw-page-title">Smart Wallets</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sw-page-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
 
-        tab_scan, tab_discover, tab_recent = st.tabs(["Scan wallet", "Discover from token", "Recent wallets"])
+        tab_scan, tab_disc, tab_recent = st.tabs(["Scan wallet", "Discover from token", "Recent"])
 
         with tab_scan:
-            with st.container():
-                st.markdown('<div class="sw-scan-box">', unsafe_allow_html=True)
-                wallet_input_col, btn_col = st.columns([0.8, 0.2])
-                with wallet_input_col:
-                    wallet_addr = st.text_input(
-                        "Wallet address",
-                        value=st.session_state.get("wallet_address_input", ""),
-                        placeholder="Paste Solana wallet address...",
-                        label_visibility="collapsed",
-                        key="sw_wallet_addr_input"
-                    )
-                with btn_col:
-                    scan_clicked = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
-                st.markdown('</div>', unsafe_allow_html=True)
+            col_in, col_btn = st.columns([0.8, 0.2])
+            with col_in:
+                wallet_addr = st.text_input(
+                    "Wallet address",
+                    placeholder="Paste Solana wallet address...",
+                    label_visibility="collapsed",
+                    key="sw_addr_input"
+                )
+            with col_btn:
+                do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
 
-            if scan_clicked and wallet_addr.strip():
+            if do_scan and wallet_addr.strip():
                 st.session_state.wallet_address_input = wallet_addr.strip()
-                with st.spinner("Fetching wallet data from Helius..."):
-                    wallet_tx_data, wallet_error = fetch_wallet_transactions(wallet_addr.strip())
-                if wallet_error or wallet_tx_data is None or wallet_tx_data.empty:
-                    st.error(f"Could not fetch wallet data. Check the address or your Helius API key.")
+                add_recent_item("recent_wallets", wallet_addr.strip())
+                with st.spinner("Fetching from Helius..."):
+                    wtx, werr = fetch_wallet_transactions(wallet_addr.strip())
+                if werr or wtx is None or wtx.empty:
+                    st.error("Could not fetch wallet. Check address or Helius API key.")
                 else:
-                    total_tx, transfers, swaps, unknown, activity_level = summarize_wallet_activity(wallet_tx_data)
-                    wallet_signal, wallet_score, wallet_reason = get_wallet_signal(total_tx, transfers, swaps, unknown)
-                    usd_stats = estimate_wallet_usd_stats(wallet_tx_data)
-                    new_buys, new_sells, new_rotates = wallet_trade_counts(wallet_tx_data)
-                    latest = latest_trade_event_from_wallet_data(wallet_tx_data)
+                    ttx, tfr, tsw, tun, tlvl = summarize_wallet_activity(wtx)
+                    wsig, wscore, wreason = get_wallet_signal(ttx, tfr, tsw, tun)
+                    usd = estimate_wallet_usd_stats(wtx)
+                    nbuys, nsells, nrot = wallet_trade_counts(wtx)
+                    sc = safe_int(wscore)
+                    if sc >= 80: vcls, vtxt = "alpha", "Alpha Scout"
+                    elif sc >= 65: vcls, vtxt = "watch", "Worth watching"
+                    elif sc >= 45: vcls, vtxt = "paper", "Paper trade first"
+                    else: vcls, vtxt = "risky", "Needs more proof"
 
-                    score_int = safe_int(wallet_score)
-                    if score_int >= 80:
-                        verdict_cls, verdict_txt = "alpha", "Alpha Scout"
-                    elif score_int >= 65:
-                        verdict_cls, verdict_txt = "watch", "Worth watching"
-                    elif score_int >= 45:
-                        verdict_cls, verdict_txt = "paper", "Paper trade first"
-                    else:
-                        verdict_cls, verdict_txt = "risky", "Needs more proof"
-
-                    short_addr = compact_address(wallet_addr.strip())
-                    display_name = wallet_display_name(wallet_addr.strip())
-                    vol = safe_float(usd_stats.get("Total USD Volume", 0))
-                    largest = safe_float(usd_stats.get("Largest USD Tx", 0))
+                    dname = wallet_display_name(wallet_addr.strip())
+                    vol = safe_float(usd.get("Total USD Volume", 0))
+                    lrg = safe_float(usd.get("Largest USD Tx", 0))
 
                     st.markdown(f"""
-                    <div class="sw-result-card">
-                        <div class="sw-result-title">{display_name}</div>
-                        <div class="sw-result-sub">{short_addr}</div>
-                        <div class="sw-verdict {verdict_cls}">{verdict_txt}</div>
-                        <div class="sw-stat-row">
-                            <div class="sw-stat"><span>Score</span><b>{score_int}/100</b></div>
-                            <div class="sw-stat"><span>Signal</span><b>{wallet_signal}</b></div>
-                            <div class="sw-stat"><span>Total Tx</span><b>{total_tx}</b></div>
-                            <div class="sw-stat"><span>Swaps</span><b>{swaps}</b></div>
+                    <div class="sw-result">
+                        <div class="sw-result-name">{dname}</div>
+                        <div class="sw-result-addr">{compact_address(wallet_addr.strip(), 10, 6)}</div>
+                        <div class="sw-badge {vcls}">{vtxt}</div>
+                        <div class="sw-stats">
+                            <div class="sw-stat"><span>Score</span><b>{sc}/100</b></div>
+                            <div class="sw-stat"><span>Signal</span><b>{wsig}</b></div>
+                            <div class="sw-stat"><span>Total Tx</span><b>{ttx}</b></div>
+                            <div class="sw-stat"><span>Swaps</span><b>{tsw}</b></div>
                             <div class="sw-stat"><span>Volume</span><b>{format_usd(vol)}</b></div>
-                            <div class="sw-stat"><span>Largest Tx</span><b>{format_usd(largest)}</b></div>
-                            <div class="sw-stat"><span>Buys</span><b>{new_buys}</b></div>
-                            <div class="sw-stat"><span>Sells</span><b>{new_sells}</b></div>
+                            <div class="sw-stat"><span>Largest</span><b>{format_usd(lrg)}</b></div>
+                            <div class="sw-stat"><span>Buys</span><b>{nbuys}</b></div>
+                            <div class="sw-stat"><span>Sells</span><b>{nsells}</b></div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
 
                     with st.expander("Why this verdict?", expanded=True):
-                        st.markdown(f"""
-                        **Signal:** {wallet_signal}  
-                        **Reason:** {wallet_reason}  
-                        **Activity level:** {activity_level}
-                        """)
+                        st.markdown(f"**Signal:** {wsig}  \n**Reason:** {wreason}  \n**Activity:** {tlvl}")
 
-                    act_c1, act_c2, act_c3 = st.columns(3)
-                    with act_c1:
-                        if st.button("Add to Watchlist", key="sw_add_watchlist", use_container_width=True):
+                    ac1, ac2, ac3 = st.columns(3)
+                    with ac1:
+                        if st.button("Add to Watchlist", key="sw_add_wl", use_container_width=True):
                             add_wallet_to_watchlist({
-                                "Wallet": display_name, "Name": display_name,
-                                "Wallet Alias": display_name, "Full Wallet": wallet_addr.strip(),
-                                "Signal": wallet_signal, "Score": score_int,
-                                "Transfers": safe_int(transfers), "Swaps": safe_int(swaps),
-                                "USD Volume": vol, "Largest Tx": largest,
+                                "Wallet": dname, "Name": dname, "Wallet Alias": dname,
+                                "Full Wallet": wallet_addr.strip(), "Signal": wsig, "Score": sc,
+                                "Transfers": safe_int(tfr), "Swaps": safe_int(tsw),
+                                "USD Volume": vol, "Largest Tx": lrg,
                                 "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
                                 "Check Count": 1, "Pinned": False,
                             })
                             st.success("Added to Watchlist.")
-                    with act_c2:
-                        if st.button("Paper trade this wallet", key="sw_paper_trade", use_container_width=True):
+                    with ac2:
+                        if st.button("Paper trade", key="sw_paper", use_container_width=True):
                             st.session_state.main_navigation = "Paper Trading"
                             st.rerun()
-                    with act_c3:
-                        if st.button("View in Journal", key="sw_view_journal", use_container_width=True):
+                    with ac3:
+                        if st.button("View in Journal", key="sw_journal", use_container_width=True):
                             st.session_state.main_navigation = "Wallet Journal"
                             st.rerun()
 
             elif st.session_state.get("wallet_address_input"):
-                st.info(f"Last scanned: {compact_address(st.session_state.wallet_address_input)} — paste a new address or click Scan again.")
+                st.caption(f"Last scanned: {compact_address(st.session_state.wallet_address_input)} — paste a new address to scan again.")
 
-        with tab_discover:
-            st.markdown("Paste a token mint to find which wallets bought it early.")
-            disc_col, disc_btn_col = st.columns([0.8, 0.2])
-            with disc_col:
-                token_mint_input = st.text_input(
-                    "Token mint",
-                    placeholder="Paste Solana token mint address...",
-                    label_visibility="collapsed",
-                    key="sw_token_mint_input"
-                )
-            with disc_btn_col:
-                discover_clicked = st.button("Discover", key="sw_discover_btn", use_container_width=True, type="primary")
+        with tab_disc:
+            st.caption("Find wallets that bought a token early — paste a token mint address.")
+            dc1, dc2 = st.columns([0.8, 0.2])
+            with dc1:
+                mint_in = st.text_input("Token mint", placeholder="Paste token mint...", label_visibility="collapsed", key="sw_mint_input")
+            with dc2:
+                do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
 
-            if discover_clicked and token_mint_input.strip():
-                with st.spinner("Scanning for early wallets via Helius..."):
-                    discovered, disc_error = discover_wallets_from_token_helius(token_mint_input.strip(), max_wallets=15)
-                if disc_error or not discovered:
+            if do_disc and mint_in.strip():
+                with st.spinner("Scanning via Helius..."):
+                    disc, derr = discover_wallets_from_token_helius(mint_in.strip(), max_wallets=15)
+                if derr or not disc:
                     with st.spinner("Trying Solscan..."):
-                        discovered, disc_error = discover_wallets_from_token_solscan(token_mint_input.strip(), max_wallets=15)
-                if disc_error or not discovered:
-                    st.warning("No wallets found. Try a different token mint or check your API keys.")
+                        disc, derr = discover_wallets_from_token_solscan(mint_in.strip(), max_wallets=15)
+                if derr or not disc:
+                    st.warning("No wallets found. Try a different token mint.")
                 else:
-                    st.success(f"Found {len(discovered)} wallets.")
-                    disc_df = pd.DataFrame(discovered) if isinstance(discovered, list) and isinstance(discovered[0], dict) else pd.DataFrame()
-                    if not disc_df.empty:
+                    st.success(f"Found {len(disc)} early wallets.")
+                    if isinstance(disc, list) and disc and isinstance(disc[0], dict):
+                        disc_df = pd.DataFrame(disc)
                         st.dataframe(disc_df.head(15), use_container_width=True, hide_index=True)
                     else:
-                        st.write(discovered[:10])
+                        for w in disc[:10]:
+                            st.code(str(w))
 
         with tab_recent:
-            recent = st.session_state.get("recent_wallets", [])
-            if not recent:
-                st.info("No recently scanned wallets yet. Scan a wallet first.")
+            recent_ws = st.session_state.get("recent_wallets", [])
+            if not recent_ws:
+                st.info("No recently scanned wallets. Scan one first.")
             else:
-                for rw in recent[:10]:
+                st.markdown('<div class="sw-label">Recently scanned</div>', unsafe_allow_html=True)
+                for rw in recent_ws[:10]:
                     rw_str = str(rw).strip()
-                    rc1, rc2 = st.columns([0.8, 0.2])
-                    with rc1:
-                        st.markdown(f"`{compact_address(rw_str)}` — {wallet_display_name(rw_str)}")
-                    with rc2:
-                        if st.button("Scan", key=f"sw_recent_{rw_str[:8]}", use_container_width=True):
+                    r1, r2 = st.columns([0.8, 0.2])
+                    with r1:
+                        st.markdown(f"`{compact_address(rw_str, 10, 6)}` · {wallet_display_name(rw_str)}")
+                    with r2:
+                        if st.button("Load", key=f"sw_load_{rw_str[-8:]}", use_container_width=True):
                             st.session_state.wallet_address_input = rw_str
-                            st.session_state.sw_wallet_addr_input = rw_str
                             st.rerun()
 
 
@@ -12111,8 +12100,8 @@ with safe_section(section):
 
 
     elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
-        st.title("Auto Discovery")
-        st.caption("Market-wide DexScreener alpha radar: filter early tokens, then find fresh wallets around them.")
+        st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Token Finder</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:20px;">DexScreener radar — find fresh tokens early, then trace which wallets bought in first.</p>', unsafe_allow_html=True)
 
         st.markdown(
             """
