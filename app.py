@@ -146,55 +146,7 @@ PAPER_EVENTS_FILE = DATA_DIR / "paper_trading_events.json"
 MY_WALLETS_FILE = DATA_DIR / "my_wallets.json"
 
 
-def load_json_list(file_path):
-    if not file_path.exists():
-        return []
-
-    try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-        if isinstance(data, list):
-            return data
-
-        return []
-
-    except Exception:
-        return []
-
-
-def save_json_list(file_path, data):
-    try:
-        with open(file_path, "w", encoding="utf-8") as file:
-            json.dump(data, file, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
-
-
-
-def load_json_dict(file_path):
-    if not file_path.exists():
-        return {}
-
-    try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-        if isinstance(data, dict):
-            return data
-
-        return {}
-
-    except Exception:
-        return {}
-
-
-def save_json_dict(file_path, data):
-    try:
-        with open(file_path, "w", encoding="utf-8") as file:
-            json.dump(data, file, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+from storage import load_json_list, save_json_list, load_json_dict, save_json_dict, log_event, storage_status
 
 
 # Early numeric helpers used during session-state boot.
