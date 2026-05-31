@@ -304,6 +304,9 @@ if "selected_token_mint" not in st.session_state:
 if "section_override" not in st.session_state:
     st.session_state.section_override = None
 
+if "sw_detail_wallet" not in st.session_state:
+    st.session_state.sw_detail_wallet = ""
+
 if "last_auto_token_review" not in st.session_state:
     st.session_state.last_auto_token_review = pd.DataFrame()
 
@@ -2624,7 +2627,7 @@ def fetch_solscan_token_transfers(token_mint, limit=50):
         params = {
             "address": token_mint,
             "page": 1,
-            "page_size": 50,
+            "page_size": 40,
             "exclude_amount_zero": True,
             "sort_by": "block_time",
             "sort_order": "asc"
@@ -2712,87 +2715,53 @@ def extract_wallet_candidates_from_transfers(transfers, token_mint):
 
 
 def discover_wallets_from_token_solscan(token_mint, max_wallets=15):
-    """
-    Solscan-first wallet discovery.
-    Fetches earliest transfers (asc order) to find wallets that bought in early.
-    Scores each wallet via Helius transaction analysis.
-    Returns: (DataFrame, error_string_or_None)
-    """
     transfers, transfer_error = fetch_solscan_token_transfers(token_mint, limit=50)
-
     if transfer_error:
         return pd.DataFrame(), transfer_error
-
     candidates = extract_wallet_candidates_from_transfers(transfers, token_mint)
-
     if not candidates:
         return pd.DataFrame(), "No wallet candidates found in Solscan transfers."
-
     discovered_rows = []
-
     for rank, candidate in enumerate(candidates[:max_wallets]):
         wallet = str(candidate.get("Wallet", "")).strip()
         if not wallet:
             continue
         short_wallet = f"{wallet[:6]}...{wallet[-6:]}"
-        early_rank = rank + 1  # lower = earlier buyer
-
+        early_rank = rank + 1
         wallet_tx_data, wallet_error = fetch_wallet_transactions(wallet)
-
         if wallet_error or wallet_tx_data is None or wallet_tx_data.empty:
-            # Still add as candidate — early position is already a signal
             base_score = max(60 - (early_rank * 3), 20)
             discovered_rows.append({
-                "Wallet": short_wallet,
-                "Full Wallet": wallet,
-                "Score": base_score,
-                "Early Rank": early_rank,
-                "Type": "Early Buyer",
-                "Transfers": candidate.get("Transfers", 0),
-                "Swaps": "-",
-                "Verdict": "Watch first",
-                "Reason": f"Early buyer (rank #{early_rank}). Wallet scan failed — may be inactive.",
+                "Wallet": short_wallet, "Full Wallet": wallet,
+                "Score": base_score, "Early Rank": early_rank,
+                "Type": "Early Buyer", "Transfers": candidate.get("Transfers", 0),
+                "Swaps": 0, "Verdict": "Watch first",
+                "Reason": f"Early buyer (#{early_rank}). Wallet scan unavailable.",
                 "Source Token": shorten_mints(token_mint),
-                "Saved?": "New" if not wallet_already_saved(wallet) else "Saved"
+                "Saved?": "Saved" if wallet_already_saved(wallet) else "New"
             })
             continue
-
         total_tx, transfers_count, swaps, unknown, activity_level = summarize_wallet_activity(wallet_tx_data)
         wallet_signal, wallet_score, wallet_reason = get_wallet_signal(total_tx, transfers_count, swaps, unknown)
-
-        # Boost score for early position
         early_bonus = max(15 - (early_rank * 1), 0)
         final_score = min(safe_int(wallet_score) + early_bonus, 100)
-
-        if final_score >= 80:
-            wallet_type, verdict = "Alpha Scout", "Copy candidate"
-        elif final_score >= 65:
-            wallet_type, verdict = "Strong Early", "Watch closely"
-        elif swaps >= 3:
-            wallet_type, verdict = "Active Trader", "Paper trade first"
-        else:
-            wallet_type, verdict = "Early Buyer", "Needs proof"
-
+        if final_score >= 80: wtype, verdict = "Alpha Scout", "Copy candidate"
+        elif final_score >= 65: wtype, verdict = "Strong Early", "Watch closely"
+        elif swaps >= 3: wtype, verdict = "Active Trader", "Paper trade first"
+        else: wtype, verdict = "Early Buyer", "Needs proof"
         discovered_rows.append({
-            "Wallet": short_wallet,
-            "Full Wallet": wallet,
-            "Score": final_score,
-            "Early Rank": early_rank,
-            "Type": wallet_type,
-            "Transfers": candidate.get("Transfers", 0),
-            "Swaps": safe_int(swaps),
-            "Verdict": verdict,
-            "Reason": wallet_reason,
-            "Source Token": shorten_mints(token_mint),
-            "Saved?": "New" if not wallet_already_saved(wallet) else "Saved"
+            "Wallet": short_wallet, "Full Wallet": wallet,
+            "Score": final_score, "Early Rank": early_rank,
+            "Type": wtype, "Transfers": candidate.get("Transfers", 0),
+            "Swaps": safe_int(swaps), "Verdict": verdict,
+            "Reason": wallet_reason, "Source Token": shorten_mints(token_mint),
+            "Saved?": "Saved" if wallet_already_saved(wallet) else "New"
         })
-
     if not discovered_rows:
         return pd.DataFrame(), "No valid wallet candidates after analysis."
-
-    discovered_df = pd.DataFrame(discovered_rows)
-    discovered_df = discovered_df.sort_values(by=["Score", "Transfers"], ascending=False).reset_index(drop=True)
-    return discovered_df, None
+    df = pd.DataFrame(discovered_rows)
+    df = df.sort_values(by=["Score","Transfers"], ascending=False).reset_index(drop=True)
+    return df, None
 
 def shorten_mints(value):
     if not value or value == "-":
@@ -9958,6 +9927,7 @@ def render_wallet_documentation_cards(limit=10, only_pinned=False, compact=True,
                 with b2:
                     if st.button("Open", key=journal_button_key("wallet_doc_open", row_idx, full_wallet, key_scope)):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state.sw_detail_wallet = full_wallet
                         st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
@@ -10379,6 +10349,7 @@ def render_monitor_wallet_memory_cards(wallet_df, limit=8):
                 with b3:
                     if st.button("Open wallet", key=f"monitor_mem_open_{row_idx}_{full_wallet}"):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state.sw_detail_wallet = full_wallet
                         st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
@@ -11085,186 +11056,340 @@ with safe_section(section):
     elif section == "Smart Wallets":
         st.markdown("""
         <style>
-        .sw-page-title{font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px}
-        .sw-page-sub{font-size:14px;color:#5a5b62;margin-bottom:20px}
-        .sw-result{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:20px;margin-bottom:12px}
-        .sw-result-name{font-size:15px;font-weight:600;color:#f5f5f7;margin-bottom:2px}
-        .sw-result-addr{font-size:12px;color:#4a4b52;margin-bottom:10px;font-family:monospace}
-        .sw-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:12px}
-        .sw-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-        .sw-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-        .sw-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-        .sw-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-        .sw-stats{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px}
-        .sw-stat{display:flex;flex-direction:column}
-        .sw-stat span{font-size:11px;color:#4a4b52}
-        .sw-stat b{font-size:14px;font-weight:600;color:#c0c0c8}
-        .sw-label{font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.07em;text-transform:uppercase;margin:20px 0 8px}
-        .sw-recent-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #2a2b30;border-radius:10px;margin-bottom:6px}
-        .sw-recent-name{font-size:13px;color:#c0c0c8;font-weight:500}
-        .sw-recent-addr{font-size:11px;color:#4a4b52;font-family:monospace}
+        /* ── Smart Wallets page ── */
+        .sw-title{font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px}
+        .sw-sub{font-size:14px;color:#5a5b62;margin-bottom:20px}
+
+        /* Discovery results */
+        .disc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin:14px 0}
+        .disc-card{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:16px;transition:border-color .15s ease,transform .12s ease}
+        .disc-card:hover{border-color:#3a3b50;transform:translateY(-2px)}
+        .disc-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+        .disc-name{font-size:13px;font-weight:600;color:#f5f5f7;font-family:monospace}
+        .disc-rank{font-size:10px;color:#4a4b52;margin-top:2px}
+        .disc-score{font-size:20px;font-weight:700;color:#a78bfa}
+        .disc-score-label{font-size:10px;color:#4a4b52;text-align:right}
+        .disc-badge{display:inline-block;padding:3px 10px;border-radius:16px;font-size:10px;font-weight:700;letter-spacing:.03em;margin-bottom:10px}
+        .disc-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
+        .disc-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
+        .disc-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
+        .disc-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+        .disc-stats{display:flex;gap:12px;margin-bottom:10px}
+        .disc-stat{display:flex;flex-direction:column}
+        .disc-stat span{font-size:10px;color:#4a4b52}
+        .disc-stat b{font-size:13px;font-weight:600;color:#c0c0c8}
+        .disc-new{font-size:10px;color:#4ade80;font-weight:700}
+        .disc-saved{font-size:10px;color:#5a5b62}
+
+        /* Wallet detail page */
+        .wd-header{padding:28px 0 20px}
+        .wd-back{font-size:12px;color:#5a5b62;cursor:pointer;margin-bottom:12px;display:inline-flex;align-items:center;gap:6px}
+        .wd-name{font-size:22px;font-weight:600;color:#f5f5f7;margin-bottom:2px}
+        .wd-addr{font-size:12px;color:#4a4b52;font-family:monospace;margin-bottom:12px}
+        .wd-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em}
+        .wd-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
+        .wd-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
+        .wd-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
+        .wd-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+        .wd-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0}
+        .wd-stat{background:#1e1f23;border:1px solid #2a2b30;border-radius:12px;padding:14px}
+        .wd-stat span{display:block;font-size:11px;color:#4a4b52;margin-bottom:4px}
+        .wd-stat b{display:block;font-size:18px;font-weight:600;color:#f5f5f7}
+        .wd-stat b.up{color:#4ade80}
+        .wd-stat b.down{color:#f87171}
+        .wd-section{font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:22px 0 10px}
+        .wd-tx{background:#1e1f23;border:1px solid #2a2b30;border-radius:10px;padding:12px 14px;margin-bottom:6px;display:flex;align-items:center;gap:14px}
+        .wd-tx-side{width:50px;font-size:10px;font-weight:700;text-align:center;padding:3px 6px;border-radius:6px;flex-shrink:0}
+        .wd-tx-side.BUY{background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
+        .wd-tx-side.SELL{background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+        .wd-tx-side.SWAP{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
+        .wd-tx-side.OTHER{background:rgba(100,116,139,.12);color:#94a3b8;border:1px solid rgba(100,116,139,.2)}
+        .wd-tx-main{flex:1;min-width:0}
+        .wd-tx-desc{font-size:12px;color:#c0c0c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .wd-tx-time{font-size:11px;color:#4a4b52;margin-top:2px}
+        .wd-tx-amt{font-size:13px;font-weight:600;color:#c0c0c8;text-align:right;white-space:nowrap}
+        .wd-reason{background:#1a1b1f;border:1px solid #2a2b30;border-left:3px solid rgba(124,92,252,.5);border-radius:10px;padding:14px;margin-bottom:12px;font-size:13px;color:#9090a0;line-height:1.6}
+        .wd-reason b{color:#c0c0c8}
+        @media(max-width:768px){.wd-stats{grid-template-columns:repeat(2,1fr)}.disc-grid{grid-template-columns:1fr}}
         </style>
         """, unsafe_allow_html=True)
 
-        st.markdown('<div class="sw-page-title">Smart Wallets</div>', unsafe_allow_html=True)
-        st.markdown('<div class="sw-page-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
-
+        # ── State: are we on wallet detail or list view? ──
+        _detail_wallet = st.session_state.get("sw_detail_wallet", "")
         _prefill = st.session_state.get("wallet_address_input", "")
         _auto = st.session_state.pop("_sw_auto_scan", False)
 
-        tab_scan, tab_disc, tab_recent = st.tabs(["Scan wallet", "Discover from token", "Recent"])
+        if _auto and _prefill and not _detail_wallet:
+            st.session_state.sw_detail_wallet = _prefill
+            _detail_wallet = _prefill
 
-        with tab_scan:
-            c_in, c_btn = st.columns([0.8, 0.2])
-            with c_in:
-                _w_addr = st.text_input(
-                    "addr", value=_prefill,
-                    placeholder="Paste Solana wallet address...",
-                    label_visibility="collapsed", key="sw_addr_input"
-                )
-            with c_btn:
-                _do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
+        # ════════════════════
+        # WALLET DETAIL PAGE
+        # ════════════════════
+        if _detail_wallet:
+            if st.button("← Back to Smart Wallets", key="sw_back_btn"):
+                st.session_state.sw_detail_wallet = ""
+                st.rerun()
 
-            if (_do_scan or _auto) and _w_addr.strip():
-                st.session_state.wallet_address_input = _w_addr.strip()
-                add_recent_item("recent_wallets", _w_addr.strip())
-                with st.spinner("Fetching from Helius..."):
-                    _wtx, _werr = fetch_wallet_transactions(_w_addr.strip())
-                if _werr or _wtx is None or _wtx.empty:
-                    st.error("Could not fetch wallet. Check address or Helius API key.")
+            _dw = _detail_wallet.strip()
+            _dname = wallet_display_name(_dw)
+
+            st.markdown(f"""
+            <div class="wd-header">
+                <div class="wd-name">{_dname}</div>
+                <div class="wd-addr">{_dw}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.spinner("Loading wallet data..."):
+                _wtx, _werr = fetch_wallet_transactions(_dw, limit=20)
+
+            if _werr or _wtx is None or _wtx.empty:
+                st.error(f"Could not load wallet data: {_werr}")
+            else:
+                _ttx, _tfr, _tsw, _tun, _tlvl = summarize_wallet_activity(_wtx)
+                _wsig, _wscore, _wreason = get_wallet_signal(_ttx, _tfr, _tsw, _tun)
+                _usd = estimate_wallet_usd_stats(_wtx)
+                _nb, _ns, _nr = wallet_trade_counts(_wtx)
+                _sc = safe_int(_wscore)
+                _vol = safe_float(_usd.get("Total USD Volume", 0))
+                _lrg = safe_float(_usd.get("Largest USD Tx", 0))
+                _avg = safe_float(_usd.get("Average USD Tx", 0))
+
+                if _sc >= 80: _vcls, _vtxt = "alpha", "Alpha Scout"
+                elif _sc >= 65: _vcls, _vtxt = "watch", "Worth watching"
+                elif _sc >= 45: _vcls, _vtxt = "paper", "Paper trade first"
+                else: _vcls, _vtxt = "risky", "Needs more proof"
+
+                st.markdown(f'<div class="wd-badge {_vcls}">{_vtxt}</div>', unsafe_allow_html=True)
+
+                # ── Key stats ──
+                _pl_est = _vol * 0.0  # placeholder — real P/L needs token price tracking
+                st.markdown(f"""
+                <div class="wd-stats">
+                    <div class="wd-stat"><span>Alpha Score</span><b>{_sc}/100</b></div>
+                    <div class="wd-stat"><span>Signal</span><b>{_wsig}</b></div>
+                    <div class="wd-stat"><span>Total Tx</span><b>{_ttx}</b></div>
+                    <div class="wd-stat"><span>Total Swaps</span><b>{_tsw}</b></div>
+                    <div class="wd-stat"><span>Est. Volume</span><b>{format_usd(_vol)}</b></div>
+                    <div class="wd-stat"><span>Largest Tx</span><b>{format_usd(_lrg)}</b></div>
+                    <div class="wd-stat"><span>Avg Tx Size</span><b>{format_usd(_avg)}</b></div>
+                    <div class="wd-stat"><span>Activity Level</span><b>{_tlvl}</b></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Buy/Sell breakdown ──
+                _buy_col, _sell_col, _rot_col = st.columns(3)
+                with _buy_col:
+                    st.metric("Buys", _nb, delta=None)
+                with _sell_col:
+                    st.metric("Sells", _ns, delta=None)
+                with _rot_col:
+                    st.metric("Rotations", _nr, delta=None)
+
+                # ── Verdict reason ──
+                st.markdown(f"""
+                <div class="wd-reason">
+                    <b>Why this verdict:</b> {_wreason}<br>
+                    <b>Activity:</b> {_tlvl}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── History chart ──
+                _hist_df = wallet_history_dataframe(_dw)
+                if _hist_df is not None and not _hist_df.empty:
+                    st.markdown('<div class="wd-section">Score history</div>', unsafe_allow_html=True)
+                    render_wallet_history_chart(_dw, {"Full Wallet": _dw})
                 else:
-                    _ttx, _tfr, _tsw, _tun, _tlvl = summarize_wallet_activity(_wtx)
-                    _wsig, _wscore, _wreason = get_wallet_signal(_ttx, _tfr, _tsw, _tun)
-                    _usd = estimate_wallet_usd_stats(_wtx)
-                    _nb, _ns, _nr = wallet_trade_counts(_wtx)
-                    _sc = safe_int(_wscore)
-                    if _sc >= 80: _vcls, _vtxt = "alpha", "Alpha Scout"
-                    elif _sc >= 65: _vcls, _vtxt = "watch", "Worth watching"
-                    elif _sc >= 45: _vcls, _vtxt = "paper", "Paper trade first"
-                    else: _vcls, _vtxt = "risky", "Needs more proof"
+                    st.markdown('<div class="wd-section">Score history</div>', unsafe_allow_html=True)
+                    st.caption("No history yet. Add this wallet to your Watchlist and run Auto Scan to build history.")
 
-                    _dn = wallet_display_name(_w_addr.strip())
-                    _vol = safe_float(_usd.get("Total USD Volume", 0))
-                    _lrg = safe_float(_usd.get("Largest USD Tx", 0))
-
+                # ── Recent transactions ──
+                st.markdown('<div class="wd-section">Recent transactions</div>', unsafe_allow_html=True)
+                for _, _row in _wtx.iterrows():
+                    _side = str(_row.get("Trade Side", "OTHER")).upper()
+                    _side_cls = _side if _side in ["BUY","SELL","SWAP"] else "OTHER"
+                    _desc = str(_row.get("Description", "-"))[:80]
+                    _hint = str(_row.get("Trade Hint", ""))
+                    _time = str(_row.get("Timestamp", "-"))
+                    _main_tok = str(_row.get("Main Token", "-"))
+                    _main_amt = safe_float(_row.get("Main Token Amount", 0))
+                    _amt_str = f"{_main_amt:,.2f} {_main_tok}" if _main_amt else "-"
                     st.markdown(f"""
-                    <div class="sw-result">
-                        <div class="sw-result-name">{_dn}</div>
-                        <div class="sw-result-addr">{compact_address(_w_addr.strip(), 10, 6)}</div>
-                        <div class="sw-badge {_vcls}">{_vtxt}</div>
-                        <div class="sw-stats">
-                            <div class="sw-stat"><span>Score</span><b>{_sc}/100</b></div>
-                            <div class="sw-stat"><span>Signal</span><b>{_wsig}</b></div>
-                            <div class="sw-stat"><span>Tx</span><b>{_ttx}</b></div>
-                            <div class="sw-stat"><span>Swaps</span><b>{_tsw}</b></div>
-                            <div class="sw-stat"><span>Volume</span><b>{format_usd(_vol)}</b></div>
-                            <div class="sw-stat"><span>Largest</span><b>{format_usd(_lrg)}</b></div>
-                            <div class="sw-stat"><span>Buys</span><b>{_nb}</b></div>
-                            <div class="sw-stat"><span>Sells</span><b>{_ns}</b></div>
+                    <div class="wd-tx">
+                        <div class="wd-tx-side {_side_cls}">{_side_cls}</div>
+                        <div class="wd-tx-main">
+                            <div class="wd-tx-desc">{_hint or _desc}</div>
+                            <div class="wd-tx-time">{_time}</div>
                         </div>
+                        <div class="wd-tx-amt">{_amt_str}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
-                    with st.expander("Why this verdict?", expanded=True):
-                        st.markdown(f"**Signal:** {_wsig}  \n**Reason:** {_wreason}  \n**Activity:** {_tlvl}")
+                # ── Actions ──
+                st.markdown('<div class="wd-section">Actions</div>', unsafe_allow_html=True)
+                _ac1, _ac2, _ac3 = st.columns(3)
+                with _ac1:
+                    if st.button("Add to Watchlist", key="wd_add_wl", use_container_width=True):
+                        add_wallet_to_watchlist({
+                            "Wallet": _dname, "Name": _dname, "Wallet Alias": _dname,
+                            "Full Wallet": _dw, "Signal": _wsig, "Score": _sc,
+                            "Transfers": safe_int(_tfr), "Swaps": safe_int(_tsw),
+                            "USD Volume": _vol, "Largest Tx": _lrg,
+                            "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                            "Check Count": 1, "Pinned": False,
+                        })
+                        st.success("Added to Watchlist.")
+                with _ac2:
+                    if st.button("Paper trade", key="wd_paper", use_container_width=True):
+                        st.session_state.main_navigation = "Paper Trading"
+                        st.rerun()
+                with _ac3:
+                    if st.button("Open in Journal", key="wd_journal", use_container_width=True):
+                        st.session_state.main_navigation = "Wallet Journal"
+                        st.rerun()
 
-                    _a1, _a2, _a3 = st.columns(3)
-                    with _a1:
-                        if st.button("Add to Watchlist", key="sw_add_wl", use_container_width=True):
-                            add_wallet_to_watchlist({
-                                "Wallet": _dn, "Name": _dn, "Wallet Alias": _dn,
-                                "Full Wallet": _w_addr.strip(), "Signal": _wsig, "Score": _sc,
-                                "Transfers": safe_int(_tfr), "Swaps": safe_int(_tsw),
-                                "USD Volume": _vol, "Largest Tx": _lrg,
-                                "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                                "Check Count": 1, "Pinned": False,
-                            })
-                            st.success("Added to Watchlist.")
-                    with _a2:
-                        if st.button("Paper trade", key="sw_paper", use_container_width=True):
-                            st.session_state.main_navigation = "Paper Trading"
-                            st.rerun()
-                    with _a3:
-                        if st.button("View in Journal", key="sw_journal", use_container_width=True):
-                            st.session_state.main_navigation = "Wallet Journal"
-                            st.rerun()
+        # ════════════════════
+        # MAIN LIST VIEW
+        # ════════════════════
+        else:
+            st.markdown('<div class="sw-title">Smart Wallets</div>', unsafe_allow_html=True)
+            st.markdown('<div class="sw-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
 
-            elif _prefill and not _do_scan and not _auto:
-                st.caption(f"Pre-loaded: {compact_address(_prefill)} — click Scan to analyse.")
+            tab_scan, tab_disc, tab_recent = st.tabs(["Scan wallet", "Discover from token", "Recent"])
 
-        with tab_disc:
-            st.caption("Paste a token mint to find which wallets bought it early. Uses Solscan first, Helius as fallback.")
-            _dc1, _dc2 = st.columns([0.8, 0.2])
-            with _dc1:
-                _mint = st.text_input("mint", placeholder="Paste token mint address...",
-                                      label_visibility="collapsed", key="sw_mint_input")
-            with _dc2:
-                _do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
+            with tab_scan:
+                _c1, _c2 = st.columns([0.8, 0.2])
+                with _c1:
+                    _w_addr = st.text_input(
+                        "addr", value=_prefill,
+                        placeholder="Paste Solana wallet address...",
+                        label_visibility="collapsed", key="sw_addr_input"
+                    )
+                with _c2:
+                    _do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
 
-            if _do_disc and _mint.strip():
-                _ddf = None
-                _derr = None
-                with st.spinner("Scanning via Solscan (earliest buyers)..."):
-                    _ddf, _derr = discover_wallets_from_token_solscan(_mint.strip(), max_wallets=15)
-                if _derr or _ddf is None or (hasattr(_ddf, "empty") and _ddf.empty):
-                    with st.spinner("Trying Helius fallback..."):
-                        _ddf, _derr = discover_wallets_from_token_helius(_mint.strip(), max_wallets=15)
-                if _derr or _ddf is None or (hasattr(_ddf, "empty") and _ddf.empty):
-                    st.warning(f"No wallets found. {_derr or 'Try a different token mint.'}")
-                else:
-                    _dc = len(_ddf)
-                    st.success(f"Found {_dc} early wallets.")
-                    _show = [c for c in ["Wallet","Score","Early Rank","Type","Verdict","Transfers","Swaps","Saved?"] if c in _ddf.columns]
-                    st.dataframe(_ddf[_show].head(15), use_container_width=True, hide_index=True)
-                    st.markdown('<div class="sw-label">Quick actions</div>', unsafe_allow_html=True)
-                    for _di, _dr in _ddf.head(6).iterrows():
-                        _dfw = str(_dr.get("Full Wallet","")).strip()
-                        _dwn = str(_dr.get("Wallet", _dfw[:12])).strip()
-                        if not _dfw:
-                            continue
-                        _r1, _r2, _r3 = st.columns([0.5, 0.25, 0.25])
-                        with _r1:
-                            st.markdown(f"`{_dwn}` — Score **{safe_int(_dr.get('Score',0))}** · {_dr.get('Verdict','-')}")
-                        with _r2:
-                            if st.button("Scan", key=f"dsc_s_{_dfw[-8:]}", use_container_width=True):
-                                st.session_state.wallet_address_input = _dfw
-                                st.session_state._sw_auto_scan = True
-                                st.session_state.main_navigation = "Smart Wallets"
-                                st.rerun()
-                        with _r3:
-                            if st.button("Watchlist", key=f"dsc_w_{_dfw[-8:]}", use_container_width=True):
-                                add_wallet_to_watchlist({
-                                    "Wallet": _dwn, "Name": _dwn, "Wallet Alias": _dwn,
-                                    "Full Wallet": _dfw, "Signal": str(_dr.get("Type","Watch")),
-                                    "Score": safe_int(_dr.get("Score",30)),
-                                    "Transfers": safe_int(_dr.get("Transfers",0)), "Swaps": 0,
-                                    "USD Volume": 0, "Largest Tx": 0,
-                                    "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                                    "Check Count": 1, "Pinned": False,
-                                })
-                                st.success(f"Added.")
+                if _do_scan and _w_addr.strip():
+                    st.session_state.wallet_address_input = _w_addr.strip()
+                    st.session_state.sw_detail_wallet = _w_addr.strip()
+                    add_recent_item("recent_wallets", _w_addr.strip())
+                    st.rerun()
 
-        with tab_recent:
-            _rws = st.session_state.get("recent_wallets", [])
-            if not _rws:
-                st.info("No recently scanned wallets yet.")
-            else:
-                st.markdown('<div class="sw-label">Recently scanned</div>', unsafe_allow_html=True)
-                for _rw in _rws[:10]:
-                    _rs = str(_rw).strip()
-                    _rn, _rb = st.columns([0.82, 0.18])
-                    with _rn:
-                        st.markdown(f"""<div class="sw-recent-item">
-                            <div>
-                                <div class="sw-recent-name">{wallet_display_name(_rs)}</div>
-                                <div class="sw-recent-addr">{compact_address(_rs, 10, 6)}</div>
+            with tab_disc:
+                st.caption("Finds wallets that bought this token early. Uses Solscan → Helius fallback.")
+                _dc1, _dc2 = st.columns([0.8, 0.2])
+                with _dc1:
+                    _mint = st.text_input("mint", placeholder="Paste token mint address...",
+                                          label_visibility="collapsed", key="sw_mint_input")
+                with _dc2:
+                    _do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
+
+                if _do_disc and _mint.strip():
+                    _ddf = None
+                    _derr = None
+                    with st.spinner("Scanning via Solscan (earliest buyers first)..."):
+                        _ddf, _derr = discover_wallets_from_token_solscan(_mint.strip(), max_wallets=15)
+                    if _derr or _ddf is None or (hasattr(_ddf,"empty") and _ddf.empty):
+                        with st.spinner("Trying Helius fallback..."):
+                            _ddf, _derr = discover_wallets_from_token_helius(_mint.strip(), max_wallets=15)
+                    if _derr or _ddf is None or (hasattr(_ddf,"empty") and _ddf.empty):
+                        st.warning(f"No wallets found. {_derr or 'Try a different token mint.'}")
+                    else:
+                        st.success(f"Found {len(_ddf)} early wallets.")
+                        # ── Beautiful card grid ──
+                        st.markdown('<div class="disc-grid">', unsafe_allow_html=True)
+                        for _di, _dr in _ddf.head(12).iterrows():
+                            _dfw = str(_dr.get("Full Wallet","")).strip()
+                            _dwn = str(_dr.get("Wallet", _dfw[:12])).strip()
+                            _dsc = safe_int(_dr.get("Score",0))
+                            _drank = safe_int(_dr.get("Early Rank", _di+1))
+                            _dverd = str(_dr.get("Verdict","Watch first"))
+                            _dtype = str(_dr.get("Type","Buyer"))
+                            _dsaved = str(_dr.get("Saved?","New"))
+                            _dswaps = _dr.get("Swaps", 0)
+                            _dtransfers = safe_int(_dr.get("Transfers",0))
+                            if _dsc >= 75: _dbcls = "alpha"
+                            elif _dsc >= 60: _dbcls = "watch"
+                            elif _dsc >= 40: _dbcls = "paper"
+                            else: _dbcls = "risky"
+                            st.markdown(f"""
+                            <div class="disc-card">
+                                <div class="disc-card-top">
+                                    <div>
+                                        <div class="disc-name">{_dwn}</div>
+                                        <div class="disc-rank">#{_drank} early · {_dtype}</div>
+                                    </div>
+                                    <div>
+                                        <div class="disc-score">{_dsc}</div>
+                                        <div class="disc-score-label">score</div>
+                                    </div>
+                                </div>
+                                <div class="disc-badge {_dbcls}">{_dverd}</div>
+                                <div class="disc-stats">
+                                    <div class="disc-stat"><span>Swaps</span><b>{_dswaps}</b></div>
+                                    <div class="disc-stat"><span>Transfers</span><b>{_dtransfers}</b></div>
+                                </div>
+                                <div class="{'disc-new' if _dsaved == 'New' else 'disc-saved'}">{_dsaved}</div>
                             </div>
-                        </div>""", unsafe_allow_html=True)
-                    with _rb:
-                        if st.button("Open", key=f"sw_r_{_rs[-8:]}", use_container_width=True):
-                            st.session_state.wallet_address_input = _rs
-                            st.session_state._sw_auto_scan = True
-                            st.rerun()
+                            """, unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                        # ── Action buttons under grid ──
+                        st.markdown('<div style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 8px">Open or add a wallet</div>', unsafe_allow_html=True)
+                        for _di, _dr in _ddf.head(8).iterrows():
+                            _dfw = str(_dr.get("Full Wallet","")).strip()
+                            _dwn = str(_dr.get("Wallet", _dfw[:12])).strip()
+                            if not _dfw:
+                                continue
+                            _rb1, _rb2, _rb3 = st.columns([0.5, 0.25, 0.25])
+                            with _rb1:
+                                st.markdown(f"`{_dwn}` — **{safe_int(_dr.get('Score',0))}** pts · {_dr.get('Verdict','-')}")
+                            with _rb2:
+                                if st.button("Open", key=f"dw_{_dfw[-8:]}", use_container_width=True, type="primary"):
+                                    st.session_state.sw_detail_wallet = _dfw
+                                    st.session_state.wallet_address_input = _dfw
+                                    add_recent_item("recent_wallets", _dfw)
+                                    st.rerun()
+                            with _rb3:
+                                if st.button("Watchlist", key=f"dwl_{_dfw[-8:]}", use_container_width=True):
+                                    add_wallet_to_watchlist({
+                                        "Wallet": _dwn, "Name": _dwn, "Wallet Alias": _dwn,
+                                        "Full Wallet": _dfw, "Signal": str(_dr.get("Type","Watch")),
+                                        "Score": safe_int(_dr.get("Score",30)),
+                                        "Transfers": safe_int(_dr.get("Transfers",0)), "Swaps": 0,
+                                        "USD Volume": 0, "Largest Tx": 0,
+                                        "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                                        "Check Count": 1, "Pinned": False,
+                                    })
+                                    st.success(f"Added.")
+
+            with tab_recent:
+                _rws = st.session_state.get("recent_wallets", [])
+                if not _rws:
+                    st.info("No recently scanned wallets yet.")
+                else:
+                    st.markdown('<div style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:0 0 10px">Recently viewed</div>', unsafe_allow_html=True)
+                    _disc_grid = '<div class="disc-grid">'
+                    for _rw in _rws[:6]:
+                        _rs = str(_rw).strip()
+                        _rn = wallet_display_name(_rs)
+                        _disc_grid += f"""
+                        <div class="disc-card" style="cursor:default">
+                            <div class="disc-name">{_rs[:6]}...{_rs[-6:]}</div>
+                            <div class="disc-rank">{_rn}</div>
+                        </div>"""
+                    _disc_grid += '</div>'
+                    st.markdown(_disc_grid, unsafe_allow_html=True)
+                    for _rw in _rws[:8]:
+                        _rs = str(_rw).strip()
+                        _rn1, _rn2 = st.columns([0.82, 0.18])
+                        with _rn1:
+                            st.markdown(f"`{_rs[:6]}...{_rs[-6:]}` · {wallet_display_name(_rs)}")
+                        with _rn2:
+                            if st.button("Open", key=f"sw_r_{_rs[-8:]}", use_container_width=True, type="primary"):
+                                st.session_state.sw_detail_wallet = _rs
+                                st.session_state.wallet_address_input = _rs
+                                st.rerun()
 
 
     elif section == "Market Dashboard":
@@ -11626,6 +11751,7 @@ with safe_section(section):
                 with recent_open_col:
                     if st.button("Open", key=f"recent_open_wallet_{index}_{full_wallet}", type="secondary"):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state.sw_detail_wallet = full_wallet
                         st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
@@ -11656,7 +11782,7 @@ with safe_section(section):
 
     elif section == "Watchlist":
         st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Watchlist</p>', unsafe_allow_html=True)
-        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">Your radar — wallets worth watching, sorted by activity.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">Your radar — wallets sorted by activity and urgency.</p>', unsafe_allow_html=True)
 
         with st.expander("Start here: How to use the Watchlist", expanded=False):
             st.markdown(
@@ -12099,7 +12225,7 @@ with safe_section(section):
 
     elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
         st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Token Finder</p>', unsafe_allow_html=True)
-        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">DexScreener radar — find early tokens, trace which wallets bought first.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">DexScreener radar — find fresh tokens early, trace which wallets bought first.</p>', unsafe_allow_html=True)
 
         st.markdown(
             """
