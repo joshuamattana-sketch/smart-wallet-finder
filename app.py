@@ -5899,54 +5899,192 @@ def require_beta_login():
 
 require_beta_login()
 
-# -----------------------------
-# Sidebar navigation
-# -----------------------------
-st.sidebar.title("Smart Wallet Finder")
 
-st.sidebar.caption(f"{APP_BUILD_NAME} · safer UI")
-if st.session_state.get("beta_authenticated"):
-    if st.sidebar.button("Logout", key="sidebar_logout_beta"):
-        st.session_state.beta_authenticated = False
-        clear_beta_login_session()
-        st.rerun()
+# ─────────────────────────────────────────
+# SIDEBAR — Premium Navigation v2
+# ─────────────────────────────────────────
 
-nav_options = [
-    "Overview",
-    "Market Dashboard",
-    "Wallet Discovery",
-    "Smart Wallets",
-    "Token Scanner",
-    "Watchlist",
-    "Recent Trades",
-    "Auto Discovery",
-    "Market Monitor",
-    "Paper Trading",
-    "Wallet Journal",
-    "Settings"
+_SECTION_REMAP = {
+    "Overview": "Today",
+    "Market Dashboard": "Today",
+    "Token Scanner": "Token Finder",
+    "Auto Discovery": "Token Finder",
+    "Market Monitor": "Token Finder",
+    "Wallet Discovery": "Smart Wallets",
+    "Recent Trades": "Smart Wallets",
+    "AI Search": "Smart Wallets",
+}
+
+_NAV_ITEMS = [
+    ("Today",          "🏠", "main"),
+    ("Token Finder",   "🔍", "main"),
+    ("Smart Wallets",  "👛", "main"),
+    ("Wallet Journal", "📓", "track"),
+    ("Watchlist",      "⭐", "track"),
+    ("Paper Trading",  "📈", "track"),
+    ("Settings",       "⚙️",  "system"),
 ]
 
 if "main_navigation" not in st.session_state:
-    st.session_state.main_navigation = "Overview"
+    st.session_state.main_navigation = "Today"
 
 if st.session_state.section_override:
-    st.session_state.main_navigation = st.session_state.section_override
+    _mapped = _SECTION_REMAP.get(st.session_state.section_override, st.session_state.section_override)
+    _valid = [n for n,_,_ in _NAV_ITEMS]
+    if _mapped in _valid:
+        st.session_state.main_navigation = _mapped
     st.session_state.section_override = None
 
-section = st.sidebar.radio(
-    "Navigation",
-    nav_options,
-    key="main_navigation"
-)
+with st.sidebar:
+    st.markdown("""
+    <style>
+    section[data-testid="stSidebar"] {
+        width: 240px !important;
+        min-width: 240px !important;
+        max-width: 240px !important;
+        background: #18191c !important;
+        border-right: 1px solid #2a2b30 !important;
+    }
+    section[data-testid="stSidebar"] > div {
+        padding: 0 !important;
+    }
+    .nav-logo {
+        padding: 28px 20px 20px 20px;
+        border-bottom: 1px solid #2a2b30;
+        margin-bottom: 8px;
+    }
+    .nav-logo-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: #f5f5f7;
+        letter-spacing: -0.2px;
+    }
+    .nav-logo-sub {
+        font-size: 11px;
+        color: #4a4b52;
+        margin-top: 2px;
+        letter-spacing: 0.03em;
+    }
+    .nav-group {
+        padding: 14px 12px 4px 20px;
+        font-size: 10px;
+        font-weight: 600;
+        color: #3a3b42;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+    }
+    .nav-btn {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: calc(100% - 16px);
+        margin: 2px 8px;
+        padding: 9px 12px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        color: #8a8b92;
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        text-align: left;
+        transition: all 0.15s ease;
+    }
+    .nav-btn:hover {
+        background: #222328;
+        color: #d0d0d5;
+    }
+    .nav-btn.active {
+        background: #222328;
+        color: #f5f5f7;
+        font-weight: 600;
+    }
+    .nav-btn .nav-icon {
+        font-size: 15px;
+        width: 20px;
+        text-align: center;
+    }
+    .nav-btn .nav-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #7c5cfc;
+        margin-left: auto;
+    }
+    .nav-footer {
+        position: absolute;
+        bottom: 20px;
+        left: 0;
+        right: 0;
+        padding: 14px 20px;
+        border-top: 1px solid #2a2b30;
+        font-size: 11px;
+        color: #3a3b42;
+    }
+    </style>
 
-st.sidebar.divider()
+    <div class="nav-logo">
+        <div class="nav-logo-name">Smart Wallet Finder</div>
+        <div class="nav-logo-sub">PRIVATE BETA</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-chain = st.sidebar.selectbox("Blockchain", ["Solana", "Base", "Ethereum"])
-timeframe = st.sidebar.selectbox("Timeframe", ["24h", "7 days", "30 days"])
-min_score = st.sidebar.slider("Minimum Score", 0, 100, 60)
+    _current_group = None
+    _group_labels = {"main": "DISCOVER", "track": "TRACK", "system": "SYSTEM"}
 
+    for _name, _icon, _group in _NAV_ITEMS:
+        if _group != _current_group:
+            _current_group = _group
+            st.markdown(f'<div class="nav-group">{_group_labels[_group]}</div>', unsafe_allow_html=True)
+        _is_active = st.session_state.get("main_navigation") == _name
+        _active_class = "active" if _is_active else ""
+        _dot = '<span class="nav-dot"></span>' if _is_active else ""
+        st.markdown(f"""
+        <div class="nav-btn {_active_class}" id="navbtn_{_name}">
+            <span class="nav-icon">{_icon}</span>
+            <span>{_name}</span>
+            {_dot}
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button(_name, key=f"_nav_{_name}", use_container_width=True):
+            st.session_state.main_navigation = _name
+            st.rerun()
 
-# -----------------------------
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] .stButton button {
+        opacity: 0 !important;
+        position: absolute !important;
+        height: 44px !important;
+        width: 100% !important;
+        top: 0 !important;
+        left: 0 !important;
+        cursor: pointer !important;
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stSidebar"] .stButton {
+        position: relative !important;
+        margin-top: -44px !important;
+        height: 44px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    if st.session_state.get("beta_authenticated"):
+        if st.button("Logout", key="sidebar_logout_beta"):
+            st.session_state.beta_authenticated = False
+            clear_beta_login_session()
+            st.rerun()
+    st.markdown(f'<div style="font-size:10px;color:#3a3b42;padding:8px 0;">Solana · {APP_BUILD_VERSION}</div>', unsafe_allow_html=True)
+
+section = st.session_state.get("main_navigation", "Today")
+chain = "Solana"
+timeframe = "24h"
+min_score = 60
+
 # Real AI response
 # -----------------------------
 def ai_answer(question):
@@ -10516,947 +10654,343 @@ st.markdown(
 # -----------------------------
 
 with safe_section(section):
-    if section == "Overview":
-        st.markdown("""<div class="hero-card">
-        <div class="hero-kicker">Smart Wallet Finder</div>
-        <div class="hero-title">Start here</div>
-        <div class="hero-subtitle">
-            A guided command center for wallet movement, token review and the next best action. The app now shows real saved watchlist data instead of demo numbers.
-        </div>
-    </div>""", unsafe_allow_html=True)
-
+    if section == "Today":
+        # ── live data ──────────────────────────────────────────────
         wallet_count = len(st.session_state.watchlist_wallets)
-        token_count = len(st.session_state.watchlist_tokens)
+        token_count  = len(st.session_state.watchlist_tokens)
+        paper_trades = st.session_state.get("paper_trades", [])
+        active_trades = [t for t in paper_trades if not t.get("closed")]
+        pinned_count  = len([w for w in st.session_state.watchlist_wallets if wallet_is_pinned(w)])
+        journal_docs  = st.session_state.get("wallet_documentation", {})
+        strong_wallets = [k for k,v in journal_docs.items() if isinstance(v,dict) and v.get("verdict") in ["Strong thesis","Copy candidate","Promising"]]
+
         radar = build_watchlist_radar(st.session_state.watchlist_wallets) if wallet_count else {
-            "Moved Wallets": 0,
-            "Hot Wallets": 0,
-            "New Swaps": 0,
-            "Net Volume Change": 0,
-            "Highest Volume Change Wallet": "-",
-            "Highest Volume Change": 0
+            "Hot Wallets": 0, "Moved Wallets": 0,
+            "Net Volume Change": 0, "New Swaps": 0
         }
+        hot_count  = radar.get("Hot Wallets", 0)
+        move_count = radar.get("Moved Wallets", 0)
 
-        last_checked_values = [item.get("Last Checked", "") for item in st.session_state.watchlist_wallets if item.get("Last Checked")]
-        last_checked = max(last_checked_values) if last_checked_values else "not checked yet"
+        # paper P/L
+        total_pl = 0.0
+        risky_trades = []
+        for _t in active_trades:
+            try:
+                _pl = safe_float(_t.get("live_pnl_pct", _t.get("pnl_pct", 0)))
+                total_pl += _pl
+                _sl = safe_float(_t.get("stop_loss_pct", -25))
+                if _pl <= _sl * 0.8:
+                    risky_trades.append(_t)
+            except Exception:
+                pass
 
-        if radar["Hot Wallets"] > 0:
-            action_title = "Action needed: check hot wallets"
-            action_text = "Open Recent Trades, start with HOT / VOLUME SPIKE / NEW SWAPS, then use Analyze Token."
-            action_class = "human-pill-green"
-        elif radar["Moved Wallets"] > 0:
-            action_title = "Movement detected"
-            action_text = "Open Watchlist or Recent Trades and inspect the biggest mover first."
-            action_class = "human-pill-yellow"
-        elif wallet_count == 0:
-            action_title = "Add your first wallet"
-            action_text = "Start with Smart Wallets or Wallet Discovery. Once wallets are saved, the radar becomes useful."
-            action_class = ""
+        # ── CSS ────────────────────────────────────────────────────
+        st.markdown("""
+        <style>
+        .today-hero {
+            padding: 36px 0 28px 0;
+            margin-bottom: 8px;
+        }
+        .today-hero-kicker {
+            font-size: 12px;
+            font-weight: 600;
+            color: #7c5cfc;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .today-hero-title {
+            font-size: 38px;
+            font-weight: 700;
+            color: #f5f5f7;
+            letter-spacing: -1.2px;
+            line-height: 1.08;
+            margin-bottom: 6px;
+        }
+        .today-hero-sub {
+            font-size: 14px;
+            color: #5a5b62;
+            letter-spacing: -0.1px;
+        }
+        .today-stats {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+        .today-stat {
+            background: #1e1f23;
+            border: 1px solid #2a2b30;
+            border-radius: 18px;
+            padding: 20px 20px 16px;
+            transition: all 0.2s ease;
+        }
+        .today-stat:hover {
+            border-color: #3a3b42;
+            transform: translateY(-1px);
+        }
+        .today-stat-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #4a4b52;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .today-stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #f5f5f7;
+            letter-spacing: -1px;
+            line-height: 1;
+        }
+        .today-stat-value.green { color: #34d399; }
+        .today-stat-value.red   { color: #f87171; }
+        .today-stat-value.purple { color: #a78bfa; }
+        .today-stat-sub {
+            font-size: 11px;
+            color: #4a4b52;
+            margin-top: 6px;
+        }
+        .today-section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #4a4b52;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+        }
+        .today-cards {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+        .today-card {
+            background: #1e1f23;
+            border: 1px solid #2a2b30;
+            border-radius: 18px;
+            padding: 22px 20px;
+            transition: all 0.2s ease;
+            cursor: default;
+        }
+        .today-card:hover {
+            border-color: #3a3b42;
+            transform: translateY(-2px);
+        }
+        .today-card-icon {
+            font-size: 22px;
+            margin-bottom: 14px;
+        }
+        .today-card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #f5f5f7;
+            margin-bottom: 5px;
+            letter-spacing: -0.2px;
+        }
+        .today-card-sub {
+            font-size: 12px;
+            color: #5a5b62;
+            line-height: 1.5;
+        }
+        .today-card.highlight {
+            border-color: #7c5cfc;
+            background: #1a1825;
+        }
+        .today-card.warning {
+            border-color: #f59e0b;
+            background: #1c1a14;
+        }
+        .today-card.success {
+            border-color: #34d399;
+            background: #141c1a;
+        }
+        .today-alert {
+            background: #1c1418;
+            border: 1px solid #7f1d1d;
+            border-left: 3px solid #f87171;
+            border-radius: 14px;
+            padding: 16px 20px;
+            margin-bottom: 28px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .today-alert-icon { font-size: 18px; }
+        .today-alert-text { font-size: 13px; color: #fca5a5; line-height: 1.5; }
+        .today-alert-title { font-weight: 600; color: #fecaca; margin-bottom: 3px; }
+        .today-action-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 28px;
+        }
+        .today-action-btn {
+            background: #222328;
+            border: 1px solid #2a2b30;
+            border-radius: 10px;
+            padding: 9px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #d0d0d5;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .today-action-btn:hover {
+            background: #2a2b30;
+            border-color: #3a3b42;
+            color: #f5f5f7;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # ── Hero ───────────────────────────────────────────────────
+        import datetime as _datetime
+        _day = _datetime.datetime.now().strftime("%A, %B %-d") if hasattr(_datetime.datetime.now(), 'strftime') else "Today"
+        try:
+            _day = _datetime.datetime.now().strftime("%A, %B %d").replace(" 0", " ")
+        except Exception:
+            _day = "Today"
+
+        _greeting = "Good morning" if _datetime.datetime.now().hour < 12 else ("Good afternoon" if _datetime.datetime.now().hour < 18 else "Good evening")
+
+        st.markdown(f"""
+        <div class="today-hero">
+            <div class="today-hero-kicker">Smart Wallet Finder · Private Beta</div>
+            <div class="today-hero-title">{_greeting}.</div>
+            <div class="today-hero-sub">{_day} · here's what matters right now</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Stats row ──────────────────────────────────────────────
+        _pl_class = "green" if total_pl >= 0 else "red"
+        _pl_str   = f"+{total_pl:.0f}%" if total_pl >= 0 else f"{total_pl:.0f}%"
+        _hot_class = "purple" if hot_count > 0 else ""
+
+        st.markdown(f"""
+        <div class="today-stats">
+            <div class="today-stat">
+                <div class="today-stat-label">Wallets watched</div>
+                <div class="today-stat-value">{wallet_count}</div>
+                <div class="today-stat-sub">{pinned_count} pinned · {len(strong_wallets)} strong thesis</div>
+            </div>
+            <div class="today-stat">
+                <div class="today-stat-label">Paper P/L</div>
+                <div class="today-stat-value {_pl_class}">{_pl_str if active_trades else "—"}</div>
+                <div class="today-stat-sub">{len(active_trades)} active trade{"s" if len(active_trades) != 1 else ""}</div>
+            </div>
+            <div class="today-stat">
+                <div class="today-stat-label">Hot wallets</div>
+                <div class="today-stat-value {_hot_class}">{hot_count}</div>
+                <div class="today-stat-sub">{move_count} moved · {token_count} tokens saved</div>
+            </div>
+            <div class="today-stat">
+                <div class="today-stat-label">Risky trades</div>
+                <div class="today-stat-value {"red" if risky_trades else ""}">{len(risky_trades)}</div>
+                <div class="today-stat-sub">{"near stop loss" if risky_trades else "all trades safe"}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Alert if risky trades ──────────────────────────────────
+        if risky_trades:
+            _rt = risky_trades[0]
+            _rt_name = str(_rt.get("token", _rt.get("token_mint", "Unknown")))[:12]
+            _rt_pl   = safe_float(_rt.get("live_pnl_pct", _rt.get("pnl_pct", 0)))
+            st.markdown(f"""
+            <div class="today-alert">
+                <div class="today-alert-icon">⚠️</div>
+                <div class="today-alert-text">
+                    <div class="today-alert-title">Trade alert — {_rt_name}</div>
+                    Position is at {_rt_pl:.1f}% and approaching your stop loss. Review it in Paper Trading.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── What to do now ─────────────────────────────────────────
+        st.markdown('<div class="today-section-label">What to do now</div>', unsafe_allow_html=True)
+
+        # build dynamic cards
+        _cards = []
+
+        if hot_count > 0:
+            _cards.append(("highlight", "🔥", f"{hot_count} hot wallet{'s' if hot_count!=1 else ''} right now", "Something just moved. Check Smart Wallets → Recent Trades first."))
+        elif move_count > 0:
+            _cards.append(("", "👁️", f"{move_count} wallet{'s' if move_count!=1 else ''} moved", "No urgent spike but activity detected. Worth a quick look."))
         else:
-            action_title = "No urgent movement"
-            action_text = "Turn on Auto Update or leave the app open while the watchlist builds a story."
-            action_class = ""
+            _cards.append(("", "💤", "No urgent wallet movement", "All quiet. Keep Auto Scan running to catch the next move early."))
 
-        st.markdown(
-            f"""<div class="human-topbar">
-                <div class="human-topbar-row">
-                    <div>
-                        <div class="human-title">{action_title}</div>
-                        <div class="human-subtitle">{action_text}</div>
-                    </div>
-                    <div class="human-pill {action_class}">NEXT BEST ACTION</div>
-                </div>
-                <div class="human-summary-grid">
-                    <div><span>Saved Wallets</span><strong>{wallet_count}</strong></div>
-                    <div><span>Saved Tokens</span><strong>{token_count}</strong></div>
-                    <div><span>Hot Wallets</span><strong>{radar["Hot Wallets"]}</strong></div>
-                    <div><span>Moved Wallets</span><strong>{radar["Moved Wallets"]}</strong></div>
-                    <div><span>Net Volume</span><strong class="{movement_class(radar["Net Volume Change"])}">{format_signed_usd(radar["Net Volume Change"])}</strong></div>
-                    <div><span>Last Check</span><strong>{last_checked}</strong></div>
-                </div>
-            </div>""",
-            unsafe_allow_html=True
-        )
+        if token_count == 0:
+            _cards.append(("", "🔍", "Find your first token", "Open Token Finder and run a scan. The engine looks for fresh, early Solana tokens."))
+        else:
+            _cards.append(("success", "🔍", f"{token_count} token{'s' if token_count!=1 else ''} on your list", "Token Finder is tracking these. Run a fresh scan to see what's moved."))
 
-        with st.expander("How to use this app", expanded=False):
-            st.markdown(
-                """
-                **Simple workflow:**  
-                1. Add wallets from **Smart Wallets** or **Wallet Discovery**.  
-                2. Open **Watchlist** and turn **Auto Update** on.  
-                3. Watch **Needs attention** and ignore quiet wallets.  
-                4. Open wallet charts when you want the story behind a spike.  
-                5. Use **Analyze Token** when a wallet shows a new token.
-                """
-            )
+        if not active_trades:
+            _cards.append(("", "📈", "No paper trades active", "Set up a fake trade in Paper Trading to test a wallet before risking real money."))
+        elif len(risky_trades) > 0:
+            _cards.append(("warning", "📈", f"{len(risky_trades)} trade near stop loss", "Review your Paper Trading positions. One is getting close to your limit."))
+        else:
+            _cards.append(("success", "📈", f"{len(active_trades)} trade{'s' if len(active_trades)!=1 else ''} active", f"Paper P/L today: {_pl_str}. Things look {'good' if total_pl>=0 else 'rough'}."))
 
-        c1, c2, c3, c4 = st.columns([0.22, 0.22, 0.22, 0.34])
-        with c1:
-            if st.button("Open Watchlist", key="overview_go_watchlist"):
-                st.session_state.section_override = "Watchlist"
+        _card_html = '<div class="today-cards">'
+        for _cls, _icon, _title, _sub in _cards:
+            _card_html += f"""
+            <div class="today-card {_cls}">
+                <div class="today-card-icon">{_icon}</div>
+                <div class="today-card-title">{_title}</div>
+                <div class="today-card-sub">{_sub}</div>
+            </div>"""
+        _card_html += "</div>"
+        st.markdown(_card_html, unsafe_allow_html=True)
+
+        # ── Quick navigation buttons ───────────────────────────────
+        st.markdown('<div class="today-section-label">Quick jump</div>', unsafe_allow_html=True)
+        _qc = st.columns(4)
+        with _qc[0]:
+            if st.button("🔍  Token Finder", key="today_go_token", use_container_width=True):
+                st.session_state.main_navigation = "Token Finder"
                 st.rerun()
-        with c2:
-            if st.button("Open Recent Trades", key="overview_go_recent"):
-                st.session_state.section_override = "Recent Trades"
+        with _qc[1]:
+            if st.button("👛  Smart Wallets", key="today_go_wallets", use_container_width=True):
+                st.session_state.main_navigation = "Smart Wallets"
                 st.rerun()
-        with c3:
-            if st.button("Scan Wallet", key="overview_go_smart"):
-                st.session_state.section_override = "Smart Wallets"
+        with _qc[2]:
+            if st.button("📓  Journal", key="today_go_journal", use_container_width=True):
+                st.session_state.main_navigation = "Wallet Journal"
                 st.rerun()
-        with c4:
-            if st.button("Discover Wallets from Token", key="overview_go_discovery"):
-                st.session_state.section_override = "Wallet Discovery"
+        with _qc[3]:
+            if st.button("📈  Paper Trading", key="today_go_paper", use_container_width=True):
+                st.session_state.main_navigation = "Paper Trading"
                 st.rerun()
 
+        # ── Top attention wallets (if any) ─────────────────────────
         if st.session_state.watchlist_wallets:
-            st.markdown('<div class="section-title">Top attention wallets</div>', unsafe_allow_html=True)
             attention = []
-            for index, item in sorted_watchlist_pairs(st.session_state.watchlist_wallets, "Highest movement"):
-                status, status_class, status_hint = wallet_movement_status(item)
-                score_change, swaps_change, transfers_change, volume_change, largest_change = wallet_movement_values(item)
-                if status in ["HOT", "VOLUME SPIKE", "NEW SWAPS", "NEW TRANSFERS", "SCORE UP"] or abs(volume_change) >= 25:
-                    attention.append((index, item, status, status_hint))
+            for _idx, _item in sorted_watchlist_pairs(st.session_state.watchlist_wallets, "Highest movement"):
+                _status, _, _hint = wallet_movement_status(_item)
+                _, _sc, _tc, _vc, _lc = wallet_movement_values(_item)
+                if _status in ["HOT","VOLUME SPIKE","NEW SWAPS","NEW TRANSFERS","SCORE UP"] or abs(_vc) >= 25:
+                    attention.append((_idx, _item, _status, _hint))
 
             if attention:
-                for index, item, status, status_hint in attention[:3]:
-                    full_wallet = item.get("Full Wallet", "-")
-                    wallet = wallet_watchlist_item_name(item)
-                    latest_token_mint = item.get("Latest Token Mint", "") or extract_first_token_mint(item.get("Latest Activity", ""))
-                    token_hint = latest_token_mint[:6] + "..." + latest_token_mint[-6:] if latest_token_mint else "No token"
-                    latest_trade_side = item.get("Latest Trade Side", "-")
-                    latest_trade_token = item.get("Latest Trade Token", "-")
-                    latest_trade_hint = item.get("Latest Trade Hint", "-")
-                    trade_badge_class = trade_side_badge_class(latest_trade_side)
-                    _, swaps_change, transfers_change, volume_change, largest_change = wallet_movement_values(item)
-                    st.markdown(
-                        f"""<div class="human-card human-card-up">
-                            <div class="human-card-top">
-                                <div><div class="human-wallet">{wallet}</div><div class="human-meta-line">{status_hint}</div></div>
-                                <div class="human-pill human-pill-green">{status}</div>
-                            </div>
-                            <div class="human-deltas">
-                                <div><span>Swaps</span><strong class="{movement_class(swaps_change)}">{format_signed_number(swaps_change)}</strong></div>
-                                <div><span>Transfers</span><strong class="{movement_class(transfers_change)}">{format_signed_number(transfers_change)}</strong></div>
-                                <div><span>Volume</span><strong class="{movement_class(volume_change)}">{format_signed_usd(volume_change)}</strong></div>
-                                <div><span>Largest Tx</span><strong class="{movement_class(largest_change)}">{format_signed_usd(largest_change)}</strong></div>
-                                <div><span>Token</span><strong>{token_hint}</strong></div>
-                            </div>
-                        </div>""",
-                        unsafe_allow_html=True
-                    )
-                    with st.expander(f"Chart / story for {wallet}", expanded=False):
-                        history_points_for_wallet = wallet_history_point_count(full_wallet)
-                        reset_col, reset_hint_col = st.columns([0.18, 0.82])
-                        with reset_col:
-                            if st.button("Reset chart", key=f"wallet_reset_chart_{index}_{full_wallet}", type="secondary", disabled=history_points_for_wallet == 0):
-                                clear_wallet_history_for_wallet(full_wallet)
-                                st.rerun()
-                        with reset_hint_col:
-                            st.caption(f"Chart points saved: {history_points_for_wallet}. Reset only clears this wallet chart, not the wallet itself.")
-                        render_wallet_history_chart(full_wallet, item)
-            else:
-                st.info("No attention wallets right now. Open Watchlist and keep Auto Update running.")
-        else:
-            st.info("No live watchlist data yet. Add a wallet first, then this page will show the real radar.")
-
-    elif section == "Wallet Discovery":
-        st.title("Wallet Discovery")
-        st.caption("Find and score interesting wallets from token activity.")
-
-        if st.session_state.recent_token_mints:
-            picked_recent_discovery_token = st.selectbox(
-                "Recently used token mints",
-                [""] + st.session_state.recent_token_mints,
-                key="recent_discovery_token_select"
-            )
-
-            if picked_recent_discovery_token:
-                st.session_state.discovery_token_mint = picked_recent_discovery_token
-
-        discovery_token_mint = st.text_input(
-            "Token mint",
-            placeholder="Paste token mint address here",
-            key="discovery_token_mint"
-        )
-
-        col_discover, col_clear = st.columns([0.25, 0.75])
-
-        with col_discover:
-            run_discovery = st.button(
-                "Discover Wallets",
-                key="run_wallet_discovery"
-            )
-
-        with col_clear:
-            if st.button(
-                "Clear",
-                key="clear_wallet_discovery"
-            ):
-                st.session_state.discovered_wallets = pd.DataFrame()
-                st.rerun()
-
-        if "discovered_wallets" not in st.session_state:
-            st.session_state.discovered_wallets = pd.DataFrame()
-
-        if run_discovery:
-            st.session_state.discovery_add_message = ""
-
-            if not discovery_token_mint.strip():
-                st.warning("Paste a token mint first.")
-            else:
-                add_recent_item("recent_token_mints", discovery_token_mint.strip())
-                token_data, error = fetch_token_pairs("solana", discovery_token_mint.strip())
-
-                if error or token_data is None or token_data.empty:
-                    st.warning("No market data found for this token.")
-                    st.session_state.discovered_wallets = pd.DataFrame()
-                else:
-                    best_pair = token_data.iloc[0]
-
-                    st.success("Token market data loaded.")
-
-                    with st.spinner("Discovering wallets from Solscan transfers and scoring with Helius..."):
-                        discovered_df, discovery_error = discover_wallets_from_token_solscan(
-                            discovery_token_mint.strip(),
-                            max_wallets=10
-                        )
-
-                        if discovery_error and "401" in str(discovery_error):
-                            discovered_df, discovery_error = discover_wallets_from_token_helius(
-                                discovery_token_mint.strip(),
-                                max_wallets=10
-                            )
-
-                    if discovery_error:
-                        st.warning(discovery_error)
-                        st.session_state.discovered_wallets = pd.DataFrame()
-                    else:
-                        st.success("Wallet discovery completed.")
-                        st.session_state.discovered_wallets = discovered_df
-
-                        if "discovery_add_message" in st.session_state and st.session_state.discovery_add_message:
-                            st.success(st.session_state.discovery_add_message)
-
-        if not st.session_state.discovered_wallets.empty:
-            st.markdown('<div class="section-title">Discovered Wallets</div>', unsafe_allow_html=True)
-
-            if "discovery_add_message" in st.session_state and st.session_state.discovery_add_message:
-                st.success(st.session_state.discovery_add_message)
-
-            compact_wallets = st.session_state.discovered_wallets.copy()
-
-            compact_wallets = compact_wallets.sort_values(
-                by=["Score", "Swaps"],
-                ascending=False
-            ).head(8)
-
-            for index, row in compact_wallets.iterrows():
-                wallet = row.get("Wallet", "-")
-                full_wallet = row.get("Full Wallet", "")
-                score = row.get("Score", "-")
-                wallet_type = row.get("Type", "-")
-                hits = row.get("Hits", row.get("Transfers", "-"))
-                swaps = row.get("Swaps", "-")
-                reason = str(row.get("Reason", "-"))
-
-                try:
-                    display_score = int(score)
-                except Exception:
-                    display_score = 0
-
-                try:
-                    display_hits = int(hits)
-                except Exception:
-                    display_hits = 0
-
-                try:
-                    display_swaps = int(swaps)
-                except Exception:
-                    display_swaps = 0
-
-                if display_hits >= 40 and display_swaps >= 8:
-                    display_score = max(display_score, 92)
-                elif display_hits >= 40 and display_swaps >= 6:
-                    display_score = max(display_score, 85)
-                elif display_hits >= 40 and display_swaps >= 4:
-                    display_score = max(display_score, 78)
-                elif display_hits >= 20 and display_swaps >= 4:
-                    display_score = max(display_score, 70)
-
-                if display_score >= 85:
-                    wallet_type = "Strong Candidate"
-                elif display_score >= 70:
-                    wallet_type = "Watch Candidate"
-                elif display_swaps >= 2:
-                    wallet_type = "Active Trader"
-
-                if display_score >= 85:
-                    reason = "High activity and strong swap behavior. Good wallet to monitor for early token discovery."
-                elif display_score >= 70:
-                    reason = "Promising wallet activity. Worth watching, but not the strongest signal yet."
-
-                if len(reason) > 110:
-                    reason = reason[:110] + "..."
-
-                                   
-
-                if len(reason) > 110:
-                    reason = reason[:110] + "..."
-
-                card_html = (
-                    f'<div class="discovery-card">'
-                    f'<div class="discovery-card-top">'
-                    f'<div>'
-                    f'<div class="discovery-wallet">{wallet}</div>'
-                    f'<div class="discovery-subtitle">Found from token activity</div>'
-                    f'</div>'
-                    f'<div class="discovery-rating">{display_score}/100</div>'
-                    f'</div>'
-                    f'<div class="discovery-grid">'
-                    f'<div><span>Wallet Type</span><strong>{wallet_type}</strong></div>'
-                    f'<div><span>Activity</span><strong>{hits} hits / {swaps} swaps</strong></div>'
-                    f'<div><span>Why it matters</span><strong>{reason}</strong></div>'
-                    f'</div>'
-                    f'</div>'
-                )
-
-                st.markdown(card_html, unsafe_allow_html=True)
-                add_col_1, add_col_2 = st.columns([0.16, 0.84])
-
-                watchlist_item = {
-        "Wallet": wallet,
-        "Full Wallet": full_wallet,
-        "Signal": row.get("Signal", row.get("Type", "Watch")),
-        "Score": row.get("Score", 0),
-        "Transfers": row.get("Transfers", row.get("Hits", 0)),
-        "Swaps": row.get("Swaps", 0),
-        "USD Volume": row.get("USD Volume", 0),
-        "Largest Tx": row.get("Largest Tx", 0),
-        "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-        "Check Count": 1,
-        "Last Swaps": row.get("Swaps", 0),
-        "Last Transfers": row.get("Transfers", row.get("Hits", 0)),
-        "Last USD Volume": row.get("USD Volume", 0),
-        "Previous Score": row.get("Score", 0),
-        "Previous Swaps": row.get("Swaps", 0),
-        "Previous Transfers": row.get("Transfers", row.get("Hits", 0)),
-        "Previous USD Volume": row.get("USD Volume", 0),
-        "Previous Largest Tx": row.get("Largest Tx", 0),
-        "Score Change": 0,
-        "Swaps Change": 0,
-        "Transfers Change": 0,
-        "USD Volume Change": 0,
-        "Largest Tx Change": 0,
-        "Latest Activity": "Added from discovery",
-        "Latest Token Mint": "",
-        "Change": "New wallet"
-    }
-
-                add_col, open_col, info_col = st.columns([0.12, 0.18, 0.70])
-
-                with add_col:
-                    if st.button("Add", key=f"add_discovered_wallet_{index}_{full_wallet}"):
-                        add_wallet_to_watchlist(watchlist_item)
-                        st.session_state.discovery_add_message = st.session_state.watchlist_message
-                        st.rerun()
-
-                with open_col:
-                    if st.button("Analyze", key=f"open_discovered_wallet_{index}_{full_wallet}"):
-                       st.session_state.wallet_address_input = full_wallet
-                       add_recent_item("recent_wallets", full_wallet)
-                       st.session_state.section_override = "Smart Wallets"
-                       st.rerun()
-
-                    with info_col:
-                        st.caption(f"Full wallet: {full_wallet[:10]}...{full_wallet[-10:]}")
-
-
-    elif section == "Smart Wallets":
-        st.title("Smart Wallets")
-        st.caption("Analyze wallet behavior, early entries, win rate and score.")
-
-        st.markdown('<div class="section-title">Wallet Lookup</div>', unsafe_allow_html=True)
-
-        if st.session_state.recent_wallets:
-            picked_recent_wallet = st.selectbox(
-                "Recently used wallets",
-                [""] + st.session_state.recent_wallets,
-                key="recent_wallet_select"
-            )
-
-            if picked_recent_wallet:
-                st.session_state.wallet_address_input = picked_recent_wallet
-
-        wallet_address = st.text_input(
-            "Wallet address",
-            placeholder="Paste a Solana wallet address...",
-            key="wallet_address_input"
-        )
-
-        scan_clicked = st.button("Scan Wallet")
-
-        if scan_clicked:
-            add_recent_item("recent_wallets", wallet_address.strip())
-
-            if wallet_address.strip():
-                short_wallet = f"{wallet_address[:6]}...{wallet_address[-6:]}"
-
-                with st.spinner("Fetching wallet activity from Helius..."):
-                    wallet_tx_data, wallet_error = fetch_wallet_transactions(wallet_address.strip())
-
-                if wallet_error:
-                    st.warning(wallet_error)
-                    st.session_state.last_wallet_scan = None
-
-                else:
-                    total_tx, transfers, swaps, unknown, activity_level = summarize_wallet_activity(wallet_tx_data)
-                    usd_stats = estimate_wallet_usd_stats(wallet_tx_data)
-
-                    wallet_signal, wallet_score, wallet_reason = get_wallet_signal(
-                        total_tx,
-                        transfers,
-                        swaps,
-                        unknown
-                    )
-
-                    behavior, next_check = wallet_insight_text(
-                        activity_level,
-                        transfers,
-                        swaps,
-                        unknown,
-                        wallet_signal
-                    )
-
-                    st.session_state.last_wallet_scan = {
-        "wallet_address": wallet_address.strip(),
-        "short_wallet": short_wallet,
-        "wallet_tx_data": wallet_tx_data,
-        "total_tx": total_tx,
-        "transfers": transfers,
-        "swaps": swaps,
-        "unknown": unknown,
-        "activity_level": activity_level,
-        "wallet_signal": wallet_signal,
-        "wallet_score": wallet_score,
-        "wallet_reason": wallet_reason,
-        "behavior": behavior,
-        "next_check": next_check,
-        "usd_stats": usd_stats
-    }
-
-                    st.session_state.watchlist_message = ""
-
-                    st.session_state.last_auto_token_review = pd.DataFrame()
-
-            else:
-                st.session_state.last_wallet_scan = None
-                st.warning("Enter a wallet address first.")
-
-        scan = st.session_state.last_wallet_scan
-        swapped_rows = []
-
-        if scan:
-            wallet_address = scan["wallet_address"]
-            short_wallet = scan["short_wallet"]
-            wallet_tx_data = scan["wallet_tx_data"]
-            total_tx = scan["total_tx"]
-            transfers = scan["transfers"]
-            swaps = scan["swaps"]
-            unknown = scan["unknown"]
-            activity_level = scan["activity_level"]
-            wallet_signal = scan["wallet_signal"]
-            wallet_score = scan["wallet_score"]
-            wallet_reason = scan["wallet_reason"]
-            behavior = scan["behavior"]
-            next_check = scan["next_check"]
-            usd_stats = scan.get("usd_stats", {})
-
-            st.success("Wallet data loaded.")
-
-            wallet_preview_html = f'<div class="wallet-preview-card"><div class="wallet-preview-top"><div><div class="wallet-preview-title">Wallet Preview</div><div class="wallet-preview-subtitle">Live Helius transaction data</div></div><div class="wallet-preview-pill">Live API</div></div><div class="wallet-preview-address">{short_wallet}</div><div class="wallet-preview-grid"><div><span>Status</span><strong>Loaded</strong></div><div><span>Network</span><strong>Solana</strong></div><div><span>Transactions</span><strong>{len(wallet_tx_data)}</strong></div></div></div>'
-
-            st.markdown(wallet_preview_html, unsafe_allow_html=True)
-
-            signal_class_map = {
-                "Monitor": "signal-monitor",
-                "Watch": "signal-watch",
-                "Needs More Data": "signal-needs",
-                "Ignore": "signal-ignore"
-            }
-
-            signal_hint_map = {
-                "Monitor": "Strong trading behavior detected.",
-                "Watch": "Some promising trading activity.",
-                "Needs More Data": "Not enough signal yet.",
-                "Ignore": "Mostly weak or transfer-only activity."
-            }
-
-            signal_class = signal_class_map.get(wallet_signal, "signal-needs")
-            signal_hint = signal_hint_map.get(wallet_signal, wallet_reason)
-
-            st.markdown('<div class="section-title">Wallet Activity Summary</div>', unsafe_allow_html=True)
-            st.caption("Recent wallet behavior based on the latest Helius transactions.")
-
-            a1, a2, a3, a4, a5 = st.columns(5)
-
-            with a1:
-                st.metric("Recent Activity", activity_level)
-
-            with a2:
-                st.metric("Transfers", transfers)
-
-            with a3:
-                st.metric("Swaps", swaps)
-
-            with a4:
-                st.metric("Unclear", unknown)
-
-            with a5:
-                st.markdown(
-                    f"""
-                    <div class="signal-card {signal_class}">
-                        <div class="signal-label">Signal</div>
-                        <div class="signal-value">{wallet_signal}</div>
-                        <div class="signal-desc">{signal_hint}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-            st.caption(f"Signal Score: {wallet_score} · {wallet_reason}")
-
-            st.markdown('<div class="section-title">Estimated USD Volume</div>', unsafe_allow_html=True)
-            st.caption("Estimated from parsed transaction amounts and live DEX Screener token prices. Some transactions may not contain enough data for pricing.")
-
-            v1, v2, v3, v4, v5 = st.columns(5)
-
-            with v1:
-                st.metric("Total Volume", format_usd(usd_stats.get("Total USD Volume", 0)))
-
-            with v2:
-                st.metric("Swap Volume", format_usd(usd_stats.get("Swap USD Volume", 0)))
-
-            with v3:
-                st.metric("Transfer Volume", format_usd(usd_stats.get("Transfer USD Volume", 0)))
-
-            with v4:
-                st.metric("Largest Tx", format_usd(usd_stats.get("Largest USD Tx", 0)))
-
-            with v5:
-                st.metric("Priced Tx", usd_stats.get("Priced Tx Count", 0))
-
-            watchlist_item = {
-                "Wallet": short_wallet,
-                "Full Wallet": wallet_address,
-                "Signal": wallet_signal,
-                "Score": wallet_score,
-                "Swaps": swaps,
-                "Transfers": transfers,
-                "USD Volume": usd_stats.get("Total USD Volume", 0),
-                "Largest Tx": usd_stats.get("Largest USD Tx", 0),
-                "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                "Check Count": 1,
-                "Last Swaps": swaps,
-                "Last Transfers": transfers,
-                "Last USD Volume": usd_stats.get("Total USD Volume", 0),
-                "Previous Score": wallet_score,
-                "Previous Swaps": swaps,
-                "Previous Transfers": transfers,
-                "Previous USD Volume": usd_stats.get("Total USD Volume", 0),
-                "Previous Largest Tx": usd_stats.get("Largest USD Tx", 0),
-                "Score Change": 0,
-                "Swaps Change": 0,
-                "Transfers Change": 0,
-                "USD Volume Change": 0,
-                "Largest Tx Change": 0,
-                "Latest Activity": latest_wallet_activity_text(wallet_tx_data),
-                "Latest Token Mint": latest_wallet_token_mint(wallet_tx_data),
-                "Change": "New wallet"
-            }
-
-            add_wallet_col, _ = st.columns([0.22, 0.78])
-
-            with add_wallet_col:
-                if st.button("Add to Watchlist", key=f"add_scanned_wallet_{wallet_address}"):
-                    add_wallet_to_watchlist(watchlist_item)
-                    st.success(st.session_state.watchlist_message)
-
-            verdict_title, verdict_badge, strength, risk, action, note = wallet_verdict_text(
-                wallet_signal,
-                transfers,
-                swaps,
-                unknown
-            )
-
-            verdict_html = (
-                f'<div class="wallet-verdict-card">'
-                f'<div class="wallet-verdict-top">'
-                f'<div>'
-                f'<div class="wallet-verdict-title">{verdict_title}</div>'
-                f'<div class="wallet-verdict-subtitle">Readable decision based on recent wallet behavior</div>'
-                f'</div>'
-                f'<div class="wallet-verdict-badge">{verdict_badge}</div>'
-                f'</div>'
-                f'<div class="wallet-verdict-grid">'
-                f'<div class="wallet-verdict-item"><span>Strength</span><strong>{strength}</strong></div>'
-                f'<div class="wallet-verdict-item"><span>Risk</span><strong>{risk}</strong></div>'
-                f'<div class="wallet-verdict-item"><span>Best action</span><strong>{action}</strong></div>'
-                f'</div>'
-                f'<div class="wallet-verdict-note">{note}</div>'
-                f'</div>'
-            )
-
-            st.markdown(verdict_html, unsafe_allow_html=True)
-
-        if scan:
-            swapped_mints = get_swapped_token_mints(wallet_tx_data)
-            swapped_rows = []
-
-            if swapped_mints:
-                st.markdown('<div class="section-title">Swapped Tokens</div>', unsafe_allow_html=True)
-                st.caption("Token mints detected from recent swap activity.")
-
-                token_name_map = {
-                    "So11111111111111111111111111111111111111112": {
-                        "symbol": "SOL",
-                        "name": "Solana"
-                    },
-                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
-                        "symbol": "USDC",
-                        "name": "USD Coin"
-                    },
-                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkYhTZ8d5T6s2KZ5": {
-                        "symbol": "USDT",
-                        "name": "Tether USD"
-                    }
-                }
-
-                for mint in swapped_mints[:8]:
-                    if mint == "So11111111111111111111111111111111111111112":
-                        continue
-
-                    token_info = token_name_map.get(mint, {})
-                    symbol = token_info.get("symbol", "")
-                    name = token_info.get("name", "")
-
-                    short_display_mint = f"{mint[:8]}...{mint[-8:]}" if len(mint) > 18 else mint
-
-                    if not symbol or symbol == "Unknown":
-                        symbol = short_display_mint
-
-                    if not name or name == "Unknown":
-                        name = "Unknown token"
-
-                    swapped_rows.append({
-                        "Token": symbol,
-                        "Name": name,
-                        "Mint": mint
-                    })
-
-            if swapped_rows:
-                swapped_cards_html = '<div class="swapped-token-grid">'
-
-                for row in swapped_rows:
-                    token_symbol = row.get("Token", "Unknown")
-                    token_name = row.get("Name", "Unknown token")
-                    token_mint = row.get("Mint", "")
-
-                    short_mint = f"{token_mint[:8]}...{token_mint[-8:]}" if len(token_mint) > 18 else token_mint
-
-                    swapped_cards_html += (
-                        f'<div class="swapped-token-card">'
-                        f'<div class="swapped-token-top">'
-                        f'<div>'
-                        f'<div class="swapped-token-symbol">{token_symbol}</div>'
-                        f'<div class="swapped-token-name">{token_name}</div>'
-                        f'</div>'
-                        f'<div class="swapped-token-pill">Swapped</div>'
-                        f'</div>'
-                        f'<div class="swapped-token-mint">{short_mint}</div>'
-                        f'</div>'
-                    )
-
-                swapped_cards_html += "</div>"
-
-                st.markdown(swapped_cards_html, unsafe_allow_html=True)
-
-                st.caption("Pick one swapped token and send it to Token Scanner.")
-
-                token_options = {}
-
-                for row in swapped_rows:
-                    token_label = row.get("Token", "Token")
-                    token_mint = row.get("Mint", "")
-
-                    if not token_mint:
-                        continue
-
-                    short_mint = f"{token_mint[:8]}...{token_mint[-8:]}" if len(token_mint) > 18 else token_mint
-                    option_label = f"{token_label} · {short_mint}"
-
-                    token_options[option_label] = token_mint
-
-                if token_options:
-                    selected_swapped_token = st.selectbox(
-                        "Swapped token to analyze",
-                        list(token_options.keys()),
-                        key="selected_swapped_token_to_analyze"
-                    )
-
-                    if st.button("Analyze selected token", key="analyze_selected_swapped_token"):
-                        selected_mint = token_options[selected_swapped_token]
-
-                        st.session_state.selected_token_mint = selected_mint
-                        st.session_state.token_scanner_input = selected_mint
-                        add_recent_item("recent_token_mints", selected_mint)
-                        st.session_state.section_override = "Token Scanner"
-                        st.rerun()
-
-                    if st.button("Add selected token to Watchlist", key="add_selected_swapped_token_to_watchlist"):
-                        selected_mint = token_options[selected_swapped_token]
-                        selected_row = next((row for row in swapped_rows if row.get("Mint") == selected_mint), {})
-                        token_watchlist_item = {
-                            "Token": selected_row.get("Token", "Token"),
-                            "Name": selected_row.get("Name", "Swapped token"),
-                            "Mint": selected_mint,
-                            "Decision": "Watch",
-                            "Liquidity": "Unknown",
-                            "Volume": "Unknown",
-                            "Activity": "From wallet swap",
-                            "Risk": "Unknown",
-                            "Copy Risk": "Unknown",
-                            "Reason": "Added from swapped tokens. Open Token Scanner to run full DEX check.",
-                            "Source Wallet": short_wallet,
-                            "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
-                        }
-                        add_token_to_watchlist(token_watchlist_item)
-                        st.success(st.session_state.token_watchlist_message)
-
-    elif section == "Token Scanner":
-        st.title("Token Scanner")
-        st.caption("Scan live token pairs using DEX Screener data.")
-
-        token_presets = {
-            "Custom address": "",
-            "SOL": "So11111111111111111111111111111111111111112",
-            "USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            "BONK": "DezXAZ8z7PnrnRJjz3zjAiG5jP5hVUV8wz5qQ5YfQGpM",
-            "JUP": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
-        }
-
-        selected_chain = st.selectbox(
-            "Chain",
-            ["solana", "ethereum", "base", "bsc"],
-            index=0
-        )
-
-        if st.session_state.recent_token_mints:
-            picked_recent_token_scanner = st.selectbox(
-                "Recently used token mints",
-                [""] + st.session_state.recent_token_mints,
-                key="recent_token_scanner_select"
-            )
-
-            if picked_recent_token_scanner:
-                st.session_state.selected_token_mint = picked_recent_token_scanner
-                st.session_state.token_scanner_input = picked_recent_token_scanner
-
-        incoming_token = st.session_state.get("selected_token_mint", "")
-
-        if incoming_token and "token_scanner_input" not in st.session_state:
-            st.session_state.token_scanner_input = incoming_token
-
-        if incoming_token:
-            selected_token = "Custom address"
-        else:
-            selected_token = st.selectbox(
-                "Token preset",
-                list(token_presets.keys()),
-                index=0
-            )
-
-        if incoming_token:
-            st.success("Token imported from Smart Wallet scan.")
-
-        if selected_token == "Custom address":
-            token_address = st.text_input(
-                "Token address",
-                placeholder="Paste a token contract address.",
-                key="token_scanner_input"
-            )
-        else:
-            token_address = token_presets[selected_token]
-            st.session_state.token_scanner_input = token_address
-            st.info(f"Using preset token: {selected_token}")
-
-        scan_token_clicked = st.button("Scan Token")
-
-        if incoming_token:
-            scan_token_clicked = True
-
-        if scan_token_clicked:
-            add_recent_item("recent_token_mints", token_address.strip())
-
-            if token_address.strip():
-                with st.spinner("Fetching token data from DEX Screener..."):
-                    token_data, error = fetch_token_pairs(
-                        selected_chain,
-                        token_address.strip()
-                    )
-
-
-                if error:
-                    st.warning(error)
-                else:
-                    st.success("Token data loaded.")
-
-                    if incoming_token:
-                        st.session_state.selected_token_mint = ""
-
-                    best_pair = token_data.iloc[0]
-
-                    liquidity_status, volume_status, activity_status, risk = evaluate_token_pair(best_pair)
-
-                    col1, col2, col3, col4 = st.columns(4)
-
-                    with col1:
-                        st.metric(
-                            "Price USD",
-                            f"${float(best_pair['Price USD']):,.4f}"
-                        )
-
-                    with col2:
-                        st.metric(
-                            "Liquidity",
-                            f"${float(best_pair['Liquidity USD']):,.0f}"
-                        )
-
-                    with col3:
-                        st.metric(
-                            "Volume 24h",
-                            f"${float(best_pair['Volume 24h']):,.0f}"
-                        )
-
-                    with col4:
-                        st.metric(
-                            "Txns 24h",
-                            f"{int(best_pair['Txns 24h']):,}"
-                        )
-
-
+                st.markdown('<div class="today-section-label" style="margin-top:28px;">Top attention wallets</div>', unsafe_allow_html=True)
+                for _idx, _item, _status, _hint in attention[:3]:
+                    _fw  = _item.get("Full Wallet", "-")
+                    _wn  = wallet_watchlist_item_name(_item)
+                    _, _sc, _tc, _vc, _lc = wallet_movement_values(_item)
                     st.markdown(f"""
-                    <div class="token-analysis-card">
-                        <div class="token-analysis-title">Token Quality Check</div>
-                        <div class="token-analysis-grid">
-                            <div><span>Liquidity</span><strong class="quality-{liquidity_status.lower()}">{liquidity_status}</strong></div>
-                            <div><span>Volume</span><strong class="quality-{volume_status.lower()}">{volume_status}</strong></div>
-                            <div><span>Activity</span><strong class="quality-{activity_status.lower()}">{activity_status}</strong></div>
-                            <div><span>Risk</span><strong class="risk-{risk.lower()}">{risk}</strong></div>
+                    <div style="background:#1e1f23;border:1px solid #2a2b30;border-radius:16px;padding:18px 20px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+                        <div>
+                            <div style="font-size:14px;font-weight:600;color:#f5f5f7;margin-bottom:3px;">{_wn}</div>
+                            <div style="font-size:12px;color:#5a5b62;">{_hint}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:11px;font-weight:700;color:#7c5cfc;letter-spacing:0.08em;">{_status}</div>
+                            <div style="font-size:12px;color:#4a4b52;margin-top:3px;">Vol {format_signed_usd(_vc)}</div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-
-                    copy_risk, copy_risk_reasons = evaluate_copy_risk(best_pair)
-
-                    watch_signal, watch_reason = get_watch_signal(
-                        liquidity_status,
-                        volume_status,
-                        activity_status,
-                        risk,
-                        copy_risk
-                    )
-
-                    summary = token_summary(
-                        liquidity_status,
-                        volume_status,
-                        activity_status,
-                        risk
-                    )
-
-                    reason_text = " • ".join(copy_risk_reasons)
-
-                    st.markdown('<div class="section-title">Decision Engine</div>', unsafe_allow_html=True)
-
-                    d1, d2, d3 = st.columns(3)
-
-                    with d1:
-                        st.metric("Quality", f"{risk} Risk")
-                        st.caption(summary)
-
-                    with d2:
-                        st.metric("Copy Risk", copy_risk)
-                        st.caption(reason_text)
-
-                    with d3:
-                        st.metric("Action", watch_signal)
-                        st.caption(watch_reason)
-
-
-                    token_symbol = str(best_pair.get("Pair", "Token")).split("/", 1)[0].strip() or "Token"
-                    token_name = "Scanned token"
-
-                    token_watchlist_item = {
-                        "Token": token_symbol,
-                        "Name": token_name,
-                        "Mint": token_address.strip(),
-                        "Decision": watch_signal,
-                        "Liquidity": liquidity_status,
-                        "Volume": volume_status,
-                        "Activity": activity_status,
-                        "Risk": risk,
-                        "Copy Risk": copy_risk,
-                        "Reason": watch_reason,
-                        "Source Wallet": "Token Scanner",
-                        "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
-                    }
-
-                    add_token_col, _ = st.columns([0.24, 0.76])
-
-                    with add_token_col:
-                        if st.button("Add Token to Watchlist", key=f"add_token_from_scanner_{token_address.strip()}"):
-                            add_token_to_watchlist(token_watchlist_item)
-                            st.success(st.session_state.token_watchlist_message)
-
-                    st.markdown('<div class="section-title">Live Token Pairs</div>', unsafe_allow_html=True)
-
-                    pair_cards_html = '<div class="pair-card-grid">'
-
-                    for _, pair in token_data.head(4).iterrows():
-                        dex = pair.get("DEX", "-")
-                        pair_name = pair.get("Pair", "-")
-                        price = pair.get("Price USD", "-")
-                        liquidity = pair.get("Liquidity USD", "-")
-                        volume = pair.get("Volume 24h", "-")
-                        txns = pair.get("Txns 24h", "-")
-                        change = pair.get("Change 24h", "-")
-                        market_cap = pair.get("Market Cap", "-")
-
-                        pair_cards_html += (
-                            f'<div class="pair-card">'
-                            f'<div class="pair-card-top">'
-                            f'<div>'
-                            f'<div class="pair-card-title">{pair_name}</div>'
-                            f'<div class="pair-card-subtitle">{dex}</div>'
-                            f'</div>'
-                            f'<div class="pair-card-pill">Live Pair</div>'
-                            f'</div>'
-                            f'<div class="pair-card-meta">'
-                            f'<div><span>Price</span><strong>${price}</strong></div>'
-                            f'<div><span>Liquidity</span><strong>${liquidity}</strong></div>'
-                            f'<div><span>Volume 24h</span><strong>${volume}</strong></div>'
-                            f'<div><span>Txns 24h</span><strong>{txns}</strong></div>'
-                            f'</div>'
-                            f'<div class="pair-card-meta" style="margin-top:10px;">'
-                            f'<div><span>Change 24h</span><strong>{change}%</strong></div>'
-                            f'<div><span>Market Cap</span><strong>${market_cap}</strong></div>'
-                            f'</div>'
-                            f'</div>'
-                        )
-
-                    pair_cards_html += "</div>"
-
-                    st.markdown(pair_cards_html, unsafe_allow_html=True)
-            else:
-                st.warning("Enter a token address first.")
 
     elif section == "Market Dashboard":
         st.title("Market Dashboard")
@@ -12287,7 +11821,8 @@ with safe_section(section):
                 st.info("No tokens added yet. Analyze a token and add it to the watchlist first.")
 
 
-    elif section == "Auto Discovery":
+    elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
+        if False:
         st.title("Auto Discovery")
         st.caption("Market-wide DexScreener alpha radar: filter early tokens, then find fresh wallets around them.")
 
@@ -12652,7 +12187,7 @@ with safe_section(section):
 
 
 
-    elif section == "Market Monitor":
+    elif section == "_market_monitor_disabled":
         st.title("Market Monitor")
         st.caption("Long-term alpha memory: scan the market repeatedly, remember tokens, and learn which wallets show up early more than once.")
 
@@ -12861,7 +12396,7 @@ with safe_section(section):
                     persist_market_memory()
                     st.success("Market monitor memory cleared.")
 
-    elif section == "AI Search":
+    elif section == "_ai_search_disabled":
         st.title("AI Search")
         st.caption("Ask questions about wallets, trades and risk patterns.")
         st.info("AI Search is paused for now. We will add this later when the API is ready.")
