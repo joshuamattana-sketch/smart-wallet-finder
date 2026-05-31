@@ -23,6 +23,7 @@ from connectors.binance import (
     ConnectorError,
     InvalidSymbolError,
     RateLimitError,
+    RestrictedLocationError,
     fetch_orderbook,
     normalize_symbol,
 )
@@ -41,6 +42,7 @@ _STATE_KEY_METRICS = "_pro_ob_metrics"
 _STATE_KEY_ERROR   = "_pro_ob_error"
 _STATE_KEY_TS      = "_pro_ob_fetched_at"
 _STATE_KEY_SYMBOL  = "_pro_ob_symbol"
+_STATE_KEY_DEMO    = "_pro_ob_demo_mode"
 
 _CSS = """
 <style>
@@ -90,6 +92,49 @@ _CSS = """
 """
 
 
+
+# ── Demo orderbook snapshot (used when Binance is region-blocked) ─────────────
+
+def _build_demo_snapshot(symbol: str) -> "OrderBookSnapshot":
+    """
+    Return a static demo OrderBookSnapshot so the panel renders even when
+    Binance is unavailable (HTTP 451 on hosted platforms).
+
+    Prices are approximate and clearly labelled as demo data.
+    """
+    from core.models import OrderBookLevel, OrderBookSnapshot
+    import time
+
+    # Approximate mid prices per symbol for a realistic-looking demo
+    _mid_prices = {"BTCUSDT": 67_500.0, "ETHUSDT": 3_500.0, "SOLUSDT": 175.0}
+    mid = _mid_prices.get(symbol, 100.0)
+
+    bids = [
+        OrderBookLevel(price=round(mid - (i + 1) * mid * 0.0002, 2),
+                       qty=round(0.5 + i * 0.3, 4),
+                       usd_size=0.0)
+        for i in range(10)
+    ]
+    asks = [
+        OrderBookLevel(price=round(mid + (i + 1) * mid * 0.0002, 2),
+                       qty=round(0.4 + i * 0.25, 4),
+                       usd_size=0.0)
+        for i in range(10)
+    ]
+    # Fill usd_size
+    for lvl in bids + asks:
+        object.__setattr__(lvl, 'usd_size', round(lvl.price * lvl.qty, 2))
+
+    return OrderBookSnapshot(
+        symbol=symbol,
+        exchange="binance-demo",
+        timestamp_ms=int(time.time() * 1000),
+        bids=bids,
+        asks=asks,
+        mid_price=mid,
+    )
+
+
 # ── Session state helpers ──────────────────────────────────────────────────────
 
 def _init_state() -> None:
@@ -100,6 +145,7 @@ def _init_state() -> None:
         _STATE_KEY_ERROR:   None,
         _STATE_KEY_TS:      None,
         _STATE_KEY_SYMBOL:  _SYMBOLS[0],
+        _STATE_KEY_DEMO:    False,
     }
     for key, default in defaults.items():
         if key not in st.session_state:
@@ -123,6 +169,17 @@ def _do_fetch(symbol: str) -> None:
 
     try:
         snapshot = fetch_orderbook(sym, limit=_DEPTH_LIMIT)
+        st.session_state[_STATE_KEY_DEMO] = False
+    except RestrictedLocationError:
+        # Binance blocked on this hosting region — fall back to demo data silently
+        st.session_state[_STATE_KEY_DEMO]    = True
+        st.session_state[_STATE_KEY_ERROR]   = None
+        st.session_state[_STATE_KEY_SNAP]    = _build_demo_snapshot(sym)
+        st.session_state[_STATE_KEY_SYMBOL]  = sym
+        st.session_state[_STATE_KEY_TS]      = None
+        from services.orderbook_engine import analyze_orderbook as _analyze
+        st.session_state[_STATE_KEY_METRICS] = _analyze(st.session_state[_STATE_KEY_SNAP])
+        return
     except RateLimitError as exc:
         st.session_state[_STATE_KEY_ERROR] = ("ratelimit", str(exc))
         return
@@ -297,6 +354,15 @@ def render_pro_terminal() -> None:
     # ── Error ─────────────────────────────────────────────────────────────────
     _render_error(st.session_state.get(_STATE_KEY_ERROR))
 
+    # ── Demo mode banner ──────────────────────────────────────────────────────
+    if st.session_state.get(_STATE_KEY_DEMO):
+        st.warning(
+            "**Demo mode** — Binance is blocked from this hosted region (HTTP 451). "
+            "Data shown is static sample data. "
+            "Run the app locally to see live orderbook.",
+            icon="⚠️",
+        )
+
     # ── Summary bar ───────────────────────────────────────────────────────────
     _metrics  = st.session_state.get(_STATE_KEY_METRICS)
     _snapshot = st.session_state.get(_STATE_KEY_SNAP)
@@ -320,8 +386,18 @@ def render_pro_terminal() -> None:
         )
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    _ts = st.session_state.get(_STATE_KEY_TS)
-    if _ts:
+    _ts      = st.session_state.get(_STATE_KEY_TS)
+    _is_demo = st.session_state.get(_STATE_KEY_DEMO, False)
+    if _is_demo:
+        st.markdown(
+            '<div class="pt-last-updated">'
+            "Mode: <b>Demo fallback</b> &nbsp;&middot;&nbsp; "
+            "Binance unavailable from this region &nbsp;&middot;&nbsp; "
+            "Run locally for live data"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    elif _ts:
         _age    = int(time.time() - _ts)
         _ts_fmt = datetime.datetime.fromtimestamp(_ts).strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(

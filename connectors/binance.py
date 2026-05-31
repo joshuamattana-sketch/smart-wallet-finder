@@ -86,6 +86,16 @@ class InvalidSymbolError(ConnectorError):
     """Raised when a symbol fails validation before a request is made."""
 
 
+class RestrictedLocationError(ConnectorError):
+    """
+    Raised when Binance returns HTTP 451 (Unavailable For Legal Reasons).
+
+    This happens on Streamlit Cloud and other hosted environments where
+    Binance blocks requests based on server region.
+    The caller should fall back to demo/mock data rather than crashing.
+    """
+
+
 # ── Input normalisation ───────────────────────────────────────────────────────
 
 def normalize_symbol(symbol: object) -> str:
@@ -154,9 +164,10 @@ def _get(
         Parsed JSON response (dict or list depending on endpoint).
 
     Raises:
-        ConnectorError:  On HTTP errors, JSON parse failures, or unexpected response shape.
-        RateLimitError:  On HTTP 429.
-        ConnectorError:  On connection/timeout errors.
+        ConnectorError:          On HTTP errors, JSON parse failures, or unexpected response shape.
+        RateLimitError:          On HTTP 429 or 418.
+        RestrictedLocationError: On HTTP 451 (region blocked by Binance).
+        ConnectorError:          On connection/timeout errors.
     """
     url = f"{BASE_URL}{path}"
     try:
@@ -186,6 +197,15 @@ def _get(
         raise RateLimitError(
             "Binance IP banned (HTTP 418). Wait before retrying.",
             status_code=418,
+            endpoint=url,
+        )
+
+    if response.status_code == 451:
+        raise RestrictedLocationError(
+            "Binance is unavailable from this server region (HTTP 451). "
+            "This typically occurs on hosted platforms such as Streamlit Cloud. "
+            "Use a local environment or a VPS in a supported region.",
+            status_code=451,
             endpoint=url,
         )
 
@@ -566,6 +586,13 @@ def _f(value: object) -> float:
 
 
 if __name__ == "__main__":
+    # Verify RestrictedLocationError is importable and subclasses ConnectorError
+    assert issubclass(RestrictedLocationError, ConnectorError)
+    try:
+        raise RestrictedLocationError("test 451", status_code=451, endpoint="/test")
+    except ConnectorError as e:
+        assert e.status_code == 451
+
     # Smoke test: parse known Binance-shaped depth response without a network call
     sample_depth = {
         "lastUpdateId": 1027024,
