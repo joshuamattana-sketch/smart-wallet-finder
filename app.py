@@ -2624,10 +2624,10 @@ def fetch_solscan_token_transfers(token_mint, limit=50):
         params = {
             "address": token_mint,
             "page": 1,
-            "page_size": 40,
+            "page_size": 50,
             "exclude_amount_zero": True,
             "sort_by": "block_time",
-            "sort_order": "desc"
+            "sort_order": "asc"
 }
 
         response = requests.get(url, headers=headers, params=params, timeout=20)
@@ -2711,7 +2711,13 @@ def extract_wallet_candidates_from_transfers(transfers, token_mint):
     return candidates
 
 
-def discover_wallets_from_token_solscan(token_mint, max_wallets=10):
+def discover_wallets_from_token_solscan(token_mint, max_wallets=15):
+    """
+    Solscan-first wallet discovery.
+    Fetches earliest transfers (asc order) to find wallets that bought in early.
+    Scores each wallet via Helius transaction analysis.
+    Returns: (DataFrame, error_string_or_None)
+    """
     transfers, transfer_error = fetch_solscan_token_transfers(token_mint, limit=50)
 
     if transfer_error:
@@ -2720,65 +2726,72 @@ def discover_wallets_from_token_solscan(token_mint, max_wallets=10):
     candidates = extract_wallet_candidates_from_transfers(transfers, token_mint)
 
     if not candidates:
-        return pd.DataFrame(), "No wallet candidates found from Solscan transfers."
+        return pd.DataFrame(), "No wallet candidates found in Solscan transfers."
 
     discovered_rows = []
 
-    for candidate in candidates[:max_wallets]:
-        wallet = candidate["Wallet"]
+    for rank, candidate in enumerate(candidates[:max_wallets]):
+        wallet = str(candidate.get("Wallet", "")).strip()
+        if not wallet:
+            continue
         short_wallet = f"{wallet[:6]}...{wallet[-6:]}"
+        early_rank = rank + 1  # lower = earlier buyer
 
         wallet_tx_data, wallet_error = fetch_wallet_transactions(wallet)
 
         if wallet_error or wallet_tx_data is None or wallet_tx_data.empty:
+            # Still add as candidate — early position is already a signal
+            base_score = max(60 - (early_rank * 3), 20)
             discovered_rows.append({
                 "Wallet": short_wallet,
                 "Full Wallet": wallet,
-                "Score": 20,
-                "Type": "Candidate",
-                "Transfers": candidate["Transfers"],
+                "Score": base_score,
+                "Early Rank": early_rank,
+                "Type": "Early Buyer",
+                "Transfers": candidate.get("Transfers", 0),
                 "Swaps": "-",
-                "Reason": "Found in token transfers. Wallet scan failed or no recent Helius data.",
-                "Source Token": shorten_mints(token_mint)
+                "Verdict": "Watch first",
+                "Reason": f"Early buyer (rank #{early_rank}). Wallet scan failed — may be inactive.",
+                "Source Token": shorten_mints(token_mint),
+                "Saved?": "New" if not wallet_already_saved(wallet) else "Saved"
             })
             continue
 
         total_tx, transfers_count, swaps, unknown, activity_level = summarize_wallet_activity(wallet_tx_data)
+        wallet_signal, wallet_score, wallet_reason = get_wallet_signal(total_tx, transfers_count, swaps, unknown)
 
-        wallet_signal, wallet_score, wallet_reason = get_wallet_signal(
-            total_tx,
-            transfers_count,
-            swaps,
-            unknown
-        )
+        # Boost score for early position
+        early_bonus = max(15 - (early_rank * 1), 0)
+        final_score = min(safe_int(wallet_score) + early_bonus, 100)
 
-        if wallet_signal == "Monitor":
-            wallet_type = "Strong Candidate"
-        elif wallet_signal == "Watch":
-            wallet_type = "Watch Candidate"
-        elif swaps >= 2:
-            wallet_type = "Active Trader"
+        if final_score >= 80:
+            wallet_type, verdict = "Alpha Scout", "Copy candidate"
+        elif final_score >= 65:
+            wallet_type, verdict = "Strong Early", "Watch closely"
+        elif swaps >= 3:
+            wallet_type, verdict = "Active Trader", "Paper trade first"
         else:
-            wallet_type = "Transfer Candidate"
+            wallet_type, verdict = "Early Buyer", "Needs proof"
 
         discovered_rows.append({
             "Wallet": short_wallet,
             "Full Wallet": wallet,
-            "Score": wallet_score,
+            "Score": final_score,
+            "Early Rank": early_rank,
             "Type": wallet_type,
-            "Transfers": candidate["Transfers"],
-            "Swaps": swaps,
+            "Transfers": candidate.get("Transfers", 0),
+            "Swaps": safe_int(swaps),
+            "Verdict": verdict,
             "Reason": wallet_reason,
-            "Source Token": shorten_mints(token_mint)
+            "Source Token": shorten_mints(token_mint),
+            "Saved?": "New" if not wallet_already_saved(wallet) else "Saved"
         })
 
+    if not discovered_rows:
+        return pd.DataFrame(), "No valid wallet candidates after analysis."
+
     discovered_df = pd.DataFrame(discovered_rows)
-
-    discovered_df = discovered_df.sort_values(
-        by=["Score", "Transfers"],
-        ascending=False
-    )
-
+    discovered_df = discovered_df.sort_values(by=["Score", "Transfers"], ascending=False).reset_index(drop=True)
     return discovered_df, None
 
 def shorten_mints(value):
@@ -5902,81 +5915,75 @@ require_beta_login()
 
 st.markdown("""
 <style>
-/* ═══ GLOBAL DESIGN SYSTEM ═══ */
+/* ── Global button base ── */
 div.stButton > button {
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
     border-radius: 10px !important;
     font-weight: 500 !important;
-    font-size: 13px !important;
-    transition: background 0.12s ease, color 0.12s ease,
-                border-color 0.12s ease, box-shadow 0.12s ease !important;
 }
 div.stButton > button:hover {
-    background: rgba(124,92,252,0.13) !important;
-    border-color: rgba(124,92,252,0.55) !important;
-    color: #c4b5fd !important;
-    box-shadow: 0 3px 12px rgba(124,92,252,0.18) !important;
-}
-div.stButton > button[kind="primary"] {
-    background: rgba(124,92,252,0.20) !important;
-    border-color: rgba(124,92,252,0.65) !important;
+    background: rgba(124,92,252,0.12) !important;
+    border-color: rgba(124,92,252,0.5) !important;
     color: #c4b5fd !important;
 }
-div.stButton > button[kind="primary"]:hover {
-    background: rgba(124,92,252,0.32) !important;
-    box-shadow: 0 0 22px rgba(124,92,252,0.28) !important;
+/* ── Page fade-in ── */
+section.main > div {
+    animation: pageIn 0.18s ease both;
 }
-[data-testid="stAppViewBlockContainer"] {
-    animation: pgIn 0.22s ease both;
-}
-@keyframes pgIn {
-    from { opacity:0; transform:translateY(6px); }
+@keyframes pageIn {
+    from { opacity:0; transform:translateY(5px); }
     to   { opacity:1; transform:translateY(0); }
 }
+/* ── Metric hover ── */
 [data-testid="stMetric"] {
-    border-radius: 14px !important;
-    transition: transform 0.14s ease, box-shadow 0.14s ease !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    border-radius: 12px;
 }
 [data-testid="stMetric"]:hover {
-    transform: translateY(-3px) !important;
-    box-shadow: 0 6px 22px rgba(124,92,252,0.18) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(124,92,252,0.15);
 }
-div.stTextInput input {
-    border-radius: 10px !important;
-    transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
-}
-div.stTextInput input:focus {
-    border-color: rgba(124,92,252,0.7) !important;
-    box-shadow: 0 0 0 3px rgba(124,92,252,0.14) !important;
-}
-button[data-baseweb="tab"] {
-    border-radius: 8px 8px 0 0 !important;
-    font-weight: 500 !important;
-    transition: background 0.12s ease, color 0.12s ease !important;
-}
-button[data-baseweb="tab"]:hover {
-    background: rgba(124,92,252,0.09) !important;
-    color: #c4b5fd !important;
-}
-div.stSelectbox > div > div {
-    border-radius: 10px !important;
-    transition: border-color 0.12s ease !important;
-}
+/* ── Sidebar nav buttons ── */
 section[data-testid="stSidebar"] div.stButton > button {
     background: transparent !important;
-    border: 1px solid transparent !important;
+    border: none !important;
     text-align: left !important;
-    color: #7a7b82 !important;
-    border-radius: 10px !important;
-    font-size: 13px !important;
-    box-shadow: none !important;
+    color: #8a8b92 !important;
 }
 section[data-testid="stSidebar"] div.stButton > button:hover {
-    background: rgba(124,92,252,0.12) !important;
-    border-color: rgba(124,92,252,0.28) !important;
+    background: rgba(124,92,252,0.10) !important;
     color: #d0d0d5 !important;
-    box-shadow: none !important;
+    border-color: transparent !important;
 }
 </style>
+<script>
+// JS button press effect — works even in Streamlit shadow DOM
+(function(){
+    function addPressEffect(btn) {
+        btn.addEventListener('mousedown', function() {
+            this.style.transform = 'scale(0.95)';
+            this.style.transition = 'transform 0.08s cubic-bezier(.34,1.56,.64,1)';
+        });
+        btn.addEventListener('mouseup', function() {
+            this.style.transform = 'scale(1)';
+        });
+        btn.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+        });
+    }
+    function patchButtons() {
+        document.querySelectorAll('button').forEach(function(btn) {
+            if (!btn.dataset.pressed) {
+                btn.dataset.pressed = '1';
+                addPressEffect(btn);
+            }
+        });
+    }
+    // Run on load and re-run when Streamlit re-renders
+    setInterval(patchButtons, 800);
+    document.addEventListener('DOMContentLoaded', patchButtons);
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
@@ -11093,7 +11100,7 @@ with safe_section(section):
         .sw-stat span{font-size:11px;color:#4a4b52}
         .sw-stat b{font-size:14px;font-weight:600;color:#c0c0c8}
         .sw-label{font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.07em;text-transform:uppercase;margin:20px 0 8px}
-        .sw-recent-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid #2a2b30;border-radius:10px;margin-bottom:6px}
+        .sw-recent-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #2a2b30;border-radius:10px;margin-bottom:6px}
         .sw-recent-name{font-size:13px;color:#c0c0c8;font-weight:500}
         .sw-recent-addr{font-size:11px;color:#4a4b52;font-family:monospace}
         </style>
@@ -11102,140 +11109,160 @@ with safe_section(section):
         st.markdown('<div class="sw-page-title">Smart Wallets</div>', unsafe_allow_html=True)
         st.markdown('<div class="sw-page-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
 
-        # Pre-fill from session state if wallet was opened from elsewhere
         _prefill = st.session_state.get("wallet_address_input", "")
+        _auto = st.session_state.pop("_sw_auto_scan", False)
 
         tab_scan, tab_disc, tab_recent = st.tabs(["Scan wallet", "Discover from token", "Recent"])
 
         with tab_scan:
-            col_in, col_btn = st.columns([0.8, 0.2])
-            with col_in:
-                wallet_addr = st.text_input(
-                    "Wallet address",
-                    value=_prefill,
+            c_in, c_btn = st.columns([0.8, 0.2])
+            with c_in:
+                _w_addr = st.text_input(
+                    "addr", value=_prefill,
                     placeholder="Paste Solana wallet address...",
-                    label_visibility="collapsed",
-                    key="sw_addr_input"
+                    label_visibility="collapsed", key="sw_addr_input"
                 )
-            with col_btn:
-                do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
+            with c_btn:
+                _do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
 
-            # Auto-scan if pre-filled from Journal/Watchlist "Open" button
-            _auto_scan = st.session_state.pop("_sw_auto_scan", False)
-
-            if (do_scan or _auto_scan) and wallet_addr.strip():
-                st.session_state.wallet_address_input = wallet_addr.strip()
-                add_recent_item("recent_wallets", wallet_addr.strip())
+            if (_do_scan or _auto) and _w_addr.strip():
+                st.session_state.wallet_address_input = _w_addr.strip()
+                add_recent_item("recent_wallets", _w_addr.strip())
                 with st.spinner("Fetching from Helius..."):
-                    wtx, werr = fetch_wallet_transactions(wallet_addr.strip())
-                if werr or wtx is None or wtx.empty:
-                    st.error("Could not fetch wallet data. Check the address or your Helius API key.")
+                    _wtx, _werr = fetch_wallet_transactions(_w_addr.strip())
+                if _werr or _wtx is None or _wtx.empty:
+                    st.error("Could not fetch wallet. Check address or Helius API key.")
                 else:
-                    ttx, tfr, tsw, tun, tlvl = summarize_wallet_activity(wtx)
-                    wsig, wscore, wreason = get_wallet_signal(ttx, tfr, tsw, tun)
-                    usd = estimate_wallet_usd_stats(wtx)
-                    nbuys, nsells, nrot = wallet_trade_counts(wtx)
-                    sc = safe_int(wscore)
-                    if sc >= 80: vcls, vtxt = "alpha", "Alpha Scout"
-                    elif sc >= 65: vcls, vtxt = "watch", "Worth watching"
-                    elif sc >= 45: vcls, vtxt = "paper", "Paper trade first"
-                    else: vcls, vtxt = "risky", "Needs more proof"
+                    _ttx, _tfr, _tsw, _tun, _tlvl = summarize_wallet_activity(_wtx)
+                    _wsig, _wscore, _wreason = get_wallet_signal(_ttx, _tfr, _tsw, _tun)
+                    _usd = estimate_wallet_usd_stats(_wtx)
+                    _nb, _ns, _nr = wallet_trade_counts(_wtx)
+                    _sc = safe_int(_wscore)
+                    if _sc >= 80: _vcls, _vtxt = "alpha", "Alpha Scout"
+                    elif _sc >= 65: _vcls, _vtxt = "watch", "Worth watching"
+                    elif _sc >= 45: _vcls, _vtxt = "paper", "Paper trade first"
+                    else: _vcls, _vtxt = "risky", "Needs more proof"
 
-                    dname = wallet_display_name(wallet_addr.strip())
-                    vol = safe_float(usd.get("Total USD Volume", 0))
-                    lrg = safe_float(usd.get("Largest USD Tx", 0))
+                    _dn = wallet_display_name(_w_addr.strip())
+                    _vol = safe_float(_usd.get("Total USD Volume", 0))
+                    _lrg = safe_float(_usd.get("Largest USD Tx", 0))
 
                     st.markdown(f"""
                     <div class="sw-result">
-                        <div class="sw-result-name">{dname}</div>
-                        <div class="sw-result-addr">{compact_address(wallet_addr.strip(), 10, 6)}</div>
-                        <div class="sw-badge {vcls}">{vtxt}</div>
+                        <div class="sw-result-name">{_dn}</div>
+                        <div class="sw-result-addr">{compact_address(_w_addr.strip(), 10, 6)}</div>
+                        <div class="sw-badge {_vcls}">{_vtxt}</div>
                         <div class="sw-stats">
-                            <div class="sw-stat"><span>Score</span><b>{sc}/100</b></div>
-                            <div class="sw-stat"><span>Signal</span><b>{wsig}</b></div>
-                            <div class="sw-stat"><span>Tx</span><b>{ttx}</b></div>
-                            <div class="sw-stat"><span>Swaps</span><b>{tsw}</b></div>
-                            <div class="sw-stat"><span>Volume</span><b>{format_usd(vol)}</b></div>
-                            <div class="sw-stat"><span>Largest</span><b>{format_usd(lrg)}</b></div>
-                            <div class="sw-stat"><span>Buys</span><b>{nbuys}</b></div>
-                            <div class="sw-stat"><span>Sells</span><b>{nsells}</b></div>
+                            <div class="sw-stat"><span>Score</span><b>{_sc}/100</b></div>
+                            <div class="sw-stat"><span>Signal</span><b>{_wsig}</b></div>
+                            <div class="sw-stat"><span>Tx</span><b>{_ttx}</b></div>
+                            <div class="sw-stat"><span>Swaps</span><b>{_tsw}</b></div>
+                            <div class="sw-stat"><span>Volume</span><b>{format_usd(_vol)}</b></div>
+                            <div class="sw-stat"><span>Largest</span><b>{format_usd(_lrg)}</b></div>
+                            <div class="sw-stat"><span>Buys</span><b>{_nb}</b></div>
+                            <div class="sw-stat"><span>Sells</span><b>{_ns}</b></div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
 
                     with st.expander("Why this verdict?", expanded=True):
-                        st.markdown(f"**Signal:** {wsig}  \n**Reason:** {wreason}  \n**Activity:** {tlvl}")
+                        st.markdown(f"**Signal:** {_wsig}  \n**Reason:** {_wreason}  \n**Activity:** {_tlvl}")
 
-                    ac1, ac2, ac3 = st.columns(3)
-                    with ac1:
+                    _a1, _a2, _a3 = st.columns(3)
+                    with _a1:
                         if st.button("Add to Watchlist", key="sw_add_wl", use_container_width=True):
                             add_wallet_to_watchlist({
-                                "Wallet": dname, "Name": dname, "Wallet Alias": dname,
-                                "Full Wallet": wallet_addr.strip(), "Signal": wsig, "Score": sc,
-                                "Transfers": safe_int(tfr), "Swaps": safe_int(tsw),
-                                "USD Volume": vol, "Largest Tx": lrg,
+                                "Wallet": _dn, "Name": _dn, "Wallet Alias": _dn,
+                                "Full Wallet": _w_addr.strip(), "Signal": _wsig, "Score": _sc,
+                                "Transfers": safe_int(_tfr), "Swaps": safe_int(_tsw),
+                                "USD Volume": _vol, "Largest Tx": _lrg,
                                 "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
                                 "Check Count": 1, "Pinned": False,
                             })
                             st.success("Added to Watchlist.")
-                    with ac2:
+                    with _a2:
                         if st.button("Paper trade", key="sw_paper", use_container_width=True):
                             st.session_state.main_navigation = "Paper Trading"
                             st.rerun()
-                    with ac3:
+                    with _a3:
                         if st.button("View in Journal", key="sw_journal", use_container_width=True):
                             st.session_state.main_navigation = "Wallet Journal"
                             st.rerun()
 
-            elif _prefill and not do_scan:
+            elif _prefill and not _do_scan and not _auto:
                 st.caption(f"Pre-loaded: {compact_address(_prefill)} — click Scan to analyse.")
 
         with tab_disc:
-            st.caption("Find wallets that bought early — paste a token mint address.")
-            dc1, dc2 = st.columns([0.8, 0.2])
-            with dc1:
-                mint_in = st.text_input("Token mint", placeholder="Paste token mint...",
-                                        label_visibility="collapsed", key="sw_mint_input")
-            with dc2:
-                do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
+            st.caption("Paste a token mint to find which wallets bought it early. Uses Solscan first, Helius as fallback.")
+            _dc1, _dc2 = st.columns([0.8, 0.2])
+            with _dc1:
+                _mint = st.text_input("mint", placeholder="Paste token mint address...",
+                                      label_visibility="collapsed", key="sw_mint_input")
+            with _dc2:
+                _do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
 
-            if do_disc and mint_in.strip():
-                with st.spinner("Scanning via Helius..."):
-                    disc, derr = discover_wallets_from_token_helius(mint_in.strip(), max_wallets=15)
-                if derr or not disc:
-                    with st.spinner("Trying Solscan..."):
-                        disc, derr = discover_wallets_from_token_solscan(mint_in.strip(), max_wallets=15)
-                if derr or not disc:
-                    st.warning("No wallets found. Try a different token mint.")
+            if _do_disc and _mint.strip():
+                _ddf = None
+                _derr = None
+                with st.spinner("Scanning via Solscan (earliest buyers)..."):
+                    _ddf, _derr = discover_wallets_from_token_solscan(_mint.strip(), max_wallets=15)
+                if _derr or _ddf is None or (hasattr(_ddf, "empty") and _ddf.empty):
+                    with st.spinner("Trying Helius fallback..."):
+                        _ddf, _derr = discover_wallets_from_token_helius(_mint.strip(), max_wallets=15)
+                if _derr or _ddf is None or (hasattr(_ddf, "empty") and _ddf.empty):
+                    st.warning(f"No wallets found. {_derr or 'Try a different token mint.'}")
                 else:
-                    st.success(f"Found {len(disc)} early wallets.")
-                    if isinstance(disc, list) and disc and isinstance(disc[0], dict):
-                        st.dataframe(pd.DataFrame(disc).head(15), use_container_width=True, hide_index=True)
-                    else:
-                        for w in disc[:10]:
-                            st.code(str(w))
+                    _dc = len(_ddf)
+                    st.success(f"Found {_dc} early wallets.")
+                    _show = [c for c in ["Wallet","Score","Early Rank","Type","Verdict","Transfers","Swaps","Saved?"] if c in _ddf.columns]
+                    st.dataframe(_ddf[_show].head(15), use_container_width=True, hide_index=True)
+                    st.markdown('<div class="sw-label">Quick actions</div>', unsafe_allow_html=True)
+                    for _di, _dr in _ddf.head(6).iterrows():
+                        _dfw = str(_dr.get("Full Wallet","")).strip()
+                        _dwn = str(_dr.get("Wallet", _dfw[:12])).strip()
+                        if not _dfw:
+                            continue
+                        _r1, _r2, _r3 = st.columns([0.5, 0.25, 0.25])
+                        with _r1:
+                            st.markdown(f"`{_dwn}` — Score **{safe_int(_dr.get('Score',0))}** · {_dr.get('Verdict','-')}")
+                        with _r2:
+                            if st.button("Scan", key=f"dsc_s_{_dfw[-8:]}", use_container_width=True):
+                                st.session_state.wallet_address_input = _dfw
+                                st.session_state._sw_auto_scan = True
+                                st.session_state.main_navigation = "Smart Wallets"
+                                st.rerun()
+                        with _r3:
+                            if st.button("Watchlist", key=f"dsc_w_{_dfw[-8:]}", use_container_width=True):
+                                add_wallet_to_watchlist({
+                                    "Wallet": _dwn, "Name": _dwn, "Wallet Alias": _dwn,
+                                    "Full Wallet": _dfw, "Signal": str(_dr.get("Type","Watch")),
+                                    "Score": safe_int(_dr.get("Score",30)),
+                                    "Transfers": safe_int(_dr.get("Transfers",0)), "Swaps": 0,
+                                    "USD Volume": 0, "Largest Tx": 0,
+                                    "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                                    "Check Count": 1, "Pinned": False,
+                                })
+                                st.success(f"Added.")
 
         with tab_recent:
-            recent_ws = st.session_state.get("recent_wallets", [])
-            if not recent_ws:
+            _rws = st.session_state.get("recent_wallets", [])
+            if not _rws:
                 st.info("No recently scanned wallets yet.")
             else:
                 st.markdown('<div class="sw-label">Recently scanned</div>', unsafe_allow_html=True)
-                for rw in recent_ws[:10]:
-                    rw_str = str(rw).strip()
-                    r1, r2 = st.columns([0.82, 0.18])
-                    with r1:
-                        st.markdown(f"""
-                        <div class="sw-recent-row">
+                for _rw in _rws[:10]:
+                    _rs = str(_rw).strip()
+                    _rn, _rb = st.columns([0.82, 0.18])
+                    with _rn:
+                        st.markdown(f"""<div class="sw-recent-item">
                             <div>
-                                <div class="sw-recent-name">{wallet_display_name(rw_str)}</div>
-                                <div class="sw-recent-addr">{compact_address(rw_str, 10, 6)}</div>
+                                <div class="sw-recent-name">{wallet_display_name(_rs)}</div>
+                                <div class="sw-recent-addr">{compact_address(_rs, 10, 6)}</div>
                             </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with r2:
-                        if st.button("Open", key=f"sw_load_{rw_str[-8:]}", use_container_width=True):
-                            st.session_state.wallet_address_input = rw_str
+                        </div>""", unsafe_allow_html=True)
+                    with _rb:
+                        if st.button("Open", key=f"sw_r_{_rs[-8:]}", use_container_width=True):
+                            st.session_state.wallet_address_input = _rs
                             st.session_state._sw_auto_scan = True
                             st.rerun()
 
@@ -12072,7 +12099,7 @@ with safe_section(section):
 
     elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
         st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Token Finder</p>', unsafe_allow_html=True)
-        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:20px;">DexScreener radar — find early tokens, trace which wallets bought first.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">DexScreener radar — find early tokens, trace which wallets bought first.</p>', unsafe_allow_html=True)
 
         st.markdown(
             """
