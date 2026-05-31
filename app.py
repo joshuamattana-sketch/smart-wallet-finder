@@ -5900,6 +5900,47 @@ def require_beta_login():
 require_beta_login()
 
 
+st.markdown("""
+<style>
+/* ── Satisfying button press ── */
+button[kind="primary"], button[kind="secondary"] {
+    transition: transform 0.10s cubic-bezier(.34,1.56,.64,1), box-shadow 0.10s ease, background 0.15s ease !important;
+    will-change: transform;
+}
+button[kind="primary"]:active, button[kind="secondary"]:active {
+    transform: scale(0.94) !important;
+    box-shadow: 0 0 0 2px rgba(124,92,252,0.35) !important;
+}
+button[kind="primary"]:hover {
+    transform: translateY(-1px) scale(1.01) !important;
+    box-shadow: 0 4px 16px rgba(124,92,252,0.22) !important;
+}
+/* ── Page fade-in ── */
+[data-testid="stAppViewContainer"] > section > div {
+    animation: fadeSlideIn 0.22s ease both;
+}
+@keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+/* ── Metric cards pop ── */
+[data-testid="stMetric"] {
+    transition: transform 0.15s ease;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+}
+/* ── Sidebar nav buttons ── */
+section[data-testid="stSidebar"] button {
+    transition: transform 0.10s cubic-bezier(.34,1.56,.64,1), background 0.12s ease !important;
+}
+section[data-testid="stSidebar"] button:active {
+    transform: scale(0.96) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 # ─────────────────────────────────────────
 # SIDEBAR — Premium Navigation v2
 # ─────────────────────────────────────────
@@ -11822,7 +11863,6 @@ with safe_section(section):
 
 
     elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
-        if False:
         st.title("Auto Discovery")
         st.caption("Market-wide DexScreener alpha radar: filter early tokens, then find fresh wallets around them.")
 
