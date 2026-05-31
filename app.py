@@ -9954,8 +9954,10 @@ def render_wallet_documentation_cards(limit=10, only_pinned=False, compact=True,
                 with b2:
                     if st.button("Open", key=journal_button_key("wallet_doc_open", row_idx, full_wallet, key_scope)):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state.sw_detail_wallet = full_wallet
+                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
-                        st.session_state.section_override = "Smart Wallets"
+                        st.session_state.main_navigation = "Smart Wallets"
                         st.rerun()
                 with b3:
                     if st.button("Watchlist", key=journal_button_key("wallet_doc_add", row_idx, full_wallet, key_scope), disabled=is_saved):
@@ -10374,8 +10376,10 @@ def render_monitor_wallet_memory_cards(wallet_df, limit=8):
                 with b3:
                     if st.button("Open wallet", key=f"monitor_mem_open_{row_idx}_{full_wallet}"):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state.sw_detail_wallet = full_wallet
+                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
-                        st.session_state.section_override = "Smart Wallets"
+                        st.session_state.main_navigation = "Smart Wallets"
                         st.rerun()
 
 
@@ -11434,8 +11438,10 @@ with safe_section(section):
                 with recent_open_col:
                     if st.button("Open", key=f"recent_open_wallet_{index}_{full_wallet}", type="secondary"):
                         st.session_state.wallet_address_input = full_wallet
+                        st.session_state.sw_detail_wallet = full_wallet
+                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
-                        st.session_state.section_override = "Smart Wallets"
+                        st.session_state.main_navigation = "Smart Wallets"
                         st.rerun()
 
                 if recent_mode == "Advanced":
@@ -11672,150 +11678,154 @@ with safe_section(section):
                     current_largest = safe_float(item.get("Largest Tx", 0))
                     previous_score = safe_int(item.get("Previous Score", current_score))
                     previous_swaps = safe_int(item.get("Previous Swaps", current_swaps))
-                    previous_transfers = safe_int(item.get("Previous Transfers", current_transfers))
-                    previous_buys = safe_int(item.get("Previous Buys", current_buys))
-                    previous_sells = safe_int(item.get("Previous Sells", current_sells))
                     previous_volume = safe_float(item.get("Previous USD Volume", current_volume))
                     previous_largest = safe_float(item.get("Previous Largest Tx", current_largest))
-                    score_change = safe_int(item.get("Score Change", current_score - previous_score))
-                    swaps_change = safe_int(item.get("Swaps Change", current_swaps - previous_swaps))
-                    transfers_change = safe_int(item.get("Transfers Change", current_transfers - previous_transfers))
-                    buys_change = safe_int(item.get("Buys Change", current_buys - previous_buys))
-                    sells_change = safe_int(item.get("Sells Change", current_sells - previous_sells))
-                    volume_change = safe_float(item.get("USD Volume Change", current_volume - previous_volume))
-                    largest_change = safe_float(item.get("Largest Tx Change", current_largest - previous_largest))
+                    score_change = safe_int(item.get("Score Change", 0))
+                    swaps_change = safe_int(item.get("Swaps Change", 0))
+                    buys_change = safe_int(item.get("Buys Change", 0))
+                    sells_change = safe_int(item.get("Sells Change", 0))
+                    volume_change = safe_float(item.get("USD Volume Change", 0))
+                    largest_change = safe_float(item.get("Largest Tx Change", 0))
                     latest_activity = item.get("Latest Activity", "-")
                     latest_token_mint = item.get("Latest Token Mint", "") or extract_first_token_mint(latest_activity)
                     movement_status, movement_badge_class, movement_hint = wallet_movement_status(item)
                     checks = item.get("Check Count", 1)
                     last_checked = item.get("Last Checked", "-")
                     pinned = wallet_is_pinned(item)
-                    pin_badge = '<span class="pin-badge">PINNED</span>' if pinned else ""
-
-                    if movement_status in ["HOT", "VOLUME SPIKE"]: 
-                        card_class, pill_class, next_step = "human-card-hot", "human-pill-yellow", "Analyze token or open wallet."
-                    elif movement_status in ["NEW SWAPS", "NEW TRANSFERS", "SCORE UP"]: 
-                        card_class, pill_class, next_step = "human-card-up", "human-pill-green", "Worth checking."
-                    elif movement_status == "COOLING": 
-                        card_class, pill_class, next_step = "human-card-down", "human-pill-red", "Lower priority."
-                    else: 
-                        card_class, pill_class, next_step = "", "", "No action needed."
-
-                    token_hint = latest_token_mint[:6] + "..." + latest_token_mint[-6:] if latest_token_mint else "No token"
                     latest_trade_side = str(item.get("Latest Trade Side", "-") or "-").upper()
-                    latest_trade_token = item.get("Latest Trade Token", "-") or "-"
-                    latest_trade_hint = item.get("Latest Trade Hint", "-") or "-"
-                    trade_badge_class = trade_side_badge_class(latest_trade_side)
+                    latest_trade_token = str(item.get("Latest Trade Token", "-") or "-")
+                    latest_trade_hint = str(item.get("Latest Trade Hint", "-") or "-")
+                    token_hint = (latest_token_mint[:6] + "..." + latest_token_mint[-6:]) if latest_token_mint else "No token"
 
-                    _outer_cls = "hot" if movement_status in ["HOT","VOLUME SPIKE"] else "up" if movement_status in ["NEW SWAPS","NEW TRANSFERS","SCORE UP"] else "down" if movement_status == "COOLING" else ""
-                    _status_cls = "hot" if movement_status in ["HOT","VOLUME SPIKE"] else "up" if movement_status in ["NEW SWAPS","NEW TRANSFERS","SCORE UP"] else "down" if movement_status == "COOLING" else "flat"
-                    _addr_copy = copy_btn_html(full_wallet, "Wallet") if "copy_btn_html" in dir() else ""
-                    _tok_copy = copy_btn_html(latest_token_mint, "Token") if latest_token_mint and "copy_btn_html" in dir() else ""
-                    st.markdown(f"""
-                    <div class="wl-outer-card {_outer_cls}">
-                        <div class="wl-card-header">
-                            <div class="wl-card-header-top">
-                                <div>
-                                    <div class="wl-card-name">{wallet} {pin_badge}</div>
-                                    <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-                                        <div class="wl-card-meta">{signal} · {checks} checks · last {last_checked}</div>
-                                        {_addr_copy}
-                                    </div>
-                                </div>
-                                <div class="wl-card-status {_status_cls}">{movement_status}</div>
-                            </div>
-                        </div>
-                        <div class="wl-card-deltas">
-                            <div class="wl-delta"><span>Swaps</span><b class="{'up' if swaps_change>0 else 'dn' if swaps_change<0 else ''}">{format_signed_number(swaps_change)}</b></div>
-                            <div class="wl-delta"><span>Buys</span><b class="{'up' if buys_change>0 else ''}">{format_signed_number(buys_change)}</b></div>
-                            <div class="wl-delta"><span>Sells</span><b class="{'dn' if sells_change>0 else ''}">{format_signed_number(sells_change)}</b></div>
-                            <div class="wl-delta"><span>Volume</span><b class="{'up' if volume_change>0 else 'dn' if volume_change<0 else ''}">{format_signed_usd(volume_change)}</b></div>
-                            <div class="wl-delta"><span>Largest</span><b>{format_signed_usd(largest_change)}</b></div>
-                            <div class="wl-delta"><span>Token</span><b>{token_hint} {_tok_copy}</b></div>
-                        </div>
-                        <div class="wl-card-action-hint">
-                            <b>Latest:</b> {latest_trade_side} · {latest_trade_token} · {latest_trade_hint[:60] if latest_trade_hint else "-"} &nbsp;·&nbsp; <b>Next:</b> {next_step}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    if movement_status in ["HOT", "VOLUME SPIKE"]:
+                        status_cls, next_step = "hot", "Analyze token or open wallet."
+                    elif movement_status in ["NEW SWAPS", "NEW TRANSFERS", "SCORE UP"]:
+                        status_cls, next_step = "up", "Worth checking."
+                    elif movement_status == "COOLING":
+                        status_cls, next_step = "down", "Lower priority."
+                    else:
+                        status_cls, next_step = "flat", "No action needed."
 
-                    col_pin, col_check, col_analyze, col_open, col_remove = st.columns([0.55, 0.65, 1.05, 0.65, 0.35])
-                    with col_pin:
-                        pin_label = "Unpin" if pinned else "Pin"
-                        if st.button(pin_label, key=f"wallet_pin_card_{index}_{full_wallet}", type="secondary"):
-                            toggle_wallet_pin(index)
-                            st.rerun()
-                    with col_check:
-                        if st.button("Check", key=f"wallet_check_card_{index}_{full_wallet}", type="secondary"):
-                            recheck_wallet_watchlist_item(index); st.rerun()
-                    with col_analyze:
-                        analyze_disabled = not bool(latest_token_mint)
-                        if st.button("Analyze Token", key=f"wallet_analyze_card_{index}_{full_wallet}", type="secondary", disabled=analyze_disabled):
-                            st.session_state.selected_token_mint = latest_token_mint
-                            st.session_state.token_scanner_input = latest_token_mint
-                            add_recent_item("recent_token_mints", latest_token_mint)
-                            st.session_state.section_override = "Token Scanner"
-                            st.rerun()
-                    with col_open:
-                        if st.button("Open", key=f"wallet_open_card_{index}_{full_wallet}", type="secondary"):
-                            st.session_state.wallet_address_input = full_wallet
-                            add_recent_item("recent_wallets", full_wallet)
-                            st.session_state.section_override = "Smart Wallets"
-                            st.rerun()
-                    with col_remove:
-                        if st.button("", help=f"Remove {wallet}", key=f"wallet_remove_card_{index}_{full_wallet}", type="primary"):
-                            remove_wallet_from_watchlist(index); st.rerun()
+                    # ── Card CSS (injected once, idempotent) ──
+                    st.markdown("""<style>
+.wl-card{background:#1a1b1f;border:1px solid #2a2b30;border-radius:16px;overflow:hidden;margin-bottom:14px}
+.wl-card.hot{border-color:rgba(255,160,70,.45)}.wl-card.up{border-color:rgba(74,222,128,.32)}.wl-card.down{border-color:rgba(248,113,113,.30)}
+.wl-card-head{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 16px 10px;border-bottom:1px solid #23242a}
+.wl-card-name{font-size:14px;font-weight:600;color:#f5f5f7}
+.wl-card-meta{font-size:11px;color:#4a4b52;margin-top:3px}
+.wl-card-badge{display:inline-block;padding:3px 11px;border-radius:16px;font-size:10px;font-weight:700;letter-spacing:.04em}
+.wl-card-badge.hot{background:rgba(255,160,70,.14);color:#fbbf24;border:1px solid rgba(255,160,70,.3)}
+.wl-card-badge.up{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
+.wl-card-badge.down{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
+.wl-card-badge.flat{background:rgba(100,116,139,.10);color:#64748b;border:1px solid rgba(100,116,139,.2)}
+.wl-card-deltas{display:flex;gap:18px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid #23242a}
+.wl-delta{display:flex;flex-direction:column}
+.wl-delta span{font-size:10px;color:#4a4b52;text-transform:uppercase;letter-spacing:.05em}
+.wl-delta b{font-size:13px;font-weight:600;color:#c0c0c8}
+.wl-delta b.g{color:#4ade80}.wl-delta b.r{color:#f87171}
+.wl-card-hint{padding:8px 16px;font-size:12px;color:#5a5b62;border-bottom:1px solid #23242a}
+.wl-card-hint b{color:#9090a0}
+.wl-card-actions{padding:10px 14px 2px}
+.wl-card-chart{padding:0 14px 12px}
+</style>""", unsafe_allow_html=True)
 
-                    st.markdown('<div class="wl-card-footer">', unsafe_allow_html=True)
-                    with st.expander(f"Chart & history — {wallet}", expanded=False):
-                        st.markdown('<div style="padding:4px 0 12px">', unsafe_allow_html=True)
+                    # ── Card header (pure HTML — no f-string class interpolation issues) ──
+                    _pin_str = " · PINNED" if pinned else ""
+                    _addr_short = short_address(full_wallet)
+                    _vol_str = format_signed_usd(volume_change)
+                    _sw_str = format_signed_number(swaps_change)
+                    _b_str = format_signed_number(buys_change)
+                    _s_str = format_signed_number(sells_change)
+                    _l_str = format_signed_usd(largest_change)
+                    _g = lambda v: "g" if v > 0 else "r" if v < 0 else ""
+
+                    st.markdown(
+                        f'''<div class="wl-card {status_cls}">
+  <div class="wl-card-head">
+    <div>
+      <div class="wl-card-name">{wallet}{_pin_str}</div>
+      <div class="wl-card-meta">{_addr_short} · {signal} · {checks} checks · {last_checked}</div>
+    </div>
+    <div class="wl-card-badge {status_cls}">{movement_status}</div>
+  </div>
+  <div class="wl-card-deltas">
+    <div class="wl-delta"><span>Swaps</span><b class="{_g(swaps_change)}">{_sw_str}</b></div>
+    <div class="wl-delta"><span>Buys</span><b class="{_g(buys_change)}">{_b_str}</b></div>
+    <div class="wl-delta"><span>Sells</span><b class="{_g(-sells_change)}">{_s_str}</b></div>
+    <div class="wl-delta"><span>Volume</span><b class="{_g(volume_change)}">{_vol_str}</b></div>
+    <div class="wl-delta"><span>Largest</span><b>{_l_str}</b></div>
+    <div class="wl-delta"><span>Token</span><b>{token_hint}</b></div>
+  </div>
+  <div class="wl-card-hint"><b>Last:</b> {latest_trade_side} · {latest_trade_token[:20]} · {latest_trade_hint[:50]} &nbsp;·&nbsp; <b>Next:</b> {next_step}</div>
+</div>''', unsafe_allow_html=True)
+
+                    # ── Actions (Streamlit buttons inside card area) ──
+                    with st.container():
+                        col_pin, col_check, col_analyze, col_open, col_paper, col_remove = st.columns([0.55, 0.55, 1.0, 0.55, 0.9, 0.35])
+                        with col_pin:
+                            if st.button("Unpin" if pinned else "Pin", key=f"wpin_{index}_{full_wallet[-8:]}", type="secondary"):
+                                toggle_wallet_pin(index); st.rerun()
+                        with col_check:
+                            if st.button("Check", key=f"wchk_{index}_{full_wallet[-8:]}", type="secondary"):
+                                recheck_wallet_watchlist_item(index); st.rerun()
+                        with col_analyze:
+                            _analyze_disabled = not bool(latest_token_mint)
+                            if st.button("Analyze Token", key=f"wana_{index}_{full_wallet[-8:]}", type="secondary", disabled=_analyze_disabled):
+                                st.session_state.selected_token_mint = latest_token_mint
+                                st.session_state.token_scanner_input = latest_token_mint
+                                add_recent_item("recent_token_mints", latest_token_mint)
+                                # Route to Token Finder with pre-loaded token
+                                st.session_state._token_finder_autoload = latest_token_mint
+                                st.session_state.main_navigation = "Token Finder"
+                                st.rerun()
+                        with col_open:
+                            if st.button("Open", key=f"wopn_{index}_{full_wallet[-8:]}", type="secondary"):
+                                st.session_state.wallet_address_input = full_wallet
+                                st.session_state.sw_detail_wallet = full_wallet
+                                st.session_state._sw_auto_scan = True
+                                add_recent_item("recent_wallets", full_wallet)
+                                st.session_state.main_navigation = "Smart Wallets"
+                                st.rerun()
+                        with col_paper:
+                            if st.button("Paper trade", key=f"wpap_{index}_{full_wallet[-8:]}", type="secondary"):
+                                st.session_state._paper_copy_wallet = {
+                                    "address": full_wallet,
+                                    "name": wallet,
+                                    "score": current_score
+                                }
+                                st.session_state.main_navigation = "Paper Trading"
+                                st.rerun()
+                        with col_remove:
+                            if st.button("✕", key=f"wrem_{index}_{full_wallet[-8:]}", help=f"Remove {wallet}"):
+                                remove_wallet_from_watchlist(index); st.rerun()
+
+                    # ── Chart (collapsible, inside card) ──
+                    with st.expander(f"Chart & history", expanded=False):
                         render_smart_wallet_chart(full_wallet, item=item, compact=False)
                         _hp = wallet_history_point_count(full_wallet)
                         if _hp > 0:
-                            if st.button("Reset chart", key=f"wallet_reset_chart_{index}_{full_wallet}", type="secondary"):
-                                clear_wallet_history_for_wallet(full_wallet)
-                                st.rerun()
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+                            if st.button("Reset chart data", key=f"wrst_{index}_{full_wallet[-8:]}", type="secondary"):
+                                clear_wallet_history_for_wallet(full_wallet); st.rerun()
 
-                    if watch_mode == "Advanced":
-                        with st.expander(f"Details for {wallet}", expanded=False):
-                            st.markdown(
-                                f"""
-                                **Why:** {movement_hint}  
-                                **Address:** `{full_wallet}`  
-                                **Score:** {previous_score} → {current_score} ({format_signed_number(score_change)})  
-                                **Swaps:** {previous_swaps} → {current_swaps} ({format_signed_number(swaps_change)})  
-                                **Transfers:** {previous_transfers} → {current_transfers} ({format_signed_number(transfers_change)})  
-                                **Buys:** {previous_buys} → {current_buys} ({format_signed_number(buys_change)})  
-                                **Sells:** {previous_sells} → {current_sells} ({format_signed_number(sells_change)})  
-                                **Volume:** {format_usd(previous_volume)} → {format_usd(current_volume)} ({format_signed_usd(volume_change)})  
-                                **Largest Tx:** {format_usd(previous_largest)} → {format_usd(current_largest)} ({format_signed_usd(largest_change)})  
-                                **Latest activity:** {latest_activity}
-                                """
-                            )
-
-            st.markdown('<style>.wl-outer-card{background:#18191c;border:1px solid #2a2b30;border-radius:18px;padding:0;margin-bottom:16px;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease;}.wl-outer-card:hover{border-color:#3a3b45;box-shadow:0 4px 24px rgba(0,0,0,.25);}.wl-outer-card.hot{border-color:rgba(255,180,80,.45);}.wl-outer-card.up{border-color:rgba(74,222,128,.3);}.wl-outer-card.down{border-color:rgba(248,113,113,.28);}.wl-card-header{padding:16px 18px 12px;border-bottom:1px solid #2a2b30;}.wl-card-header-top{display:flex;justify-content:space-between;align-items:flex-start;}.wl-card-name{font-size:15px;font-weight:600;color:#f5f5f7;}.wl-card-meta{font-size:11px;color:#4a4b52;margin-top:3px;}.wl-card-status{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;}.wl-card-status.hot{background:rgba(255,160,70,.15);color:#fbbf24;border:1px solid rgba(255,160,70,.3);}.wl-card-status.up{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25);}.wl-card-status.down{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25);}.wl-card-status.flat{background:rgba(100,116,139,.10);color:#64748b;border:1px solid rgba(100,116,139,.2);}.wl-card-deltas{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid #2a2b30;}.wl-delta{display:flex;flex-direction:column;}.wl-delta span{font-size:10px;color:#4a4b52;text-transform:uppercase;letter-spacing:.05em;}.wl-delta b{font-size:13px;font-weight:600;color:#c0c0c8;}.wl-delta b.up{color:#4ade80;}.wl-delta b.dn{color:#f87171;}.wl-card-action-hint{padding:10px 18px;font-size:12px;color:#5a5b62;border-bottom:1px solid #2a2b30;}.wl-card-action-hint b{color:#9090a0;}.wl-card-footer{padding:0 14px 14px;}</style>', unsafe_allow_html=True)
-
-            if pinned_pairs:
-                st.markdown('<div class="section-title">Pinned wallets</div>', unsafe_allow_html=True)
-                for index, item, status in pinned_pairs:
-                    render_wallet_card(index, item, status)
-
-            if attention_pairs:
-                st.markdown('<div class="section-title">Needs attention</div>', unsafe_allow_html=True)
-                for index, item, status in attention_pairs:
-                    render_wallet_card(index, item, status)
-
-            if cooling_pairs:
-                with st.expander(f"Cooling / lower priority ({len(cooling_pairs)})", expanded=False):
-                    for index, item, status in cooling_pairs:
+                if pinned_pairs:
+                    st.markdown('<div class="section-title">Pinned wallets</div>', unsafe_allow_html=True)
+                    for index, item, status in pinned_pairs:
                         render_wallet_card(index, item, status)
 
-            if quiet_pairs:
-                with st.expander(f"Quiet wallets ({len(quiet_pairs)})", expanded=False):
-                    for index, item, status in quiet_pairs:
+                if attention_pairs:
+                    st.markdown('<div class="section-title">Needs attention</div>', unsafe_allow_html=True)
+                    for index, item, status in attention_pairs:
                         render_wallet_card(index, item, status)
+
+                if cooling_pairs:
+                    with st.expander(f"Cooling / lower priority ({len(cooling_pairs)})", expanded=False):
+                        for index, item, status in cooling_pairs:
+                            render_wallet_card(index, item, status)
+
+                if quiet_pairs:
+                    with st.expander(f"Quiet wallets ({len(quiet_pairs)})", expanded=False):
+                        for index, item, status in quiet_pairs:
+                            render_wallet_card(index, item, status)
 
         with token_tab:
             st.markdown('<div class="section-title">Token Watchlist</div>', unsafe_allow_html=True)
@@ -11919,8 +11929,17 @@ with safe_section(section):
 
 
     elif section == "Token Finder" or section == "Token Scanner" or section == "Auto Discovery" or section == "Market Monitor":
+
+        # ── Auto-load from "Analyze Token" button ──────────────
+        _tf_autoload = st.session_state.pop("_token_finder_autoload", None)
+        if _tf_autoload:
+            st.info(f"Loaded token from wallet: `{_tf_autoload[:12]}...{_tf_autoload[-6:]}`")
+            st.session_state.selected_token_mint = _tf_autoload
+        # ────────────────────────────────────────────────────────
+
         st.markdown('<p style="font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px;">Token Finder</p>', unsafe_allow_html=True)
         st.markdown('<p style="font-size:14px;color:#5a5b62;margin-bottom:16px;">DexScreener radar — find fresh tokens early, trace which wallets bought first.</p>', unsafe_allow_html=True)
+        st.caption("Market-wide DexScreener alpha radar: filter early tokens, then find fresh wallets around them.")
 
         st.markdown(
             """
@@ -12541,42 +12560,6 @@ with safe_section(section):
                 unsafe_allow_html=True
             )
 
-
-            # ── Copy staging area (when coming from wallet detail) ───
-            _copy_target = st.session_state.pop("_paper_copy_wallet", None)
-            if _copy_target:
-                _cw_addr = str(_copy_target.get("address","")).strip()
-                _cw_name = str(_copy_target.get("name","")).strip() or wallet_display_name(_cw_addr)
-                _cw_score = safe_int(_copy_target.get("score", 0))
-                st.markdown(f"""
-                <style>
-                .copy-stage{{background:#1a1b1f;border:2px solid rgba(124,92,252,0.45);border-radius:16px;padding:20px;margin-bottom:20px}}
-                .copy-stage-title{{font-size:16px;font-weight:600;color:#f5f5f7;margin-bottom:4px}}
-                .copy-stage-sub{{font-size:13px;color:#5a5b62;margin-bottom:14px}}
-                .copy-stage-addr{{font-family:monospace;font-size:12px;color:#a78bfa;background:rgba(124,92,252,0.10);padding:6px 12px;border-radius:8px;display:inline-block;margin-bottom:12px}}
-                </style>
-                <div class="copy-stage">
-                    <div class="copy-stage-title">Set up paper copy — {_cw_name}</div>
-                    <div class="copy-stage-addr">{_cw_addr[:14]}...{_cw_addr[-8:]}</div>
-                    <div class="copy-stage-sub">Score: <b style="color:#a78bfa">{_cw_score}/100</b> · Choose how much fake money to use and click Place trade below.</div>
-                </div>
-                """, unsafe_allow_html=True)
-                _cs1, _cs2, _cs3 = st.columns(3)
-                with _cs1:
-                    if st.button("Place $25 paper trade", key="copy_stage_25", use_container_width=True, type="primary"):
-                        st.session_state.paper_settings["enabled"] = True
-                        st.session_state.paper_settings["selected_source_wallets"] = [_cw_addr]
-                        st.success(f"Paper copy set up for {_cw_name}. Run Auto Scan to simulate trades.")
-                with _cs2:
-                    if st.button("Place $50 paper trade", key="copy_stage_50", use_container_width=True):
-                        st.session_state.paper_settings["enabled"] = True
-                        st.session_state.paper_settings["selected_source_wallets"] = [_cw_addr]
-                        st.session_state.paper_settings["trade_size"] = 50
-                        st.success(f"Paper copy set up for {_cw_name}.")
-                with _cs3:
-                    if st.button("Custom setup", key="copy_stage_custom", use_container_width=True):
-                        st.info("Scroll down to Paper Trading settings to configure manually.")
-            # ─────────────────────────────────────────────────────────
             render_paper_impact()
 
             settings = st.session_state.get("paper_settings", {})
