@@ -5902,42 +5902,75 @@ require_beta_login()
 
 st.markdown("""
 <style>
-/* ── Satisfying button press ── */
-button[kind="primary"], button[kind="secondary"] {
-    transition: transform 0.10s cubic-bezier(.34,1.56,.64,1), box-shadow 0.10s ease, background 0.15s ease !important;
-    will-change: transform;
+/* ── Global button base ── */
+div.stButton > button {
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
+    border-radius: 10px !important;
+    font-weight: 500 !important;
 }
-button[kind="primary"]:active, button[kind="secondary"]:active {
-    transform: scale(0.94) !important;
-    box-shadow: 0 0 0 2px rgba(124,92,252,0.35) !important;
-}
-button[kind="primary"]:hover {
-    transform: translateY(-1px) scale(1.01) !important;
-    box-shadow: 0 4px 16px rgba(124,92,252,0.22) !important;
+div.stButton > button:hover {
+    background: rgba(124,92,252,0.12) !important;
+    border-color: rgba(124,92,252,0.5) !important;
+    color: #c4b5fd !important;
 }
 /* ── Page fade-in ── */
-[data-testid="stAppViewContainer"] > section > div {
-    animation: fadeSlideIn 0.22s ease both;
+section.main > div {
+    animation: pageIn 0.18s ease both;
 }
-@keyframes fadeSlideIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
+@keyframes pageIn {
+    from { opacity:0; transform:translateY(5px); }
+    to   { opacity:1; transform:translateY(0); }
 }
-/* ── Metric cards pop ── */
+/* ── Metric hover ── */
 [data-testid="stMetric"] {
-    transition: transform 0.15s ease;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    border-radius: 12px;
 }
 [data-testid="stMetric"]:hover {
     transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(124,92,252,0.15);
 }
 /* ── Sidebar nav buttons ── */
-section[data-testid="stSidebar"] button {
-    transition: transform 0.10s cubic-bezier(.34,1.56,.64,1), background 0.12s ease !important;
+section[data-testid="stSidebar"] div.stButton > button {
+    background: transparent !important;
+    border: none !important;
+    text-align: left !important;
+    color: #8a8b92 !important;
 }
-section[data-testid="stSidebar"] button:active {
-    transform: scale(0.96) !important;
+section[data-testid="stSidebar"] div.stButton > button:hover {
+    background: rgba(124,92,252,0.10) !important;
+    color: #d0d0d5 !important;
+    border-color: transparent !important;
 }
 </style>
+<script>
+// JS button press effect — works even in Streamlit shadow DOM
+(function(){
+    function addPressEffect(btn) {
+        btn.addEventListener('mousedown', function() {
+            this.style.transform = 'scale(0.95)';
+            this.style.transition = 'transform 0.08s cubic-bezier(.34,1.56,.64,1)';
+        });
+        btn.addEventListener('mouseup', function() {
+            this.style.transform = 'scale(1)';
+        });
+        btn.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+        });
+    }
+    function patchButtons() {
+        document.querySelectorAll('button').forEach(function(btn) {
+            if (!btn.dataset.pressed) {
+                btn.dataset.pressed = '1';
+                addPressEffect(btn);
+            }
+        });
+    }
+    // Run on load and re-run when Streamlit re-renders
+    setInterval(patchButtons, 800);
+    document.addEventListener('DOMContentLoaded', patchButtons);
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
@@ -5957,13 +5990,13 @@ _SECTION_REMAP = {
 }
 
 _NAV_ITEMS = [
-    ("Today",          "🏠", "main"),
-    ("Token Finder",   "🔍", "main"),
-    ("Smart Wallets",  "👛", "main"),
-    ("Wallet Journal", "📓", "track"),
-    ("Watchlist",      "⭐", "track"),
-    ("Paper Trading",  "📈", "track"),
-    ("Settings",       "⚙️",  "system"),
+    ("Today",          "·", "main"),
+    ("Token Finder",   "·", "main"),
+    ("Smart Wallets",  "·", "main"),
+    ("Wallet Journal", "·", "track"),
+    ("Watchlist",      "·", "track"),
+    ("Paper Trading",  "·", "track"),
+    ("Settings",       "·", "system"),
 ]
 
 if "main_navigation" not in st.session_state:
@@ -10956,23 +10989,23 @@ with safe_section(section):
         _cards = []
 
         if hot_count > 0:
-            _cards.append(("highlight", "🔥", f"{hot_count} hot wallet{'s' if hot_count!=1 else ''} right now", "Something just moved. Check Smart Wallets → Recent Trades first."))
+            _cards.append(("highlight", "!", f"{hot_count} hot wallet{'s' if hot_count!=1 else ''} right now", "Something just moved. Check Smart Wallets → Recent Trades first."))
         elif move_count > 0:
-            _cards.append(("", "👁️", f"{move_count} wallet{'s' if move_count!=1 else ''} moved", "No urgent spike but activity detected. Worth a quick look."))
+            _cards.append(("", "·", f"{move_count} wallet{'s' if move_count!=1 else ''} moved", "No urgent spike but activity detected. Worth a quick look."))
         else:
-            _cards.append(("", "💤", "No urgent wallet movement", "All quiet. Keep Auto Scan running to catch the next move early."))
+            _cards.append(("", "·", "No urgent wallet movement", "All quiet. Keep Auto Scan running to catch the next move early."))
 
         if token_count == 0:
-            _cards.append(("", "🔍", "Find your first token", "Open Token Finder and run a scan. The engine looks for fresh, early Solana tokens."))
+            _cards.append(("", "·", "Find your first token", "Open Token Finder and run a scan. The engine looks for fresh, early Solana tokens."))
         else:
-            _cards.append(("success", "🔍", f"{token_count} token{'s' if token_count!=1 else ''} on your list", "Token Finder is tracking these. Run a fresh scan to see what's moved."))
+            _cards.append(("success", "·", f"{token_count} token{'s' if token_count!=1 else ''} on your list", "Token Finder is tracking these. Run a fresh scan to see what's moved."))
 
         if not active_trades:
-            _cards.append(("", "📈", "No paper trades active", "Set up a fake trade in Paper Trading to test a wallet before risking real money."))
+            _cards.append(("", "·", "No paper trades active", "Set up a fake trade in Paper Trading to test a wallet before risking real money."))
         elif len(risky_trades) > 0:
-            _cards.append(("warning", "📈", f"{len(risky_trades)} trade near stop loss", "Review your Paper Trading positions. One is getting close to your limit."))
+            _cards.append(("warning", "·", f"{len(risky_trades)} trade near stop loss", "Review your Paper Trading positions. One is getting close to your limit."))
         else:
-            _cards.append(("success", "📈", f"{len(active_trades)} trade{'s' if len(active_trades)!=1 else ''} active", f"Paper P/L today: {_pl_str}. Things look {'good' if total_pl>=0 else 'rough'}."))
+            _cards.append(("success", "·", f"{len(active_trades)} trade{'s' if len(active_trades)!=1 else ''} active", f"Paper P/L today: {_pl_str}. Things look {'good' if total_pl>=0 else 'rough'}."))
 
         _card_html = '<div class="today-cards">'
         for _cls, _icon, _title, _sub in _cards:
@@ -10989,19 +11022,19 @@ with safe_section(section):
         st.markdown('<div class="today-section-label">Quick jump</div>', unsafe_allow_html=True)
         _qc = st.columns(4)
         with _qc[0]:
-            if st.button("🔍  Token Finder", key="today_go_token", use_container_width=True):
+            if st.button("Token Finder", key="today_go_token", use_container_width=True):
                 st.session_state.main_navigation = "Token Finder"
                 st.rerun()
         with _qc[1]:
-            if st.button("👛  Smart Wallets", key="today_go_wallets", use_container_width=True):
+            if st.button("Smart Wallets", key="today_go_wallets", use_container_width=True):
                 st.session_state.main_navigation = "Smart Wallets"
                 st.rerun()
         with _qc[2]:
-            if st.button("📓  Journal", key="today_go_journal", use_container_width=True):
+            if st.button("Journal", key="today_go_journal", use_container_width=True):
                 st.session_state.main_navigation = "Wallet Journal"
                 st.rerun()
         with _qc[3]:
-            if st.button("📈  Paper Trading", key="today_go_paper", use_container_width=True):
+            if st.button("Paper Trading", key="today_go_paper", use_container_width=True):
                 st.session_state.main_navigation = "Paper Trading"
                 st.rerun()
 
