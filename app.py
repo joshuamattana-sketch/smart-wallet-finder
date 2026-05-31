@@ -28,9 +28,7 @@ APP_BUILD_NAME = "Stability UI Build"
 APP_BUILD_VERSION = "2026-05-30"
 
 
-
 def copy_btn_html(text, label="Copy", short=True):
-    """Returns HTML for a copy-to-clipboard button using the global _copyAddr JS."""
     display = (text[:8] + "..." + text[-4:]) if short and len(text) > 16 else text
     safe_text = str(text).replace("'", "\'").replace('"', '&quot;')
     return f'''<span class="copy-btn" onclick="window._copyAddr('{safe_text}','{label}')" title="Click to copy">{display}</span>'''
@@ -977,6 +975,7 @@ def append_wallet_history_point(
     st.session_state.wallet_history[key] = history[-120:]
     save_json_dict(WALLET_HISTORY_FILE, st.session_state.wallet_history)
 
+@st.cache_data(ttl=30, show_spinner=False)
 def wallet_history_dataframe(wallet_address):
     key = wallet_history_key(wallet_address)
     history = st.session_state.get("wallet_history", {}).get(key, [])
@@ -1162,6 +1161,230 @@ def wallet_chart_range_dataframe(history_df, range_label):
         return df
 
     return df.tail(12)
+
+
+
+def render_smart_wallet_chart(wallet_address, item=None, compact=False):
+    """
+    Clean, beginner-readable wallet chart.
+    Shows score over time + volume bars + buy/sell markers.
+    Works in wallet detail, journal cards and watchlist.
+    """
+    history_df = wallet_history_dataframe(wallet_address)
+
+    if history_df is None or history_df.empty or len(history_df) < 2:
+        st.markdown("""
+        <div style="background:#1a1b1f;border:1px solid #2a2b30;border-radius:12px;padding:20px;
+             text-align:center;color:#4a4b52;font-size:13px;">
+            No chart yet — add to Watchlist and run Auto Scan to build history.
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    df = history_df.copy().sort_values("Time").tail(24 if not compact else 12)
+    df["Time Label"] = df["Time"].dt.strftime("%m/%d %H:%M")
+    df["Score"] = pd.to_numeric(df.get("Score", 0), errors="coerce").fillna(0)
+    df["Vol Change"] = pd.to_numeric(df.get("USD Volume Change", 0), errors="coerce").fillna(0)
+    df["Trade Side"] = df.get("Trade Side", "-").fillna("-").astype(str).str.upper()
+    df["Trade Token"] = df.get("Trade Token", "-").fillna("-").astype(str)
+    df["Trade Hint"] = df.get("Trade Hint", "-").fillna("-").astype(str)
+
+    # ── Beginner summary strip ──────────────────────────────────
+    _latest = df.iloc[-1]
+    _score = safe_int(_latest.get("Score", 0))
+    _buys_total = int(df.get("Buys Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Buys Change" in df.columns else 0
+    _sells_total = int(df.get("Sells Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Sells Change" in df.columns else 0
+    _vol_total = safe_float(df.get("Vol Change", pd.Series(dtype=float)).clip(lower=0).sum())
+    _checks = len(df)
+
+    # Read from buy/sell ratio
+    if _buys_total > _sells_total * 1.5:
+        _pattern = "Buying more than selling"
+        _pattern_color = "#4ade80"
+    elif _sells_total > _buys_total * 1.5:
+        _pattern = "Selling more than buying"
+        _pattern_color = "#f87171"
+    else:
+        _pattern = "Mixed activity"
+        _pattern_color = "#94a3b8"
+
+    st.markdown(f"""
+    <style>
+    .smchart-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px}}
+    .smchart-stat{{background:#1e1f23;border:1px solid #2a2b30;border-radius:10px;padding:12px}}
+    .smchart-stat span{{display:block;font-size:10px;color:#4a4b52;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}}
+    .smchart-stat b{{display:block;font-size:16px;font-weight:700;color:#f5f5f7}}
+    .smchart-legend{{display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap}}
+    .smchart-leg-item{{display:flex;align-items:center;gap:6px;font-size:12px;color:#9090a0}}
+    .smchart-leg-dot{{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}}
+    </style>
+    <div class="smchart-summary">
+        <div class="smchart-stat"><span>Score</span><b>{_score}/100</b></div>
+        <div class="smchart-stat"><span>Buys</span><b style="color:#4ade80">{_buys_total}</b></div>
+        <div class="smchart-stat"><span>Sells</span><b style="color:#f87171">{_sells_total}</b></div>
+        <div class="smchart-stat"><span>Pattern</span><b style="color:{_pattern_color};font-size:12px">{_pattern}</b></div>
+    </div>
+    <div class="smchart-legend">
+        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#a78bfa"></div> Score</div>
+        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#4ade80"></div> Buy / Volume up</div>
+        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#f87171"></div> Sell / Volume down</div>
+        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#fbbf24;border-radius:2px"></div> Swap unclear</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Build Vega-Lite layers ──────────────────────────────────
+    records = []
+    for _, row in df.iterrows():
+        _side = str(row.get("Trade Side", "-")).upper()
+        _vc = safe_float(row.get("Vol Change", 0))
+        _tok = str(row.get("Trade Token", "-"))
+        _hint = str(row.get("Trade Hint", "-"))
+        _sc = safe_float(row.get("Score", 0))
+        _tl = str(row.get("Time Label", ""))
+
+        # Volume bar color
+        if _side == "BUY":
+            _bar_color = "#22c55e"
+            _marker_color = "#22c55e"
+            _marker_label = f"BUY {_tok[:8] if _tok != '-' else ''}"
+        elif _side == "SELL":
+            _bar_color = "#ef4444"
+            _marker_color = "#ef4444"
+            _marker_label = f"SELL {_tok[:8] if _tok != '-' else ''}"
+        elif _side in ["ROTATE", "SWAP"]:
+            _bar_color = "#f59e0b"
+            _marker_color = "#f59e0b"
+            _marker_label = "SWAP"
+        elif _vc > 0:
+            _bar_color = "#22c55e"
+            _marker_color = None
+            _marker_label = None
+        elif _vc < 0:
+            _bar_color = "#ef4444"
+            _marker_color = None
+            _marker_label = None
+        else:
+            _bar_color = "#374151"
+            _marker_color = None
+            _marker_label = None
+
+        records.append({
+            "time": _tl,
+            "score": _sc,
+            "vol_change": _vc,
+            "bar_color": _bar_color,
+            "has_trade": _side in ["BUY","SELL","ROTATE","SWAP"],
+            "trade_side": _side if _side in ["BUY","SELL","ROTATE","SWAP"] else "-",
+            "marker_label": _marker_label or "",
+            "token": _tok,
+            "hint": _hint[:60] if _hint else "-",
+        })
+
+    _h = 200 if compact else 280
+
+    # Layer 1: Volume bars
+    # Layer 2: Score line
+    # Layer 3: Trade markers (dots + labels)
+    chart_spec = {
+        "background": "#18191c",
+        "height": _h,
+        "data": {"values": records},
+        "layer": [
+            # Volume bars
+            {
+                "mark": {"type": "bar", "cornerRadiusTopLeft": 3, "cornerRadiusTopRight": 3, "opacity": 0.6},
+                "encoding": {
+                    "x": {"field": "time", "type": "ordinal", "axis": {"labelColor": "#5a5b62", "title": None, "labelAngle": -30, "labelFontSize": 10}},
+                    "y": {"field": "vol_change", "type": "quantitative", "axis": {"labelColor": "#5a5b62", "title": "Volume change", "titleColor": "#5a5b62", "gridColor": "rgba(255,255,255,0.04)", "titleFontSize": 10}},
+                    "color": {"field": "bar_color", "type": "nominal", "scale": None, "legend": None},
+                    "tooltip": [
+                        {"field": "time", "title": "Time"},
+                        {"field": "trade_side", "title": "Action"},
+                        {"field": "vol_change", "title": "Volume change", "format": ",.0f"},
+                        {"field": "hint", "title": "What happened"},
+                    ]
+                }
+            },
+            # Score line
+            {
+                "mark": {"type": "line", "strokeWidth": 2.5, "color": "#a78bfa", "interpolate": "monotone"},
+                "encoding": {
+                    "x": {"field": "time", "type": "ordinal"},
+                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}, "axis": {"labelColor": "#a78bfa", "title": "Score", "titleColor": "#a78bfa", "orient": "right", "gridColor": "rgba(255,255,255,0.03)", "titleFontSize": 10}},
+                    "tooltip": [
+                        {"field": "time", "title": "Time"},
+                        {"field": "score", "title": "Score"},
+                    ]
+                }
+            },
+            # Score dots
+            {
+                "mark": {"type": "point", "filled": True, "size": 40, "color": "#a78bfa"},
+                "encoding": {
+                    "x": {"field": "time", "type": "ordinal"},
+                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}},
+                }
+            },
+            # Trade markers (larger dots)
+            {
+                "transform": [{"filter": "datum.has_trade == true"}],
+                "mark": {"type": "point", "filled": True, "size": 140, "strokeWidth": 2},
+                "encoding": {
+                    "x": {"field": "time", "type": "ordinal"},
+                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}},
+                    "color": {"field": "bar_color", "type": "nominal", "scale": None, "legend": None},
+                    "stroke": {"value": "#18191c"},
+                    "tooltip": [
+                        {"field": "time", "title": "Time"},
+                        {"field": "trade_side", "title": "Action"},
+                        {"field": "token", "title": "Token"},
+                        {"field": "score", "title": "Score"},
+                        {"field": "hint", "title": "What happened"},
+                    ]
+                }
+            },
+            # Trade labels (BUY / SELL text)
+            {
+                "transform": [{"filter": "datum.has_trade == true && datum.trade_side != 'SWAP'"}],
+                "mark": {"type": "text", "dy": -16, "fontSize": 10, "fontWeight": "bold"},
+                "encoding": {
+                    "x": {"field": "time", "type": "ordinal"},
+                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}},
+                    "text": {"field": "trade_side"},
+                    "color": {"field": "bar_color", "type": "nominal", "scale": None, "legend": None},
+                }
+            }
+        ],
+        "resolve": {"scale": {"y": "independent"}},
+        "config": {
+            "view": {"stroke": "transparent"},
+            "axis": {"domainColor": "rgba(255,255,255,0.06)", "tickColor": "rgba(255,255,255,0.06)"},
+        }
+    }
+
+    st.vega_lite_chart(chart_spec, use_container_width=True)
+
+    # ── Plain-English timeline ──────────────────────────────────
+    _trades = [r for r in records if r["has_trade"]]
+    if _trades and not compact:
+        st.markdown('<div style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px">What happened</div>', unsafe_allow_html=True)
+        _timeline_html = ""
+        for _tr in _trades[-6:]:
+            _side = _tr["trade_side"]
+            _col = "#4ade80" if _side == "BUY" else "#f87171" if _side == "SELL" else "#fbbf24"
+            _bg = "rgba(34,197,94,.08)" if _side == "BUY" else "rgba(239,68,68,.08)" if _side == "SELL" else "rgba(251,191,36,.08)"
+            _bdr = "rgba(34,197,94,.25)" if _side == "BUY" else "rgba(239,68,68,.25)" if _side == "SELL" else "rgba(251,191,36,.25)"
+            _tok_str = f" · {_tr['token']}" if _tr['token'] not in ['-',''] else ""
+            _timeline_html += f"""
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;
+                 background:{_bg};border:1px solid {_bdr};border-radius:10px;margin-bottom:6px">
+                <div style="font-size:10px;font-weight:700;color:{_col};min-width:36px;padding-top:1px">{_side}</div>
+                <div>
+                    <div style="font-size:12px;color:#c0c0c8;font-weight:500">{_tr['time']}{_tok_str}</div>
+                    <div style="font-size:11px;color:#5a5b62;margin-top:2px">{_tr['hint']}</div>
+                </div>
+            </div>"""
+        st.markdown(_timeline_html, unsafe_allow_html=True)
 
 
 def render_story_chart_block(chart_df, value_column, change_column, title, value_label, bar_label):
@@ -1813,86 +2036,8 @@ def render_trade_behavior_chart(chart_df):
         st.vega_lite_chart(advanced_chart, width="stretch")
 
 def render_wallet_history_chart(wallet_address, item):
-    history_df = wallet_history_dataframe(wallet_address)
-
-    if history_df.empty or len(history_df) < 2:
-        st.info("No chart yet. Pin this wallet and keep Auto Update on. The chart builds from saved checks.")
-        return
-
-    story = wallet_story_from_history(history_df, item)
-    status, status_class, status_hint = wallet_movement_status(item)
-
-    latest = history_df.iloc[-1]
-    previous = history_df.iloc[-2]
-    best_volume_spike = safe_float(history_df["USD Volume Change"].max()) if "USD Volume Change" in history_df else 0
-    best_largest_spike = safe_float(history_df["Largest Tx Change"].max()) if "Largest Tx Change" in history_df else 0
-    best_swap_spike = safe_int(history_df["Swaps Change"].max()) if "Swaps Change" in history_df else 0
-    total_buys = int(history_df.get("Buys Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Buys Change" in history_df else 0
-    total_sells = int(history_df.get("Sells Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Sells Change" in history_df else 0
-
-    story_class = "story-good" if status in ["HOT", "VOLUME SPIKE", "NEW SWAPS"] else "story-warn" if status == "COOLING" else "story-neutral"
-    st.markdown(
-        f"""<div class="wallet-story-box {story_class}">
-            <div class="wallet-story-title">Wallet story</div>
-            <div class="wallet-story-text">{story}</div>
-        </div>""",
-        unsafe_allow_html=True
-    )
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Checks", len(history_df))
-    c2.metric("Current Volume", format_usd(latest.get("USD Volume", 0)))
-    c3.metric("Biggest Spike", format_signed_usd(best_volume_spike))
-    c4.metric("Buys / Sells", f"{total_buys} / {total_sells}")
-    c5.metric("Biggest Swap Spike", format_signed_number(best_swap_spike))
-
-    chart_range_col, chart_type_col = st.columns([0.28, 0.72])
-    with chart_range_col:
-        chart_range = st.selectbox(
-            "Range",
-            ["Last 6 checks", "Last 12 checks", "Last 24 checks", "All"],
-            index=1,
-            key=f"wallet_chart_range_{wallet_address}"
-        )
-    with chart_type_col:
-        chart_type = st.radio(
-            "Chart",
-            ["Trade Behavior", "Volume", "Swaps", "Score", "Largest Tx"],
-            horizontal=True,
-            key=f"wallet_chart_type_{wallet_address}"
-        )
-
-    chart_df = wallet_chart_range_dataframe(history_df, chart_range)
-
-    if chart_type == "Trade Behavior":
-        render_trade_behavior_chart(chart_df)
-    elif chart_type == "Volume":
-        render_story_chart_block(chart_df, "USD Volume", "USD Volume Change", "Volume story", "Total USD volume", "Volume change")
-    elif chart_type == "Swaps":
-        render_story_chart_block(chart_df, "Swaps", "Swaps Change", "Swap activity story", "Total swaps", "New swaps")
-    elif chart_type == "Score":
-        render_story_chart_block(chart_df, "Score", "Score Change", "Score story", "Wallet score", "Score change")
-    else:
-        render_story_chart_block(chart_df, "Largest Tx", "Largest Tx Change", "Largest transaction story", "Largest tx", "Largest tx change")
-
-    with st.expander("Show raw chart data", expanded=False):
-        compact_history = chart_df.tail(12).copy()
-        compact_history["Time"] = compact_history["Time"].dt.strftime("%Y-%m-%d %H:%M:%S")
-        if "USD Volume" in compact_history:
-            compact_history["USD Volume"] = compact_history["USD Volume"].apply(format_usd)
-        if "Largest Tx" in compact_history:
-            compact_history["Largest Tx"] = compact_history["Largest Tx"].apply(format_usd)
-        if "USD Volume Change" in compact_history:
-            compact_history["USD Volume Change"] = compact_history["USD Volume Change"].apply(format_signed_usd)
-        if "Largest Tx Change" in compact_history:
-            compact_history["Largest Tx Change"] = compact_history["Largest Tx Change"].apply(format_signed_usd)
-        show_cols = [
-            "Time", "Trade Side", "Trade Token", "Trade Hint",
-            "Score", "Swaps", "Transfers", "Buys", "Sells",
-            "USD Volume", "Largest Tx", "Score Change", "Swaps Change", "Transfers Change",
-            "Buys Change", "Sells Change", "USD Volume Change", "Largest Tx Change"
-        ]
-        st.dataframe(compact_history[[col for col in show_cols if col in compact_history.columns]], width='stretch', hide_index=True)
+    """Wrapper that calls the new smart chart — keeps backward compatibility."""
+    render_smart_wallet_chart(wallet_address, item=item, compact=False)
 
 def wallet_movement_values(item):
     score_change = safe_int(item.get("Score Change", 0))
@@ -2721,54 +2866,75 @@ def extract_wallet_candidates_from_transfers(transfers, token_mint):
     return candidates
 
 
-def discover_wallets_from_token_solscan(token_mint, max_wallets=15):
+def discover_wallets_from_token_solscan(token_mint, max_wallets=10):
     transfers, transfer_error = fetch_solscan_token_transfers(token_mint, limit=50)
+
     if transfer_error:
         return pd.DataFrame(), transfer_error
+
     candidates = extract_wallet_candidates_from_transfers(transfers, token_mint)
+
     if not candidates:
-        return pd.DataFrame(), "No wallet candidates found in Solscan transfers."
+        return pd.DataFrame(), "No wallet candidates found from Solscan transfers."
+
     discovered_rows = []
-    for rank, candidate in enumerate(candidates[:max_wallets]):
-        wallet = str(candidate.get("Wallet", "")).strip()
-        if not wallet:
-            continue
+
+    for candidate in candidates[:max_wallets]:
+        wallet = candidate["Wallet"]
         short_wallet = f"{wallet[:6]}...{wallet[-6:]}"
-        early_rank = rank + 1
+
         wallet_tx_data, wallet_error = fetch_wallet_transactions(wallet)
+
         if wallet_error or wallet_tx_data is None or wallet_tx_data.empty:
-            base_score = max(60 - (early_rank * 3), 20)
             discovered_rows.append({
-                "Wallet": short_wallet, "Full Wallet": wallet,
-                "Score": base_score, "Early Rank": early_rank,
-                "Type": "Early Buyer", "Transfers": candidate.get("Transfers", 0),
-                "Swaps": 0, "Verdict": "Watch first",
-                "Reason": f"Early buyer (#{early_rank}). Wallet scan unavailable.",
-                "Source Token": shorten_mints(token_mint),
-                "Saved?": "Saved" if wallet_already_saved(wallet) else "New"
+                "Wallet": short_wallet,
+                "Full Wallet": wallet,
+                "Score": 20,
+                "Type": "Candidate",
+                "Transfers": candidate["Transfers"],
+                "Swaps": "-",
+                "Reason": "Found in token transfers. Wallet scan failed or no recent Helius data.",
+                "Source Token": shorten_mints(token_mint)
             })
             continue
+
         total_tx, transfers_count, swaps, unknown, activity_level = summarize_wallet_activity(wallet_tx_data)
-        wallet_signal, wallet_score, wallet_reason = get_wallet_signal(total_tx, transfers_count, swaps, unknown)
-        early_bonus = max(15 - (early_rank * 1), 0)
-        final_score = min(safe_int(wallet_score) + early_bonus, 100)
-        if final_score >= 80: wtype, verdict = "Alpha Scout", "Copy candidate"
-        elif final_score >= 65: wtype, verdict = "Strong Early", "Watch closely"
-        elif swaps >= 3: wtype, verdict = "Active Trader", "Paper trade first"
-        else: wtype, verdict = "Early Buyer", "Needs proof"
+
+        wallet_signal, wallet_score, wallet_reason = get_wallet_signal(
+            total_tx,
+            transfers_count,
+            swaps,
+            unknown
+        )
+
+        if wallet_signal == "Monitor":
+            wallet_type = "Strong Candidate"
+        elif wallet_signal == "Watch":
+            wallet_type = "Watch Candidate"
+        elif swaps >= 2:
+            wallet_type = "Active Trader"
+        else:
+            wallet_type = "Transfer Candidate"
+
         discovered_rows.append({
-            "Wallet": short_wallet, "Full Wallet": wallet,
-            "Score": final_score, "Early Rank": early_rank,
-            "Type": wtype, "Transfers": candidate.get("Transfers", 0),
-            "Swaps": safe_int(swaps), "Verdict": verdict,
-            "Reason": wallet_reason, "Source Token": shorten_mints(token_mint),
-            "Saved?": "Saved" if wallet_already_saved(wallet) else "New"
+            "Wallet": short_wallet,
+            "Full Wallet": wallet,
+            "Score": wallet_score,
+            "Type": wallet_type,
+            "Transfers": candidate["Transfers"],
+            "Swaps": swaps,
+            "Reason": wallet_reason,
+            "Source Token": shorten_mints(token_mint)
         })
-    if not discovered_rows:
-        return pd.DataFrame(), "No valid wallet candidates after analysis."
-    df = pd.DataFrame(discovered_rows)
-    df = df.sort_values(by=["Score","Transfers"], ascending=False).reset_index(drop=True)
-    return df, None
+
+    discovered_df = pd.DataFrame(discovered_rows)
+
+    discovered_df = discovered_df.sort_values(
+        by=["Score", "Transfers"],
+        ascending=False
+    )
+
+    return discovered_df, None
 
 def shorten_mints(value):
     if not value or value == "-":
@@ -6193,6 +6359,7 @@ Keep the answer short and useful.
 # DEX Screener token scanner
 # -----------------------------
 @st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=20, show_spinner=False)
 def fetch_token_pairs(chain_id, token_address):
     try:
         url = f"https://api.dexscreener.com/token-pairs/v1/{chain_id}/{token_address}"
@@ -6714,6 +6881,7 @@ def format_usd(value):
 
 
 @st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=45, show_spinner=False)
 def fetch_token_price_map_usd(token_mints):
     price_map = {}
 
@@ -9934,8 +10102,6 @@ def render_wallet_documentation_cards(limit=10, only_pinned=False, compact=True,
                 with b2:
                     if st.button("Open", key=journal_button_key("wallet_doc_open", row_idx, full_wallet, key_scope)):
                         st.session_state.wallet_address_input = full_wallet
-                        st.session_state.sw_detail_wallet = full_wallet
-                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
                         st.rerun()
@@ -10356,8 +10522,6 @@ def render_monitor_wallet_memory_cards(wallet_df, limit=8):
                 with b3:
                     if st.button("Open wallet", key=f"monitor_mem_open_{row_idx}_{full_wallet}"):
                         st.session_state.wallet_address_input = full_wallet
-                        st.session_state.sw_detail_wallet = full_wallet
-                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
                         st.rerun()
@@ -11059,326 +11223,6 @@ with safe_section(section):
                     </div>
                     """, unsafe_allow_html=True)
 
-
-    elif section == "Smart Wallets":
-        st.markdown("""
-        <style>
-        .sw-title{font-size:24px;font-weight:600;color:#f5f5f7;padding:28px 0 4px}
-        .sw-sub{font-size:14px;color:#5a5b62;margin-bottom:20px}
-        .disc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin:14px 0}
-        .disc-card{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:16px;transition:border-color .15s,transform .12s}
-        .disc-card:hover{border-color:#3a3b50;transform:translateY(-2px)}
-        .disc-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
-        .disc-name{font-size:12px;font-weight:600;color:#f5f5f7;font-family:monospace}
-        .disc-rank{font-size:10px;color:#4a4b52;margin-top:2px}
-        .disc-score{font-size:22px;font-weight:700;color:#a78bfa}
-        .disc-score-lbl{font-size:10px;color:#4a4b52;text-align:right}
-        .disc-badge{display:inline-block;padding:3px 10px;border-radius:16px;font-size:10px;font-weight:700;letter-spacing:.03em;margin-bottom:8px}
-        .disc-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-        .disc-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-        .disc-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-        .disc-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-        .disc-stats{display:flex;gap:12px;margin-bottom:8px}
-        .disc-stat span{font-size:10px;color:#4a4b52;display:block}
-        .disc-stat b{font-size:12px;font-weight:600;color:#c0c0c8}
-        .disc-tag-new{font-size:10px;color:#4ade80;font-weight:700}
-        .disc-tag-saved{font-size:10px;color:#5a5b62}
-        .wd-header{padding:20px 0 16px}
-        .wd-name{font-size:22px;font-weight:600;color:#f5f5f7;margin-bottom:2px}
-        .wd-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:16px}
-        .wd-badge.alpha{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-        .wd-badge.watch{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-        .wd-badge.paper{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-        .wd-badge.risky{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-        .wd-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 16px}
-        .wd-stat{background:#1e1f23;border:1px solid #2a2b30;border-radius:12px;padding:14px}
-        .wd-stat span{display:block;font-size:11px;color:#4a4b52;margin-bottom:4px}
-        .wd-stat b{display:block;font-size:18px;font-weight:600;color:#f5f5f7}
-        .wd-section-lbl{font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 8px}
-        .wd-tx{background:#1e1f23;border:1px solid #2a2b30;border-radius:10px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px}
-        .wd-tx-side{width:44px;font-size:10px;font-weight:700;text-align:center;padding:3px 4px;border-radius:6px;flex-shrink:0}
-        .wd-tx-side.BUY{background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.25)}
-        .wd-tx-side.SELL{background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.25)}
-        .wd-tx-side.SWAP{background:rgba(124,92,252,.15);color:#a78bfa;border:1px solid rgba(124,92,252,.3)}
-        .wd-tx-side.OTHER{background:rgba(100,116,139,.12);color:#5a5b62;border:1px solid rgba(100,116,139,.2)}
-        .wd-tx-main{flex:1;min-width:0}
-        .wd-tx-desc{font-size:12px;color:#c0c0c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .wd-tx-time{font-size:11px;color:#4a4b52;margin-top:1px}
-        .wd-tx-amt{font-size:12px;font-weight:600;color:#c0c0c8;white-space:nowrap}
-        .wd-reason{background:#1a1b1f;border:1px solid #2a2b30;border-left:3px solid rgba(124,92,252,.5);border-radius:10px;padding:14px;font-size:13px;color:#9090a0;line-height:1.6;margin-bottom:16px}
-        .wd-reason b{color:#c0c0c8}
-        @media(max-width:768px){.wd-stats{grid-template-columns:repeat(2,1fr)}.disc-grid{grid-template-columns:1fr}}
-        </style>
-        """, unsafe_allow_html=True)
-
-        _detail_wallet = st.session_state.get("sw_detail_wallet", "")
-        _prefill = st.session_state.get("wallet_address_input", "")
-        _auto = st.session_state.pop("_sw_auto_scan", False)
-        if _auto and _prefill and not _detail_wallet:
-            st.session_state.sw_detail_wallet = _prefill
-            _detail_wallet = _prefill
-
-        # ══════════════════════════════
-        # WALLET DETAIL PAGE
-        # ══════════════════════════════
-        if _detail_wallet:
-            if st.button("← Back", key="sw_back_btn"):
-                st.session_state.sw_detail_wallet = ""
-                st.rerun()
-
-            _dw = _detail_wallet.strip()
-            _dname = wallet_display_name(_dw)
-            _addr_short = f"{_dw[:10]}...{_dw[-6:]}"
-
-            st.markdown(f"""
-            <div class="wd-header">
-                <div class="wd-name">{_dname}</div>
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-                    <span style="font-size:12px;color:#4a4b52;font-family:monospace">{_addr_short}</span>
-                    {copy_btn_html(_dw, "Wallet address")}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            with st.spinner("Loading wallet data..."):
-                _wtx, _werr = fetch_wallet_transactions(_dw, limit=20)
-
-            if _werr or _wtx is None or _wtx.empty:
-                st.error(f"Could not load wallet data: {_werr}")
-            else:
-                _ttx, _tfr, _tsw, _tun, _tlvl = summarize_wallet_activity(_wtx)
-                _wsig, _wscore, _wreason = get_wallet_signal(_ttx, _tfr, _tsw, _tun)
-                _usd = estimate_wallet_usd_stats(_wtx)
-                _nb, _ns, _nr = wallet_trade_counts(_wtx)
-                _sc = safe_int(_wscore)
-                _vol = safe_float(_usd.get("Total USD Volume", 0))
-                _lrg = safe_float(_usd.get("Largest USD Tx", 0))
-                _avg = safe_float(_usd.get("Average USD Tx", 0))
-
-                if _sc >= 80: _vcls, _vtxt = "alpha", "Alpha Scout"
-                elif _sc >= 65: _vcls, _vtxt = "watch", "Worth watching"
-                elif _sc >= 45: _vcls, _vtxt = "paper", "Paper trade first"
-                else: _vcls, _vtxt = "risky", "Needs more proof"
-
-                st.markdown(f'<div class="wd-badge {_vcls}">{_vtxt}</div>', unsafe_allow_html=True)
-
-                st.markdown(f"""
-                <div class="wd-stats">
-                    <div class="wd-stat"><span>Alpha Score</span><b>{_sc}/100</b></div>
-                    <div class="wd-stat"><span>Signal</span><b>{_wsig}</b></div>
-                    <div class="wd-stat"><span>Total Tx</span><b>{_ttx}</b></div>
-                    <div class="wd-stat"><span>Swaps</span><b>{_tsw}</b></div>
-                    <div class="wd-stat"><span>Est. Volume</span><b>{format_usd(_vol)}</b></div>
-                    <div class="wd-stat"><span>Largest Tx</span><b>{format_usd(_lrg)}</b></div>
-                    <div class="wd-stat"><span>Avg Tx Size</span><b>{format_usd(_avg)}</b></div>
-                    <div class="wd-stat"><span>Activity</span><b>{_tlvl}</b></div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                _bc1, _bc2, _bc3 = st.columns(3)
-                with _bc1: st.metric("Buys", _nb)
-                with _bc2: st.metric("Sells", _ns)
-                with _bc3: st.metric("Rotations", _nr)
-
-                st.markdown(f"""
-                <div class="wd-reason">
-                    <b>Verdict reasoning:</b> {_wreason}<br>
-                    <b>Activity level:</b> {_tlvl}
-                </div>
-                """, unsafe_allow_html=True)
-
-                _hist_df = wallet_history_dataframe(_dw)
-                if _hist_df is not None and not _hist_df.empty:
-                    st.markdown('<div class="wd-section-lbl">Score history</div>', unsafe_allow_html=True)
-                    render_wallet_history_chart(_dw, {"Full Wallet": _dw})
-                else:
-                    st.caption("No score history yet — add to Watchlist and run Auto Scan to build it.")
-
-                # ── Collapsible transactions ──
-                with st.expander(f"Recent transactions ({len(_wtx)})", expanded=False):
-                    for _, _row in _wtx.iterrows():
-                        _side = str(_row.get("Trade Side","OTHER")).upper()
-                        _side_cls = _side if _side in ["BUY","SELL","SWAP"] else "OTHER"
-                        _desc = str(_row.get("Description","-"))[:80]
-                        _hint = str(_row.get("Trade Hint",""))
-                        _time = str(_row.get("Timestamp","-"))
-                        _main_tok = str(_row.get("Main Token","-"))
-                        _main_mint = str(_row.get("Main Token Mint",""))
-                        _main_amt = safe_float(_row.get("Main Token Amount",0))
-                        _amt_str = f"{_main_amt:,.4f} {_main_tok}" if _main_amt else "-"
-                        _mint_copy = copy_btn_html(_main_mint, "Token") if len(_main_mint) > 10 else ""
-                        st.markdown(f"""
-                        <div class="wd-tx">
-                            <div class="wd-tx-side {_side_cls}">{_side_cls}</div>
-                            <div class="wd-tx-main">
-                                <div class="wd-tx-desc">{_hint or _desc} {_mint_copy}</div>
-                                <div class="wd-tx-time">{_time}</div>
-                            </div>
-                            <div class="wd-tx-amt">{_amt_str}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                st.markdown('<div class="wd-section-lbl">Actions</div>', unsafe_allow_html=True)
-                _a1, _a2, _a3 = st.columns(3)
-                with _a1:
-                    if st.button("Add to Watchlist", key="wd_add_wl", use_container_width=True):
-                        add_wallet_to_watchlist({
-                            "Wallet": _dname, "Name": _dname, "Wallet Alias": _dname,
-                            "Full Wallet": _dw, "Signal": _wsig, "Score": _sc,
-                            "Transfers": safe_int(_tfr), "Swaps": safe_int(_tsw),
-                            "USD Volume": _vol, "Largest Tx": _lrg,
-                            "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                            "Check Count": 1, "Pinned": False,
-                        })
-                        st.success("Added to Watchlist.")
-                with _a2:
-                    if st.button("Paper trade", key="wd_paper", use_container_width=True):
-                        st.session_state.main_navigation = "Paper Trading"
-                        st.rerun()
-                with _a3:
-                    if st.button("Open in Journal", key="wd_journal", use_container_width=True):
-                        st.session_state.main_navigation = "Wallet Journal"
-                        st.rerun()
-
-        # ══════════════════════════════
-        # MAIN LIST / SEARCH VIEW
-        # ══════════════════════════════
-        else:
-            st.markdown('<div class="sw-title">Smart Wallets</div>', unsafe_allow_html=True)
-            st.markdown('<div class="sw-sub">Scan any Solana wallet or discover early buyers from a token mint.</div>', unsafe_allow_html=True)
-
-            _tab_s, _tab_d, _tab_r = st.tabs(["Scan wallet", "Discover from token", "Recent"])
-
-            with _tab_s:
-                _c1, _c2 = st.columns([0.8, 0.2])
-                with _c1:
-                    _w_addr = st.text_input("addr", value=_prefill,
-                        placeholder="Paste Solana wallet address...",
-                        label_visibility="collapsed", key="sw_addr_input")
-                with _c2:
-                    _do_scan = st.button("Scan", key="sw_scan_btn", use_container_width=True, type="primary")
-                if _do_scan and _w_addr.strip():
-                    st.session_state.wallet_address_input = _w_addr.strip()
-                    st.session_state.sw_detail_wallet = _w_addr.strip()
-                    add_recent_item("recent_wallets", _w_addr.strip())
-                    st.rerun()
-
-            with _tab_d:
-                st.caption("Finds wallets that bought this token early. Solscan first, Helius fallback.")
-                _dc1, _dc2 = st.columns([0.8, 0.2])
-                with _dc1:
-                    _mint = st.text_input("mint", placeholder="Paste token mint address...",
-                                          label_visibility="collapsed", key="sw_mint_input")
-                with _dc2:
-                    _do_disc = st.button("Discover", key="sw_disc_btn", use_container_width=True, type="primary")
-
-                if _do_disc and _mint.strip():
-                    _ddf, _derr = None, None
-                    with st.spinner("Solscan — earliest buyers first..."):
-                        _ddf, _derr = discover_wallets_from_token_solscan(_mint.strip(), max_wallets=15)
-                    if _derr or _ddf is None or (hasattr(_ddf,"empty") and _ddf.empty):
-                        with st.spinner("Helius fallback..."):
-                            _ddf, _derr = discover_wallets_from_token_helius(_mint.strip(), max_wallets=15)
-                    if _derr or _ddf is None or (hasattr(_ddf,"empty") and _ddf.empty):
-                        st.warning(f"No wallets found. {_derr or 'Try a different mint.'}")
-                    else:
-                        st.success(f"Found {len(_ddf)} early wallets for this token.")
-                        st.markdown('<div class="disc-grid">', unsafe_allow_html=True)
-                        for _di, _dr in _ddf.head(12).iterrows():
-                            _dfw = str(_dr.get("Full Wallet","")).strip()
-                            _dwn = str(_dr.get("Wallet",_dfw[:12])).strip()
-                            _dsc = safe_int(_dr.get("Score",0))
-                            _drank = safe_int(_dr.get("Early Rank",_di+1))
-                            _dverd = str(_dr.get("Verdict","Watch"))
-                            _dtype = str(_dr.get("Type","Buyer"))
-                            _dsaved = str(_dr.get("Saved?","New"))
-                            _dswaps = _dr.get("Swaps",0)
-                            _dtrans = safe_int(_dr.get("Transfers",0))
-                            _dbcls = "alpha" if _dsc>=75 else "watch" if _dsc>=60 else "paper" if _dsc>=40 else "risky"
-                            _dcopy = copy_btn_html(_dfw,"Wallet") if len(_dfw)>10 else ""
-                            st.markdown(f"""
-                            <div class="disc-card">
-                                <div class="disc-card-top">
-                                    <div>
-                                        <div style="display:flex;align-items:center;gap:6px">
-                                            <div class="disc-name">{_dwn}</div>
-                                            {_dcopy}
-                                        </div>
-                                        <div class="disc-rank">#{_drank} early · {_dtype}</div>
-                                    </div>
-                                    <div style="text-align:right">
-                                        <div class="disc-score">{_dsc}</div>
-                                        <div class="disc-score-lbl">score</div>
-                                    </div>
-                                </div>
-                                <div class="disc-badge {_dbcls}">{_dverd}</div>
-                                <div class="disc-stats">
-                                    <div class="disc-stat"><span>Swaps</span><b>{_dswaps}</b></div>
-                                    <div class="disc-stat"><span>Transfers</span><b>{_dtrans}</b></div>
-                                </div>
-                                <div class="{'disc-tag-new' if _dsaved=='New' else 'disc-tag-saved'}">{_dsaved}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        st.markdown('</div>', unsafe_allow_html=True)
-
-                        st.markdown('<p style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 8px">Open a wallet</p>', unsafe_allow_html=True)
-                        for _di, _dr in _ddf.head(8).iterrows():
-                            _dfw = str(_dr.get("Full Wallet","")).strip()
-                            _dwn = str(_dr.get("Wallet",_dfw[:12])).strip()
-                            if not _dfw: continue
-                            _rb1, _rb2, _rb3 = st.columns([0.5,0.25,0.25])
-                            with _rb1:
-                                st.markdown(f"`{_dwn}` — **{safe_int(_dr.get('Score',0))}** pts · {_dr.get('Verdict','-')}")
-                            with _rb2:
-                                if st.button("Open", key=f"dw_{_dfw[-8:]}", use_container_width=True, type="primary"):
-                                    st.session_state.sw_detail_wallet = _dfw
-                                    st.session_state.wallet_address_input = _dfw
-                                    add_recent_item("recent_wallets", _dfw)
-                                    st.rerun()
-                            with _rb3:
-                                if st.button("Watchlist", key=f"dwl_{_dfw[-8:]}", use_container_width=True):
-                                    add_wallet_to_watchlist({
-                                        "Wallet": _dwn, "Name": _dwn, "Wallet Alias": _dwn,
-                                        "Full Wallet": _dfw, "Signal": str(_dr.get("Type","Watch")),
-                                        "Score": safe_int(_dr.get("Score",30)),
-                                        "Transfers": safe_int(_dr.get("Transfers",0)), "Swaps": 0,
-                                        "USD Volume": 0, "Largest Tx": 0,
-                                        "Last Checked": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                                        "Check Count": 1, "Pinned": False,
-                                    })
-                                    st.success("Added.")
-
-            with _tab_r:
-                _rws = st.session_state.get("recent_wallets", [])
-                if not _rws:
-                    st.info("No recently scanned wallets yet.")
-                else:
-                    st.markdown('<div class="disc-grid">', unsafe_allow_html=True)
-                    for _rw in _rws[:6]:
-                        _rs = str(_rw).strip()
-                        _rn = wallet_display_name(_rs)
-                        _rc = copy_btn_html(_rs, "Wallet")
-                        st.markdown(f"""
-                        <div class="disc-card">
-                            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                                <div class="disc-name">{_rs[:6]}...{_rs[-6:]}</div>
-                                {_rc}
-                            </div>
-                            <div class="disc-rank">{_rn}</div>
-                        </div>""", unsafe_allow_html=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    for _rw in _rws[:8]:
-                        _rs = str(_rw).strip()
-                        _rn1, _rn2 = st.columns([0.82,0.18])
-                        with _rn1:
-                            st.markdown(f"`{_rs[:6]}...{_rs[-6:]}` · {wallet_display_name(_rs)}")
-                        with _rn2:
-                            if st.button("Open", key=f"sw_r_{_rs[-8:]}", use_container_width=True, type="primary"):
-                                st.session_state.sw_detail_wallet = _rs
-                                st.session_state.wallet_address_input = _rs
-                                st.rerun()
-
-
     elif section == "Market Dashboard":
         st.title("Market Dashboard")
         st.caption("Live market overview for tokens saved in your watchlist.")
@@ -11738,8 +11582,6 @@ with safe_section(section):
                 with recent_open_col:
                     if st.button("Open", key=f"recent_open_wallet_{index}_{full_wallet}", type="secondary"):
                         st.session_state.wallet_address_input = full_wallet
-                        st.session_state.sw_detail_wallet = full_wallet
-                        st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
                         st.session_state.section_override = "Smart Wallets"
                         st.rerun()
@@ -12070,7 +11912,7 @@ with safe_section(section):
                                 st.rerun()
                         with reset_hint_col:
                             st.caption(f"Chart points saved: {history_points_for_wallet}. Reset only clears this wallet chart, not the wallet itself.")
-                        render_wallet_history_chart(full_wallet, item)
+                        render_smart_wallet_chart(full_wallet, item=item, compact=True)
 
                     if watch_mode == "Advanced":
                         with st.expander(f"Details for {wallet}", expanded=False):
@@ -12833,66 +12675,6 @@ with safe_section(section):
                 unsafe_allow_html=True
             )
 
-
-            # ── Copy Watch Panel ──────────────────────────────────────
-            _open_trades = paper_open_trades()
-            _copied_wallets = {}
-            for _pt in _open_trades:
-                _sw = str(_pt.get("Source Wallet","")).strip()
-                if _sw and _sw != "-":
-                    if _sw not in _copied_wallets:
-                        _copied_wallets[_sw] = []
-                    _copied_wallets[_sw].append(_pt)
-
-            if _copied_wallets:
-                st.markdown("""
-                <style>
-                .cw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin:0 0 20px}
-                .cw-card{background:#1e1f23;border:1px solid #2a2b30;border-radius:14px;padding:14px}
-                .cw-card-name{font-size:13px;font-weight:600;color:#f5f5f7;margin-bottom:4px}
-                .cw-card-addr{font-size:11px;color:#4a4b52;font-family:monospace;margin-bottom:8px}
-                .cw-card-trades{font-size:12px;color:#9090a0;margin-bottom:6px}
-                .cw-trade-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-top:1px solid #2a2b30}
-                .cw-trade-token{font-size:12px;color:#c0c0c8;font-weight:500}
-                .cw-trade-pl{font-size:12px;font-weight:700}
-                .cw-trade-pl.up{color:#4ade80}
-                .cw-trade-pl.down{color:#f87171}
-                .cw-trade-pl.flat{color:#5a5b62}
-                </style>
-                """, unsafe_allow_html=True)
-                st.markdown('<p style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Wallets being copied</p>', unsafe_allow_html=True)
-                st.markdown('<div class="cw-grid">', unsafe_allow_html=True)
-                for _sw_addr, _sw_trades in list(_copied_wallets.items())[:6]:
-                    _sw_name = wallet_display_name(_sw_addr) if _sw_addr and len(_sw_addr) > 20 else _sw_addr
-                    _sw_pl = sum(safe_float(_t.get("P/L", _t.get("live_pnl", 0))) for _t in _sw_trades)
-                    _sw_pl_cls = "up" if _sw_pl > 0 else "down" if _sw_pl < 0 else "flat"
-                    _trade_rows = ""
-                    for _t in _sw_trades[:3]:
-                        _tok = str(_t.get("Token","?"))[:10]
-                        _tpl = safe_float(_t.get("P/L", _t.get("live_pnl", 0)))
-                        _tpl_cls = "up" if _tpl > 0 else "down" if _tpl < 0 else "flat"
-                        _tpl_str = f"+${_tpl:.2f}" if _tpl >= 0 else f"-${abs(_tpl):.2f}"
-                        _tmint = str(_t.get("Token Mint",""))
-                        _tok_copy = copy_btn_html(_tmint, "Token") if len(_tmint) > 10 else ""
-                        _trade_rows += f'''<div class="cw-trade-row">
-                            <span class="cw-trade-token">{_tok} {_tok_copy}</span>
-                            <span class="cw-trade-pl {_tpl_cls}">{_tpl_str}</span>
-                        </div>'''
-                    _addr_copy = copy_btn_html(_sw_addr, "Wallet") if len(_sw_addr) > 20 else ""
-                    _pl_str = f"+${_sw_pl:.2f}" if _sw_pl >= 0 else f"-${abs(_sw_pl):.2f}"
-                    st.markdown(f'''
-                    <div class="cw-card">
-                        <div class="cw-card-name">{_sw_name}</div>
-                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                            <div class="cw-card-addr">{_sw_addr[:8]}...{_sw_addr[-6:] if len(_sw_addr)>14 else _sw_addr}</div>
-                            {_addr_copy}
-                        </div>
-                        <div class="cw-card-trades">{len(_sw_trades)} active trade{"s" if len(_sw_trades)!=1 else ""} · Total P/L: <b class="cw-trade-pl {_sw_pl_cls}">{_pl_str}</b></div>
-                        {_trade_rows}
-                    </div>
-                    ''', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            # ──────────────────────────────────────────────────────────
             render_paper_impact()
 
             settings = st.session_state.get("paper_settings", {})
