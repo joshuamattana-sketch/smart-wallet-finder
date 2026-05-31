@@ -975,7 +975,6 @@ def append_wallet_history_point(
     st.session_state.wallet_history[key] = history[-120:]
     save_json_dict(WALLET_HISTORY_FILE, st.session_state.wallet_history)
 
-@st.cache_data(ttl=30, show_spinner=False)
 def wallet_history_dataframe(wallet_address):
     key = wallet_history_key(wallet_address)
     history = st.session_state.get("wallet_history", {}).get(key, [])
@@ -1161,230 +1160,6 @@ def wallet_chart_range_dataframe(history_df, range_label):
         return df
 
     return df.tail(12)
-
-
-
-def render_smart_wallet_chart(wallet_address, item=None, compact=False):
-    """
-    Clean, beginner-readable wallet chart.
-    Shows score over time + volume bars + buy/sell markers.
-    Works in wallet detail, journal cards and watchlist.
-    """
-    history_df = wallet_history_dataframe(wallet_address)
-
-    if history_df is None or history_df.empty or len(history_df) < 2:
-        st.markdown("""
-        <div style="background:#1a1b1f;border:1px solid #2a2b30;border-radius:12px;padding:20px;
-             text-align:center;color:#4a4b52;font-size:13px;">
-            No chart yet — add to Watchlist and run Auto Scan to build history.
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    df = history_df.copy().sort_values("Time").tail(24 if not compact else 12)
-    df["Time Label"] = df["Time"].dt.strftime("%m/%d %H:%M")
-    df["Score"] = pd.to_numeric(df.get("Score", 0), errors="coerce").fillna(0)
-    df["Vol Change"] = pd.to_numeric(df.get("USD Volume Change", 0), errors="coerce").fillna(0)
-    df["Trade Side"] = df.get("Trade Side", "-").fillna("-").astype(str).str.upper()
-    df["Trade Token"] = df.get("Trade Token", "-").fillna("-").astype(str)
-    df["Trade Hint"] = df.get("Trade Hint", "-").fillna("-").astype(str)
-
-    # ── Beginner summary strip ──────────────────────────────────
-    _latest = df.iloc[-1]
-    _score = safe_int(_latest.get("Score", 0))
-    _buys_total = int(df.get("Buys Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Buys Change" in df.columns else 0
-    _sells_total = int(df.get("Sells Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Sells Change" in df.columns else 0
-    _vol_total = safe_float(df.get("Vol Change", pd.Series(dtype=float)).clip(lower=0).sum())
-    _checks = len(df)
-
-    # Read from buy/sell ratio
-    if _buys_total > _sells_total * 1.5:
-        _pattern = "Buying more than selling"
-        _pattern_color = "#4ade80"
-    elif _sells_total > _buys_total * 1.5:
-        _pattern = "Selling more than buying"
-        _pattern_color = "#f87171"
-    else:
-        _pattern = "Mixed activity"
-        _pattern_color = "#94a3b8"
-
-    st.markdown(f"""
-    <style>
-    .smchart-summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px}}
-    .smchart-stat{{background:#1e1f23;border:1px solid #2a2b30;border-radius:10px;padding:12px}}
-    .smchart-stat span{{display:block;font-size:10px;color:#4a4b52;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}}
-    .smchart-stat b{{display:block;font-size:16px;font-weight:700;color:#f5f5f7}}
-    .smchart-legend{{display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap}}
-    .smchart-leg-item{{display:flex;align-items:center;gap:6px;font-size:12px;color:#9090a0}}
-    .smchart-leg-dot{{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}}
-    </style>
-    <div class="smchart-summary">
-        <div class="smchart-stat"><span>Score</span><b>{_score}/100</b></div>
-        <div class="smchart-stat"><span>Buys</span><b style="color:#4ade80">{_buys_total}</b></div>
-        <div class="smchart-stat"><span>Sells</span><b style="color:#f87171">{_sells_total}</b></div>
-        <div class="smchart-stat"><span>Pattern</span><b style="color:{_pattern_color};font-size:12px">{_pattern}</b></div>
-    </div>
-    <div class="smchart-legend">
-        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#a78bfa"></div> Score</div>
-        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#4ade80"></div> Buy / Volume up</div>
-        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#f87171"></div> Sell / Volume down</div>
-        <div class="smchart-leg-item"><div class="smchart-leg-dot" style="background:#fbbf24;border-radius:2px"></div> Swap unclear</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Build Vega-Lite layers ──────────────────────────────────
-    records = []
-    for _, row in df.iterrows():
-        _side = str(row.get("Trade Side", "-")).upper()
-        _vc = safe_float(row.get("Vol Change", 0))
-        _tok = str(row.get("Trade Token", "-"))
-        _hint = str(row.get("Trade Hint", "-"))
-        _sc = safe_float(row.get("Score", 0))
-        _tl = str(row.get("Time Label", ""))
-
-        # Volume bar color
-        if _side == "BUY":
-            _bar_color = "#22c55e"
-            _marker_color = "#22c55e"
-            _marker_label = f"BUY {_tok[:8] if _tok != '-' else ''}"
-        elif _side == "SELL":
-            _bar_color = "#ef4444"
-            _marker_color = "#ef4444"
-            _marker_label = f"SELL {_tok[:8] if _tok != '-' else ''}"
-        elif _side in ["ROTATE", "SWAP"]:
-            _bar_color = "#f59e0b"
-            _marker_color = "#f59e0b"
-            _marker_label = "SWAP"
-        elif _vc > 0:
-            _bar_color = "#22c55e"
-            _marker_color = None
-            _marker_label = None
-        elif _vc < 0:
-            _bar_color = "#ef4444"
-            _marker_color = None
-            _marker_label = None
-        else:
-            _bar_color = "#374151"
-            _marker_color = None
-            _marker_label = None
-
-        records.append({
-            "time": _tl,
-            "score": _sc,
-            "vol_change": _vc,
-            "bar_color": _bar_color,
-            "has_trade": _side in ["BUY","SELL","ROTATE","SWAP"],
-            "trade_side": _side if _side in ["BUY","SELL","ROTATE","SWAP"] else "-",
-            "marker_label": _marker_label or "",
-            "token": _tok,
-            "hint": _hint[:60] if _hint else "-",
-        })
-
-    _h = 200 if compact else 280
-
-    # Layer 1: Volume bars
-    # Layer 2: Score line
-    # Layer 3: Trade markers (dots + labels)
-    chart_spec = {
-        "background": "#18191c",
-        "height": _h,
-        "data": {"values": records},
-        "layer": [
-            # Volume bars
-            {
-                "mark": {"type": "bar", "cornerRadiusTopLeft": 3, "cornerRadiusTopRight": 3, "opacity": 0.6},
-                "encoding": {
-                    "x": {"field": "time", "type": "ordinal", "axis": {"labelColor": "#5a5b62", "title": None, "labelAngle": -30, "labelFontSize": 10}},
-                    "y": {"field": "vol_change", "type": "quantitative", "axis": {"labelColor": "#5a5b62", "title": "Volume change", "titleColor": "#5a5b62", "gridColor": "rgba(255,255,255,0.04)", "titleFontSize": 10}},
-                    "color": {"field": "bar_color", "type": "nominal", "scale": None, "legend": None},
-                    "tooltip": [
-                        {"field": "time", "title": "Time"},
-                        {"field": "trade_side", "title": "Action"},
-                        {"field": "vol_change", "title": "Volume change", "format": ",.0f"},
-                        {"field": "hint", "title": "What happened"},
-                    ]
-                }
-            },
-            # Score line
-            {
-                "mark": {"type": "line", "strokeWidth": 2.5, "color": "#a78bfa", "interpolate": "monotone"},
-                "encoding": {
-                    "x": {"field": "time", "type": "ordinal"},
-                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}, "axis": {"labelColor": "#a78bfa", "title": "Score", "titleColor": "#a78bfa", "orient": "right", "gridColor": "rgba(255,255,255,0.03)", "titleFontSize": 10}},
-                    "tooltip": [
-                        {"field": "time", "title": "Time"},
-                        {"field": "score", "title": "Score"},
-                    ]
-                }
-            },
-            # Score dots
-            {
-                "mark": {"type": "point", "filled": True, "size": 40, "color": "#a78bfa"},
-                "encoding": {
-                    "x": {"field": "time", "type": "ordinal"},
-                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}},
-                }
-            },
-            # Trade markers (larger dots)
-            {
-                "transform": [{"filter": "datum.has_trade == true"}],
-                "mark": {"type": "point", "filled": True, "size": 140, "strokeWidth": 2},
-                "encoding": {
-                    "x": {"field": "time", "type": "ordinal"},
-                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}},
-                    "color": {"field": "bar_color", "type": "nominal", "scale": None, "legend": None},
-                    "stroke": {"value": "#18191c"},
-                    "tooltip": [
-                        {"field": "time", "title": "Time"},
-                        {"field": "trade_side", "title": "Action"},
-                        {"field": "token", "title": "Token"},
-                        {"field": "score", "title": "Score"},
-                        {"field": "hint", "title": "What happened"},
-                    ]
-                }
-            },
-            # Trade labels (BUY / SELL text)
-            {
-                "transform": [{"filter": "datum.has_trade == true && datum.trade_side != 'SWAP'"}],
-                "mark": {"type": "text", "dy": -16, "fontSize": 10, "fontWeight": "bold"},
-                "encoding": {
-                    "x": {"field": "time", "type": "ordinal"},
-                    "y": {"field": "score", "type": "quantitative", "scale": {"domain": [0, 100]}},
-                    "text": {"field": "trade_side"},
-                    "color": {"field": "bar_color", "type": "nominal", "scale": None, "legend": None},
-                }
-            }
-        ],
-        "resolve": {"scale": {"y": "independent"}},
-        "config": {
-            "view": {"stroke": "transparent"},
-            "axis": {"domainColor": "rgba(255,255,255,0.06)", "tickColor": "rgba(255,255,255,0.06)"},
-        }
-    }
-
-    st.vega_lite_chart(chart_spec, use_container_width=True)
-
-    # ── Plain-English timeline ──────────────────────────────────
-    _trades = [r for r in records if r["has_trade"]]
-    if _trades and not compact:
-        st.markdown('<div style="font-size:11px;font-weight:600;color:#3a3b42;letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px">What happened</div>', unsafe_allow_html=True)
-        _timeline_html = ""
-        for _tr in _trades[-6:]:
-            _side = _tr["trade_side"]
-            _col = "#4ade80" if _side == "BUY" else "#f87171" if _side == "SELL" else "#fbbf24"
-            _bg = "rgba(34,197,94,.08)" if _side == "BUY" else "rgba(239,68,68,.08)" if _side == "SELL" else "rgba(251,191,36,.08)"
-            _bdr = "rgba(34,197,94,.25)" if _side == "BUY" else "rgba(239,68,68,.25)" if _side == "SELL" else "rgba(251,191,36,.25)"
-            _tok_str = f" · {_tr['token']}" if _tr['token'] not in ['-',''] else ""
-            _timeline_html += f"""
-            <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;
-                 background:{_bg};border:1px solid {_bdr};border-radius:10px;margin-bottom:6px">
-                <div style="font-size:10px;font-weight:700;color:{_col};min-width:36px;padding-top:1px">{_side}</div>
-                <div>
-                    <div style="font-size:12px;color:#c0c0c8;font-weight:500">{_tr['time']}{_tok_str}</div>
-                    <div style="font-size:11px;color:#5a5b62;margin-top:2px">{_tr['hint']}</div>
-                </div>
-            </div>"""
-        st.markdown(_timeline_html, unsafe_allow_html=True)
 
 
 def render_story_chart_block(chart_df, value_column, change_column, title, value_label, bar_label):
@@ -2036,8 +1811,86 @@ def render_trade_behavior_chart(chart_df):
         st.vega_lite_chart(advanced_chart, width="stretch")
 
 def render_wallet_history_chart(wallet_address, item):
-    """Wrapper that calls the new smart chart — keeps backward compatibility."""
-    render_smart_wallet_chart(wallet_address, item=item, compact=False)
+    history_df = wallet_history_dataframe(wallet_address)
+
+    if history_df.empty or len(history_df) < 2:
+        st.info("No chart yet. Pin this wallet and keep Auto Update on. The chart builds from saved checks.")
+        return
+
+    story = wallet_story_from_history(history_df, item)
+    status, status_class, status_hint = wallet_movement_status(item)
+
+    latest = history_df.iloc[-1]
+    previous = history_df.iloc[-2]
+    best_volume_spike = safe_float(history_df["USD Volume Change"].max()) if "USD Volume Change" in history_df else 0
+    best_largest_spike = safe_float(history_df["Largest Tx Change"].max()) if "Largest Tx Change" in history_df else 0
+    best_swap_spike = safe_int(history_df["Swaps Change"].max()) if "Swaps Change" in history_df else 0
+    total_buys = int(history_df.get("Buys Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Buys Change" in history_df else 0
+    total_sells = int(history_df.get("Sells Change", pd.Series(dtype=float)).clip(lower=0).sum()) if "Sells Change" in history_df else 0
+
+    story_class = "story-good" if status in ["HOT", "VOLUME SPIKE", "NEW SWAPS"] else "story-warn" if status == "COOLING" else "story-neutral"
+    st.markdown(
+        f"""<div class="wallet-story-box {story_class}">
+            <div class="wallet-story-title">Wallet story</div>
+            <div class="wallet-story-text">{story}</div>
+        </div>""",
+        unsafe_allow_html=True
+    )
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Checks", len(history_df))
+    c2.metric("Current Volume", format_usd(latest.get("USD Volume", 0)))
+    c3.metric("Biggest Spike", format_signed_usd(best_volume_spike))
+    c4.metric("Buys / Sells", f"{total_buys} / {total_sells}")
+    c5.metric("Biggest Swap Spike", format_signed_number(best_swap_spike))
+
+    chart_range_col, chart_type_col = st.columns([0.28, 0.72])
+    with chart_range_col:
+        chart_range = st.selectbox(
+            "Range",
+            ["Last 6 checks", "Last 12 checks", "Last 24 checks", "All"],
+            index=1,
+            key=f"wallet_chart_range_{wallet_address}"
+        )
+    with chart_type_col:
+        chart_type = st.radio(
+            "Chart",
+            ["Trade Behavior", "Volume", "Swaps", "Score", "Largest Tx"],
+            horizontal=True,
+            key=f"wallet_chart_type_{wallet_address}"
+        )
+
+    chart_df = wallet_chart_range_dataframe(history_df, chart_range)
+
+    if chart_type == "Trade Behavior":
+        render_trade_behavior_chart(chart_df)
+    elif chart_type == "Volume":
+        render_story_chart_block(chart_df, "USD Volume", "USD Volume Change", "Volume story", "Total USD volume", "Volume change")
+    elif chart_type == "Swaps":
+        render_story_chart_block(chart_df, "Swaps", "Swaps Change", "Swap activity story", "Total swaps", "New swaps")
+    elif chart_type == "Score":
+        render_story_chart_block(chart_df, "Score", "Score Change", "Score story", "Wallet score", "Score change")
+    else:
+        render_story_chart_block(chart_df, "Largest Tx", "Largest Tx Change", "Largest transaction story", "Largest tx", "Largest tx change")
+
+    with st.expander("Show raw chart data", expanded=False):
+        compact_history = chart_df.tail(12).copy()
+        compact_history["Time"] = compact_history["Time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        if "USD Volume" in compact_history:
+            compact_history["USD Volume"] = compact_history["USD Volume"].apply(format_usd)
+        if "Largest Tx" in compact_history:
+            compact_history["Largest Tx"] = compact_history["Largest Tx"].apply(format_usd)
+        if "USD Volume Change" in compact_history:
+            compact_history["USD Volume Change"] = compact_history["USD Volume Change"].apply(format_signed_usd)
+        if "Largest Tx Change" in compact_history:
+            compact_history["Largest Tx Change"] = compact_history["Largest Tx Change"].apply(format_signed_usd)
+        show_cols = [
+            "Time", "Trade Side", "Trade Token", "Trade Hint",
+            "Score", "Swaps", "Transfers", "Buys", "Sells",
+            "USD Volume", "Largest Tx", "Score Change", "Swaps Change", "Transfers Change",
+            "Buys Change", "Sells Change", "USD Volume Change", "Largest Tx Change"
+        ]
+        st.dataframe(compact_history[[col for col in show_cols if col in compact_history.columns]], width='stretch', hide_index=True)
 
 def wallet_movement_values(item):
     score_change = safe_int(item.get("Score Change", 0))
@@ -6359,7 +6212,6 @@ Keep the answer short and useful.
 # DEX Screener token scanner
 # -----------------------------
 @st.cache_data(ttl=30, show_spinner=False)
-@st.cache_data(ttl=20, show_spinner=False)
 def fetch_token_pairs(chain_id, token_address):
     try:
         url = f"https://api.dexscreener.com/token-pairs/v1/{chain_id}/{token_address}"
@@ -11855,28 +11707,39 @@ with safe_section(section):
                     latest_trade_hint = item.get("Latest Trade Hint", "-") or "-"
                     trade_badge_class = trade_side_badge_class(latest_trade_side)
 
-                    st.markdown(f"""<div class="human-card {card_class}">
-                        <div class="human-card-top">
-                            <div>
-                                <div class="human-wallet">{wallet}{pin_badge}</div>
-                                <div class="human-meta-line">{short_address(full_wallet)} · {signal} · {checks} checks · last {last_checked}</div>
+                    _outer_cls = "hot" if movement_status in ["HOT","VOLUME SPIKE"] else "up" if movement_status in ["NEW SWAPS","NEW TRANSFERS","SCORE UP"] else "down" if movement_status == "COOLING" else ""
+                    _status_cls = "hot" if movement_status in ["HOT","VOLUME SPIKE"] else "up" if movement_status in ["NEW SWAPS","NEW TRANSFERS","SCORE UP"] else "down" if movement_status == "COOLING" else "flat"
+                    _addr_copy = copy_btn_html(full_wallet, "Wallet") if "copy_btn_html" in dir() else ""
+                    _tok_copy = copy_btn_html(latest_token_mint, "Token") if latest_token_mint and "copy_btn_html" in dir() else ""
+                    st.markdown(f"""
+                    <div class="wl-outer-card {_outer_cls}">
+                        <div class="wl-card-header">
+                            <div class="wl-card-header-top">
+                                <div>
+                                    <div class="wl-card-name">{wallet} {pin_badge}</div>
+                                    <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+                                        <div class="wl-card-meta">{signal} · {checks} checks · last {last_checked}</div>
+                                        {_addr_copy}
+                                    </div>
+                                </div>
+                                <div class="wl-card-status {_status_cls}">{movement_status}</div>
                             </div>
-                            <div class="human-pill {pill_class}" title="{movement_hint}">{movement_status}</div>
                         </div>
-                        <div class="human-deltas">
-                            <div><span>Swaps</span><strong class="{movement_class(swaps_change)}">{format_signed_number(swaps_change)}</strong></div>
-                            <div><span>Buys</span><strong class="{movement_class(buys_change)}">{format_signed_number(buys_change)}</strong></div>
-                            <div><span>Sells</span><strong class="{movement_class(-sells_change) if sells_change else 'movement-flat'}">{format_signed_number(sells_change)}</strong></div>
-                            <div><span>Volume</span><strong class="{movement_class(volume_change)}">{format_signed_usd(volume_change)}</strong></div>
-                            <div><span>Largest Tx</span><strong class="{movement_class(largest_change)}">{format_signed_usd(largest_change)}</strong></div>
-                            <div><span>Token</span><strong>{token_hint}</strong></div>
+                        <div class="wl-card-deltas">
+                            <div class="wl-delta"><span>Swaps</span><b class="{'up' if swaps_change>0 else 'dn' if swaps_change<0 else ''}">{format_signed_number(swaps_change)}</b></div>
+                            <div class="wl-delta"><span>Buys</span><b class="{'up' if buys_change>0 else ''}">{format_signed_number(buys_change)}</b></div>
+                            <div class="wl-delta"><span>Sells</span><b class="{'dn' if sells_change>0 else ''}">{format_signed_number(sells_change)}</b></div>
+                            <div class="wl-delta"><span>Volume</span><b class="{'up' if volume_change>0 else 'dn' if volume_change<0 else ''}">{format_signed_usd(volume_change)}</b></div>
+                            <div class="wl-delta"><span>Largest</span><b>{format_signed_usd(largest_change)}</b></div>
+                            <div class="wl-delta"><span>Token</span><b>{token_hint} {_tok_copy}</b></div>
                         </div>
-                        <div class="human-latest"><span>Latest action</span><b class="{trade_badge_class}">{latest_trade_side}</b> · {latest_trade_token} · {latest_trade_hint}</div>
-                        <div class="human-latest"><span>Next best action</span>{next_step}</div>
-                    </div>""", unsafe_allow_html=True)
+                        <div class="wl-card-action-hint">
+                            <b>Latest:</b> {latest_trade_side} · {latest_trade_token} · {latest_trade_hint[:60] if latest_trade_hint else "-"} &nbsp;·&nbsp; <b>Next:</b> {next_step}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                    st.markdown('<div class="human-action-gap"></div>', unsafe_allow_html=True)
-                    _, col_pin, col_check, col_analyze, col_open, col_remove = st.columns([3.15, 0.55, 0.65, 1.05, 0.65, 0.35])
+                    col_pin, col_check, col_analyze, col_open, col_remove = st.columns([0.55, 0.65, 1.05, 0.65, 0.35])
                     with col_pin:
                         pin_label = "Unpin" if pinned else "Pin"
                         if st.button(pin_label, key=f"wallet_pin_card_{index}_{full_wallet}", type="secondary"):
@@ -11903,16 +11766,17 @@ with safe_section(section):
                         if st.button("", help=f"Remove {wallet}", key=f"wallet_remove_card_{index}_{full_wallet}", type="primary"):
                             remove_wallet_from_watchlist(index); st.rerun()
 
-                    with st.expander(f"Chart / story for {wallet}", expanded=False):
-                        history_points_for_wallet = wallet_history_point_count(full_wallet)
-                        reset_col, reset_hint_col = st.columns([0.18, 0.82])
-                        with reset_col:
-                            if st.button("Reset chart", key=f"wallet_reset_chart_{index}_{full_wallet}", type="secondary", disabled=history_points_for_wallet == 0):
+                    st.markdown('<div class="wl-card-footer">', unsafe_allow_html=True)
+                    with st.expander(f"Chart & history — {wallet}", expanded=False):
+                        st.markdown('<div style="padding:4px 0 12px">', unsafe_allow_html=True)
+                        render_smart_wallet_chart(full_wallet, item=item, compact=False)
+                        _hp = wallet_history_point_count(full_wallet)
+                        if _hp > 0:
+                            if st.button("Reset chart", key=f"wallet_reset_chart_{index}_{full_wallet}", type="secondary"):
                                 clear_wallet_history_for_wallet(full_wallet)
                                 st.rerun()
-                        with reset_hint_col:
-                            st.caption(f"Chart points saved: {history_points_for_wallet}. Reset only clears this wallet chart, not the wallet itself.")
-                        render_smart_wallet_chart(full_wallet, item=item, compact=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
                     if watch_mode == "Advanced":
                         with st.expander(f"Details for {wallet}", expanded=False):
@@ -11931,25 +11795,27 @@ with safe_section(section):
                                 """
                             )
 
-                if pinned_pairs:
-                    st.markdown('<div class="section-title">Pinned wallets</div>', unsafe_allow_html=True)
-                    for index, item, status in pinned_pairs:
+            st.markdown('<style>.wl-outer-card{background:#18191c;border:1px solid #2a2b30;border-radius:18px;padding:0;margin-bottom:16px;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease;}.wl-outer-card:hover{border-color:#3a3b45;box-shadow:0 4px 24px rgba(0,0,0,.25);}.wl-outer-card.hot{border-color:rgba(255,180,80,.45);}.wl-outer-card.up{border-color:rgba(74,222,128,.3);}.wl-outer-card.down{border-color:rgba(248,113,113,.28);}.wl-card-header{padding:16px 18px 12px;border-bottom:1px solid #2a2b30;}.wl-card-header-top{display:flex;justify-content:space-between;align-items:flex-start;}.wl-card-name{font-size:15px;font-weight:600;color:#f5f5f7;}.wl-card-meta{font-size:11px;color:#4a4b52;margin-top:3px;}.wl-card-status{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;}.wl-card-status.hot{background:rgba(255,160,70,.15);color:#fbbf24;border:1px solid rgba(255,160,70,.3);}.wl-card-status.up{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25);}.wl-card-status.down{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25);}.wl-card-status.flat{background:rgba(100,116,139,.10);color:#64748b;border:1px solid rgba(100,116,139,.2);}.wl-card-deltas{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid #2a2b30;}.wl-delta{display:flex;flex-direction:column;}.wl-delta span{font-size:10px;color:#4a4b52;text-transform:uppercase;letter-spacing:.05em;}.wl-delta b{font-size:13px;font-weight:600;color:#c0c0c8;}.wl-delta b.up{color:#4ade80;}.wl-delta b.dn{color:#f87171;}.wl-card-action-hint{padding:10px 18px;font-size:12px;color:#5a5b62;border-bottom:1px solid #2a2b30;}.wl-card-action-hint b{color:#9090a0;}.wl-card-footer{padding:0 14px 14px;}</style>', unsafe_allow_html=True)
+
+            if pinned_pairs:
+                st.markdown('<div class="section-title">Pinned wallets</div>', unsafe_allow_html=True)
+                for index, item, status in pinned_pairs:
+                    render_wallet_card(index, item, status)
+
+            if attention_pairs:
+                st.markdown('<div class="section-title">Needs attention</div>', unsafe_allow_html=True)
+                for index, item, status in attention_pairs:
+                    render_wallet_card(index, item, status)
+
+            if cooling_pairs:
+                with st.expander(f"Cooling / lower priority ({len(cooling_pairs)})", expanded=False):
+                    for index, item, status in cooling_pairs:
                         render_wallet_card(index, item, status)
 
-                if attention_pairs:
-                    st.markdown('<div class="section-title">Needs attention</div>', unsafe_allow_html=True)
-                    for index, item, status in attention_pairs:
+            if quiet_pairs:
+                with st.expander(f"Quiet wallets ({len(quiet_pairs)})", expanded=False):
+                    for index, item, status in quiet_pairs:
                         render_wallet_card(index, item, status)
-
-                if cooling_pairs:
-                    with st.expander(f"Cooling / lower priority ({len(cooling_pairs)})", expanded=False):
-                        for index, item, status in cooling_pairs:
-                            render_wallet_card(index, item, status)
-
-                if quiet_pairs:
-                    with st.expander(f"Quiet wallets ({len(quiet_pairs)})", expanded=False):
-                        for index, item, status in quiet_pairs:
-                            render_wallet_card(index, item, status)
 
         with token_tab:
             st.markdown('<div class="section-title">Token Watchlist</div>', unsafe_allow_html=True)
@@ -12675,6 +12541,42 @@ with safe_section(section):
                 unsafe_allow_html=True
             )
 
+
+            # ── Copy staging area (when coming from wallet detail) ───
+            _copy_target = st.session_state.pop("_paper_copy_wallet", None)
+            if _copy_target:
+                _cw_addr = str(_copy_target.get("address","")).strip()
+                _cw_name = str(_copy_target.get("name","")).strip() or wallet_display_name(_cw_addr)
+                _cw_score = safe_int(_copy_target.get("score", 0))
+                st.markdown(f"""
+                <style>
+                .copy-stage{{background:#1a1b1f;border:2px solid rgba(124,92,252,0.45);border-radius:16px;padding:20px;margin-bottom:20px}}
+                .copy-stage-title{{font-size:16px;font-weight:600;color:#f5f5f7;margin-bottom:4px}}
+                .copy-stage-sub{{font-size:13px;color:#5a5b62;margin-bottom:14px}}
+                .copy-stage-addr{{font-family:monospace;font-size:12px;color:#a78bfa;background:rgba(124,92,252,0.10);padding:6px 12px;border-radius:8px;display:inline-block;margin-bottom:12px}}
+                </style>
+                <div class="copy-stage">
+                    <div class="copy-stage-title">Set up paper copy — {_cw_name}</div>
+                    <div class="copy-stage-addr">{_cw_addr[:14]}...{_cw_addr[-8:]}</div>
+                    <div class="copy-stage-sub">Score: <b style="color:#a78bfa">{_cw_score}/100</b> · Choose how much fake money to use and click Place trade below.</div>
+                </div>
+                """, unsafe_allow_html=True)
+                _cs1, _cs2, _cs3 = st.columns(3)
+                with _cs1:
+                    if st.button("Place $25 paper trade", key="copy_stage_25", use_container_width=True, type="primary"):
+                        st.session_state.paper_settings["enabled"] = True
+                        st.session_state.paper_settings["selected_source_wallets"] = [_cw_addr]
+                        st.success(f"Paper copy set up for {_cw_name}. Run Auto Scan to simulate trades.")
+                with _cs2:
+                    if st.button("Place $50 paper trade", key="copy_stage_50", use_container_width=True):
+                        st.session_state.paper_settings["enabled"] = True
+                        st.session_state.paper_settings["selected_source_wallets"] = [_cw_addr]
+                        st.session_state.paper_settings["trade_size"] = 50
+                        st.success(f"Paper copy set up for {_cw_name}.")
+                with _cs3:
+                    if st.button("Custom setup", key="copy_stage_custom", use_container_width=True):
+                        st.info("Scroll down to Paper Trading settings to configure manually.")
+            # ─────────────────────────────────────────────────────────
             render_paper_impact()
 
             settings = st.session_state.get("paper_settings", {})
