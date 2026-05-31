@@ -11,6 +11,16 @@ import traceback
 import hashlib
 from contextlib import contextmanager
 
+
+# ── Pro Terminal UI (Patch D/E) ───────────────────────────────────────────────
+try:
+    from ui.pro_terminal import render_pro_terminal as _render_pro_terminal
+    _PRO_TERMINAL_AVAILABLE = True
+except ImportError:
+    _PRO_TERMINAL_AVAILABLE = False
+    def _render_pro_terminal():
+        st.warning("Pro Terminal UI not found. Make sure ui/pro_terminal.py is deployed.")
+# ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Smart Wallet Finder",
     layout="wide",
@@ -6125,6 +6135,7 @@ _NAV_ITEMS = [
     ("Wallet Journal", "", "track"),
     ("Watchlist",      "", "track"),
     ("Paper Trading",  "", "track"),
+    ("Pro Terminal",   "", "pro"),
     ("Settings",       "", "system"),
 ]
 
@@ -6233,7 +6244,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     _current_group = None
-    _group_labels = {"main": "DISCOVER", "track": "TRACK", "system": "SYSTEM"}
+    _group_labels = {"main": "DISCOVER", "track": "TRACK", "pro": "PRO", "system": "SYSTEM"}
 
     for _name, _icon, _group in _NAV_ITEMS:
         if _group != _current_group:
@@ -11059,7 +11070,10 @@ with safe_section(section):
 
         # ── Hero ───────────────────────────────────────────────────
         import datetime as _datetime
-        _day = _datetime.datetime.now().strftime("%A, %B %-d") if hasattr(_datetime.datetime.now(), 'strftime') else "Today"
+        try:
+            _day = _datetime.datetime.now().strftime("%A, %B %-d")
+        except ValueError:
+            _day = _datetime.datetime.now().strftime("%A, %B %#d")
         try:
             _day = _datetime.datetime.now().strftime("%A, %B %d").replace(" 0", " ")
         except Exception:
@@ -13324,6 +13338,10 @@ No active trades yet.<br><span style="font-size:12px">Go to "Place trade" tab to
             with tab_timeline:
                 st.markdown('<div class="journal-mode-note"><b>Evidence timeline:</b> this shows why the opinion changed over time.</div>', unsafe_allow_html=True)
                 render_wallet_documentation_timeline(limit=100)
+
+    elif section == "Pro Terminal":
+        with safe_section("Pro Terminal"):
+            _render_pro_terminal()
 
     elif section == "Settings":
         st.title("Settings")

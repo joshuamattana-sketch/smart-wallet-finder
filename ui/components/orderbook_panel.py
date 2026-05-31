@@ -3,189 +3,130 @@ ui/components/orderbook_panel.py
 ---------------------------------
 Reusable Streamlit component for rendering order book metrics.
 
-Accepts an OrderBookSnapshot and OrderBookMetrics (both from core/models.py)
-and renders a complete, readable panel — no business logic here.
+Accepts an OrderBookSnapshot and OrderBookMetrics (from core/models.py)
+and renders a stable, readable panel on every refresh/symbol-change.
 
-Rules:
-- Only Streamlit rendering calls and core/formatting helpers.
-- No network calls.
-- No direct imports from connectors/ or services/.
-- Crashes safely: every render function guards against empty/None inputs.
+Stability rules:
+- CSS is injected once as a single self-contained <style> block.
+- All data is displayed via st.metric, st.columns, st.dataframe, st.caption.
+- unsafe_allow_html is only used for:
+    1. The CSS block (one call, no open tags).
+    2. Fully self-contained card HTML strings (open + close in same call).
+- No <div> that opens in one st.markdown and closes in another.
 """
 
 from __future__ import annotations
 
 import streamlit as st
+import pandas as pd
 
-from core.constants import SIGNAL_COLORS, SIGNAL_DISPLAY, RISK_COLORS
-from core.formatting import compact_address, format_pct, format_usd, safe_float
+from core.constants import SIGNAL_COLORS, SIGNAL_DISPLAY
+from core.formatting import format_usd, format_pct, safe_float
 from core.models import OrderBookLevel, OrderBookMetrics, OrderBookSnapshot
 
 
-# ── CSS (injected once per session, idempotent) ───────────────────────────────
+# ── CSS — injected once, fully self-contained ─────────────────────────────────
 
-_CSS = """
-<style>
-/* ── Orderbook panel ── */
-.ob-panel { margin-bottom: 24px; }
-
-.ob-signal-bar {
-    display: flex; align-items: center; gap: 12px;
-    background: #1a1b1f; border: 1px solid #2a2b30;
-    border-radius: 14px; padding: 14px 18px; margin-bottom: 14px;
+_CSS = """<style>
+.ob-signal-card {
+    background: #1a1b1f;
+    border: 1px solid #2a2b30;
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
 }
 .ob-signal-pill {
-    display: inline-block; padding: 5px 16px; border-radius: 20px;
-    font-size: 12px; font-weight: 700; letter-spacing: .04em; flex-shrink: 0;
+    display: inline-block;
+    padding: 5px 16px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 .ob-signal-reason {
-    font-size: 13px; color: #9090a0; line-height: 1.45; flex: 1;
+    font-size: 13px;
+    color: #9090a0;
+    line-height: 1.45;
 }
-
-.ob-metrics {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px; margin-bottom: 14px;
+.ob-depth-card {
+    background: #1a1b1f;
+    border: 1px solid #2a2b30;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 4px 0 12px;
 }
-.ob-metric {
-    background: #1e1f23; border: 1px solid #2a2b30;
-    border-radius: 12px; padding: 12px 14px;
+.ob-depth-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #5a5b62;
+    margin-bottom: 7px;
 }
-.ob-metric span {
-    display: block; font-size: 10px; color: #4a4b52;
-    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 5px;
-}
-.ob-metric b {
-    display: block; font-size: 17px; font-weight: 600; color: #f5f5f7;
-}
-.ob-metric b.g { color: #4ade80; }
-.ob-metric b.r { color: #f87171; }
-.ob-metric b.y { color: #fbbf24; }
-
-/* Depth bar */
-.ob-depth-row {
-    background: #1a1b1f; border: 1px solid #2a2b30;
-    border-radius: 12px; padding: 12px 16px; margin-bottom: 10px;
-}
-.ob-depth-label {
-    display: flex; justify-content: space-between;
-    font-size: 11px; color: #5a5b62; margin-bottom: 8px;
-}
-.ob-depth-bar {
-    height: 8px; border-radius: 4px; background: #23242a; overflow: hidden;
+.ob-depth-track {
+    height: 8px;
+    border-radius: 4px;
+    background: #23242a;
+    overflow: hidden;
     display: flex;
 }
-.ob-depth-bar-bid {
-    background: linear-gradient(90deg, #16a34a, #4ade80);
-    border-radius: 4px 0 0 4px; transition: width .3s ease;
-}
-.ob-depth-bar-ask {
-    background: linear-gradient(90deg, #f87171, #ef4444);
-    border-radius: 0 4px 4px 0; transition: width .3s ease;
-}
-
-/* Walls */
-.ob-walls {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
-}
-.ob-wall-panel {
-    background: #1e1f23; border: 1px solid #2a2b30; border-radius: 12px; padding: 12px 14px;
+.ob-depth-bid  { background: linear-gradient(90deg, #16a34a, #4ade80); border-radius: 4px 0 0 4px; }
+.ob-depth-ask  { background: linear-gradient(90deg, #f87171, #ef4444); border-radius: 0 4px 4px 0; }
+.ob-wall-card {
+    background: #1e1f23;
+    border: 1px solid #2a2b30;
+    border-radius: 12px;
+    padding: 12px 14px;
+    height: 100%;
 }
 .ob-wall-title {
-    font-size: 10px; font-weight: 600; color: #4a4b52;
-    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
 }
 .ob-wall-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 5px 0; border-bottom: 1px solid #23242a; font-size: 12px;
-}
-.ob-wall-row:last-child { border-bottom: none; }
-.ob-wall-price { font-weight: 600; color: #f5f5f7; font-family: monospace; }
-.ob-wall-size  { color: #9090a0; }
-.ob-wall-usd   { font-weight: 600; }
-.ob-wall-usd.g { color: #4ade80; }
-.ob-wall-usd.r { color: #f87171; }
-
-/* Book table */
-.ob-book {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-}
-.ob-book-side {
-    background: #1e1f23; border: 1px solid #2a2b30; border-radius: 12px;
-    overflow: hidden;
-}
-.ob-book-header {
-    display: flex; justify-content: space-between;
-    padding: 8px 12px; font-size: 10px; font-weight: 600; color: #4a4b52;
-    text-transform: uppercase; letter-spacing: .05em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
     border-bottom: 1px solid #23242a;
-}
-.ob-book-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 5px 12px; font-size: 11px; border-bottom: 1px solid #1a1b1f;
+    font-size: 12px;
     font-family: monospace;
 }
-.ob-book-row:last-child { border-bottom: none; }
-.ob-book-price-bid { color: #4ade80; font-weight: 600; }
-.ob-book-price-ask { color: #f87171; font-weight: 600; }
-.ob-book-qty  { color: #9090a0; }
-.ob-book-usd  { color: #5a5b62; }
-
-.ob-thin-warning {
-    background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3);
-    border-radius: 10px; padding: 10px 14px; font-size: 12px; color: #f87171;
+.ob-wall-row:last-child { border-bottom: none; }
+.ob-wall-price { font-weight: 600; color: #f5f5f7; }
+.ob-wall-qty   { color: #5a5b62; }
+.ob-wall-usd   { font-weight: 600; }
+.ob-thin-warn {
+    background: rgba(239,68,68,.08);
+    border: 1px solid rgba(239,68,68,.3);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #f87171;
     margin-bottom: 12px;
 }
-.ob-empty {
-    background: #1a1b1f; border: 1px solid #2a2b30; border-radius: 14px;
-    padding: 32px; text-align: center; color: #4a4b52; font-size: 14px;
-}
-
-@media (max-width: 768px) {
-    .ob-metrics { grid-template-columns: repeat(2, 1fr); }
-    .ob-walls { grid-template-columns: 1fr; }
-    .ob-book { grid-template-columns: 1fr; }
-}
-</style>
-"""
+</style>"""
 
 _css_injected = False
 
 
-def _inject_css() -> None:
+def _ensure_css() -> None:
     global _css_injected
     if not _css_injected:
         st.markdown(_CSS, unsafe_allow_html=True)
         _css_injected = True
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Price formatter ────────────────────────────────────────────────────────────
 
-def _signal_color(signal: str) -> str:
-    return SIGNAL_COLORS.get(signal, "#94a3b8")
-
-
-def _signal_label(signal: str) -> str:
-    return SIGNAL_DISPLAY.get(signal, signal.replace("_", " ").title())
-
-
-def _imbalance_class(imbalance: float) -> str:
-    if imbalance >= 0.2:
-        return "g"
-    if imbalance <= -0.2:
-        return "r"
-    return ""
-
-
-def _score_class(score: float) -> str:
-    if score >= 65:
-        return "g"
-    if score >= 35:
-        return "y"
-    return "r"
-
-
-def _price_str(price: float) -> str:
-    """Format a price with appropriate decimal places."""
+def _fmt_price(price: float) -> str:
     if price >= 1_000:
         return f"{price:,.2f}"
     if price >= 1:
@@ -193,6 +134,50 @@ def _price_str(price: float) -> str:
     if price >= 0.0001:
         return f"{price:.6f}"
     return f"{price:.10f}"
+
+
+def _usd_size(lvl: OrderBookLevel) -> float:
+    return lvl.usd_size if lvl.usd_size > 0 else (lvl.price * lvl.qty)
+
+
+# ── Wall card builder (self-contained HTML) ───────────────────────────────────
+
+def _wall_card_html(walls: list[OrderBookLevel], side: str) -> str:
+    """Return a fully self-contained HTML card for bid or ask walls."""
+    if side == "bid":
+        title_color = "#4ade80"
+        title_text  = "Bid walls (support)"
+        usd_color   = "#4ade80"
+    else:
+        title_color = "#f87171"
+        title_text  = "Ask walls (resistance)"
+        usd_color   = "#f87171"
+
+    if not walls:
+        rows_html = (
+            '<div class="ob-wall-row">'
+            '<span style="color:#3a3b42">No walls detected</span>'
+            '</div>'
+        )
+    else:
+        rows_html = ""
+        for w in walls:
+            usd = _usd_size(w)
+            rows_html += (
+                f'<div class="ob-wall-row">'
+                f'<span class="ob-wall-price">{_fmt_price(w.price)}</span>'
+                f'<span class="ob-wall-qty">{w.qty:,.4f}</span>'
+                f'<span class="ob-wall-usd" style="color:{usd_color}">'
+                f'{format_usd(usd)}</span>'
+                f'</div>'
+            )
+
+    return (
+        f'<div class="ob-wall-card">'
+        f'<div class="ob-wall-title" style="color:{title_color}">{title_text}</div>'
+        f'{rows_html}'
+        f'</div>'
+    )
 
 
 # ── Main render function ───────────────────────────────────────────────────────
@@ -203,220 +188,140 @@ def render_orderbook_panel(
     show_book_rows: int = 8,
 ) -> None:
     """
-    Render a complete order book panel.
+    Render a complete, stable order book panel.
 
-    Shows signal, key metrics, imbalance depth bar, biggest walls,
-    and a live bid/ask table. Safe to call with None inputs.
+    Uses st.metric / st.columns / st.dataframe for all data.
+    unsafe_allow_html only for CSS injection and fully closed card HTML.
 
     Args:
         snapshot:       OrderBookSnapshot from connectors/binance.py.
-                        If None, renders an empty state.
         metrics:        OrderBookMetrics from services/orderbook_engine.py.
-                        If None, renders an empty state.
-        show_book_rows: Number of price levels to show in the bid/ask table.
-                        Default 8.
+        show_book_rows: Rows to show in the bid/ask table. Default 8.
     """
-    _inject_css()
+    _ensure_css()
 
+    # ── Empty / None guard ────────────────────────────────────────────────────
     if snapshot is None or metrics is None:
-        st.markdown(
-            '<div class="ob-empty">No orderbook data. Select a market and click Refresh.</div>',
-            unsafe_allow_html=True,
-        )
+        st.info("No orderbook data. Select a market and click Refresh.")
         return
 
     if snapshot.is_empty:
-        st.markdown(
-            f'<div class="ob-empty">Empty book for {snapshot.symbol}. '
-            "Market may be unavailable or data is delayed.</div>",
-            unsafe_allow_html=True,
-        )
+        st.warning(f"Empty book for {snapshot.symbol}. Market may be unavailable.")
         return
 
-    st.markdown('<div class="ob-panel">', unsafe_allow_html=True)
-
-    # ── Thin book warning ─────────────────────────────────────────────────────
+    # ── Thin book warning (native) ────────────────────────────────────────────
     if metrics.is_thin:
         st.markdown(
-            '<div class="ob-thin-warning">'
-            "⚠ Thin book — less than $5,000 depth on one side. "
-            "Spreads and slippage estimates may be unreliable."
+            '<div class="ob-thin-warn">'
+            "Thin book — less than $5,000 depth on one side. "
+            "Estimates may be unreliable."
             "</div>",
             unsafe_allow_html=True,
         )
 
-    # ── Signal bar ────────────────────────────────────────────────────────────
-    _scol = _signal_color(metrics.signal)
-    _slbl = _signal_label(metrics.signal)
+    # ── Signal card (self-contained) ──────────────────────────────────────────
+    _sig_color = SIGNAL_COLORS.get(metrics.signal, "#94a3b8")
+    _sig_label = SIGNAL_DISPLAY.get(
+        metrics.signal, metrics.signal.replace("_", " ").title()
+    )
     st.markdown(
-        f"""<div class="ob-signal-bar">
-  <div class="ob-signal-pill" style="background:rgba(0,0,0,.2);
-       color:{_scol};border:1px solid {_scol}44">{_slbl}</div>
-  <div class="ob-signal-reason">{metrics.signal_reason}</div>
-  <div style="font-size:11px;color:#3a3b42;flex-shrink:0">
-    {metrics.symbol} &nbsp;·&nbsp; {metrics.exchange}
-  </div>
-</div>""",
+        f'<div class="ob-signal-card">'
+        f'<span class="ob-signal-pill" style="'
+        f'color:{_sig_color};'
+        f'border:1px solid {_sig_color}44;'
+        f'background:rgba(0,0,0,.25)">'
+        f'{_sig_label}</span>'
+        f'<span class="ob-signal-reason">{metrics.signal_reason}</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Key metrics grid ──────────────────────────────────────────────────────
-    _imb = metrics.imbalance
-    _imb_cls = _imbalance_class(_imb)
-    _imb_str = f"{_imb:+.3f}"
-    _liq_cls = _score_class(metrics.liquidity_score)
-    _mid_str = _price_str(metrics.mid_price)
+    # ── Key metrics — st.metric grid ─────────────────────────────────────────
+    _c1, _c2, _c3, _c4 = st.columns(4)
+    _c1.metric("Mid price",      f"${_fmt_price(metrics.mid_price)}")
+    _c2.metric("Spread",         f"{metrics.spread_pct:.4f}%")
+    _c3.metric("Imbalance",      f"{metrics.imbalance:+.3f}")
+    _c4.metric("Liquidity",      f"{metrics.liquidity_score:.0f}/100")
 
-    st.markdown(
-        f"""<div class="ob-metrics">
-  <div class="ob-metric">
-    <span>Mid price</span><b>${_mid_str}</b>
-  </div>
-  <div class="ob-metric">
-    <span>Spread</span>
-    <b class="{'r' if metrics.spread_pct > 1.0 else 'y' if metrics.spread_pct > 0.1 else 'g'}">{metrics.spread_pct:.4f}%</b>
-  </div>
-  <div class="ob-metric">
-    <span>Imbalance</span>
-    <b class="{_imb_cls}">{_imb_str}</b>
-  </div>
-  <div class="ob-metric">
-    <span>Liquidity score</span>
-    <b class="{_liq_cls}">{metrics.liquidity_score:.0f}/100</b>
-  </div>
-  <div class="ob-metric">
-    <span>Bid depth 0.5%</span>
-    <b class="g">{format_usd(metrics.bid_depth_usd)}</b>
-  </div>
-  <div class="ob-metric">
-    <span>Ask depth 0.5%</span>
-    <b class="r">{format_usd(metrics.ask_depth_usd)}</b>
-  </div>
-  <div class="ob-metric">
-    <span>Slip buy $1k</span>
-    <b class="{'r' if metrics.slippage_buy_1k > 0.5 else 'y' if metrics.slippage_buy_1k > 0.1 else 'g'}">{metrics.slippage_buy_1k:.4f}%</b>
-  </div>
-  <div class="ob-metric">
-    <span>Slip sell $1k</span>
-    <b class="{'r' if metrics.slippage_sell_1k > 0.5 else 'y' if metrics.slippage_sell_1k > 0.1 else 'g'}">{metrics.slippage_sell_1k:.4f}%</b>
-  </div>
-</div>""",
-        unsafe_allow_html=True,
-    )
+    _c5, _c6, _c7, _c8 = st.columns(4)
+    _c5.metric("Bid depth 0.5%", format_usd(metrics.bid_depth_usd))
+    _c6.metric("Ask depth 0.5%", format_usd(metrics.ask_depth_usd))
+    _c7.metric("Slip buy $1k",   f"{metrics.slippage_buy_1k:.4f}%")
+    _c8.metric("Slip sell $1k",  f"{metrics.slippage_sell_1k:.4f}%")
 
-    # ── Imbalance depth bar ───────────────────────────────────────────────────
-    _total_d = metrics.bid_depth_usd + metrics.ask_depth_usd
-    _bid_pct = (metrics.bid_depth_usd / _total_d * 100) if _total_d > 0 else 50.0
+    # ── Imbalance depth bar (self-contained) ──────────────────────────────────
+    _total = metrics.bid_depth_usd + metrics.ask_depth_usd
+    _bid_pct = (metrics.bid_depth_usd / _total * 100) if _total > 0 else 50.0
     _ask_pct = 100.0 - _bid_pct
-    _bias_label = (
-        "Bid-heavy — buy pressure dominant"
-        if _imb > 0.3
-        else "Ask-heavy — sell pressure dominant"
-        if _imb < -0.3
-        else "Balanced book"
+    _imb = metrics.imbalance
+    _bias = (
+        "Bid-heavy — buy pressure"  if _imb >  0.3 else
+        "Ask-heavy — sell pressure" if _imb < -0.3 else
+        "Balanced book"
     )
-
     st.markdown(
-        f"""<div class="ob-depth-row">
-  <div class="ob-depth-label">
-    <span>Bids {format_usd(metrics.bid_depth_usd)} ({_bid_pct:.1f}%)</span>
-    <span style="color:#5a5b62">{_bias_label}</span>
-    <span>Asks {format_usd(metrics.ask_depth_usd)} ({_ask_pct:.1f}%)</span>
-  </div>
-  <div class="ob-depth-bar">
-    <div class="ob-depth-bar-bid" style="width:{_bid_pct:.1f}%"></div>
-    <div class="ob-depth-bar-ask" style="width:{_ask_pct:.1f}%"></div>
-  </div>
-</div>""",
+        f'<div class="ob-depth-card">'
+        f'<div class="ob-depth-labels">'
+        f'<span style="color:#4ade80">Bids {format_usd(metrics.bid_depth_usd)} ({_bid_pct:.1f}%)</span>'
+        f'<span>{_bias}</span>'
+        f'<span style="color:#f87171">Asks {format_usd(metrics.ask_depth_usd)} ({_ask_pct:.1f}%)</span>'
+        f'</div>'
+        f'<div class="ob-depth-track">'
+        f'<div class="ob-depth-bid" style="width:{_bid_pct:.1f}%"></div>'
+        f'<div class="ob-depth-ask" style="width:{_ask_pct:.1f}%"></div>'
+        f'</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Biggest walls ─────────────────────────────────────────────────────────
-    def _wall_rows(walls: list[OrderBookLevel], side: str) -> str:
-        if not walls:
-            return '<div class="ob-wall-row"><span style="color:#3a3b42;font-size:12px">No walls</span></div>'
-        cls = "g" if side == "bid" else "r"
-        rows = ""
-        for w in walls:
-            usd = w.usd_size if w.usd_size > 0 else w.price * w.qty
-            rows += (
-                f'<div class="ob-wall-row">'
-                f'<span class="ob-wall-price">{_price_str(w.price)}</span>'
-                f'<span class="ob-wall-size">{w.qty:,.4f}</span>'
-                f'<span class="ob-wall-usd {cls}">{format_usd(usd)}</span>'
-                f"</div>"
-            )
-        return rows
+    # ── Walls — two columns, each a self-contained card ───────────────────────
+    _wc1, _wc2 = st.columns(2)
+    with _wc1:
+        st.markdown(_wall_card_html(metrics.bid_walls, "bid"), unsafe_allow_html=True)
+    with _wc2:
+        st.markdown(_wall_card_html(metrics.ask_walls, "ask"), unsafe_allow_html=True)
 
-    st.markdown(
-        f"""<div class="ob-walls">
-  <div class="ob-wall-panel">
-    <div class="ob-wall-title" style="color:#4ade80">Bid walls (support)</div>
-    {_wall_rows(metrics.bid_walls, 'bid')}
-  </div>
-  <div class="ob-wall-panel">
-    <div class="ob-wall-title" style="color:#f87171">Ask walls (resistance)</div>
-    {_wall_rows(metrics.ask_walls, 'ask')}
-  </div>
-</div>""",
-        unsafe_allow_html=True,
-    )
-
-    # ── Bid / Ask book table ──────────────────────────────────────────────────
+    # ── Bid / Ask table — st.dataframe (fully native, never corrupts) ─────────
     n = max(1, show_book_rows)
     _bids = snapshot.bids[:n]
     _asks = snapshot.asks[:n]
 
-    def _book_rows_bid(levels: list[OrderBookLevel]) -> str:
-        if not levels:
-            return '<div class="ob-book-row"><span style="color:#3a3b42">—</span></div>'
-        rows = ""
-        for lvl in levels:
-            usd = lvl.usd_size if lvl.usd_size > 0 else lvl.price * lvl.qty
-            rows += (
-                f'<div class="ob-book-row">'
-                f'<span class="ob-book-price-bid">{_price_str(lvl.price)}</span>'
-                f'<span class="ob-book-qty">{lvl.qty:,.4f}</span>'
-                f'<span class="ob-book-usd">{format_usd(usd)}</span>'
-                f"</div>"
+    _tc1, _tc2 = st.columns(2)
+
+    with _tc1:
+        st.caption("Bids")
+        if _bids:
+            _bid_df = pd.DataFrame([
+                {
+                    "Price":    _fmt_price(lvl.price),
+                    "Qty":      f"{lvl.qty:,.4f}",
+                    "USD size": format_usd(_usd_size(lvl)),
+                }
+                for lvl in _bids
+            ])
+            st.dataframe(
+                _bid_df,
+                use_container_width=True,
+                hide_index=True,
             )
-        return rows
+        else:
+            st.caption("No bid data.")
 
-    def _book_rows_ask(levels: list[OrderBookLevel]) -> str:
-        if not levels:
-            return '<div class="ob-book-row"><span style="color:#3a3b42">—</span></div>'
-        rows = ""
-        for lvl in levels:
-            usd = lvl.usd_size if lvl.usd_size > 0 else lvl.price * lvl.qty
-            rows += (
-                f'<div class="ob-book-row">'
-                f'<span class="ob-book-price-ask">{_price_str(lvl.price)}</span>'
-                f'<span class="ob-book-qty">{lvl.qty:,.4f}</span>'
-                f'<span class="ob-book-usd">{format_usd(usd)}</span>'
-                f"</div>"
+    with _tc2:
+        st.caption("Asks")
+        if _asks:
+            _ask_df = pd.DataFrame([
+                {
+                    "Price":    _fmt_price(lvl.price),
+                    "Qty":      f"{lvl.qty:,.4f}",
+                    "USD size": format_usd(_usd_size(lvl)),
+                }
+                for lvl in _asks
+            ])
+            st.dataframe(
+                _ask_df,
+                use_container_width=True,
+                hide_index=True,
             )
-        return rows
-
-    st.markdown(
-        f"""<div class="ob-book">
-  <div class="ob-book-side">
-    <div class="ob-book-header">
-      <span style="color:#4ade80">Bids</span>
-      <span>Qty</span>
-      <span>USD size</span>
-    </div>
-    {_book_rows_bid(_bids)}
-  </div>
-  <div class="ob-book-side">
-    <div class="ob-book-header">
-      <span style="color:#f87171">Asks</span>
-      <span>Qty</span>
-      <span>USD size</span>
-    </div>
-    {_book_rows_ask(_asks)}
-  </div>
-</div>""",
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            st.caption("No ask data.")

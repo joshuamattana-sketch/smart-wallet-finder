@@ -9,8 +9,7 @@ and renders the result via the orderbook panel component.
 Rules:
 - No business logic here — only Streamlit orchestration.
 - All errors surface as user-visible warnings, never uncaught exceptions.
-- No WebSockets. Live feel via st_autorefresh (optional) or manual Refresh.
-- st_autorefresh is imported with a try/except — page works without it.
+- No WebSockets. Manual Refresh button only — no autorefresh.
 """
 
 from __future__ import annotations
@@ -32,24 +31,16 @@ from core.formatting import format_usd, safe_float
 from services.orderbook_engine import analyze_orderbook
 from ui.components.orderbook_panel import render_orderbook_panel
 
-# ── Optional autorefresh ──────────────────────────────────────────────────────
-try:
-    from streamlit_autorefresh import st_autorefresh as _st_autorefresh
-    _AUTOREFRESH_AVAILABLE = True
-except ImportError:
-    _AUTOREFRESH_AVAILABLE = False
-
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _SYMBOLS = list(DEFAULT_PRO_MARKETS[:3])  # BTCUSDT, ETHUSDT, SOLUSDT
-_DEPTH_LIMIT = 20                          # levels per side to fetch
-_DEFAULT_REFRESH_SEC = 10
-_STATE_KEY_SNAP = "_pro_ob_snapshot"
+_DEPTH_LIMIT = 20
+_STATE_KEY_SNAP    = "_pro_ob_snapshot"
 _STATE_KEY_METRICS = "_pro_ob_metrics"
-_STATE_KEY_ERROR = "_pro_ob_error"
-_STATE_KEY_TS = "_pro_ob_fetched_at"
-_STATE_KEY_SYMBOL = "_pro_ob_symbol"
+_STATE_KEY_ERROR   = "_pro_ob_error"
+_STATE_KEY_TS      = "_pro_ob_fetched_at"
+_STATE_KEY_SYMBOL  = "_pro_ob_symbol"
 
 _CSS = """
 <style>
@@ -60,10 +51,6 @@ _CSS = """
 }
 .pt-page-sub {
     font-size: 14px; color: #5a5b62; margin-bottom: 20px;
-}
-.pt-toolbar {
-    display: flex; align-items: center; gap: 12px;
-    flex-wrap: wrap; margin-bottom: 20px;
 }
 .pt-last-updated {
     font-size: 11px; color: #3a3b42; padding: 4px 0;
@@ -99,9 +86,6 @@ _CSS = """
     letter-spacing: .08em; text-transform: uppercase;
     margin: 20px 0 10px;
 }
-.pt-autorefresh-note {
-    font-size: 11px; color: #3a3b42; margin-top: 4px;
-}
 </style>
 """
 
@@ -127,8 +111,8 @@ def _do_fetch(symbol: str) -> None:
     Fetch orderbook from Binance and run analysis.
     Stores results (or error) in session state. Never raises.
     """
-    st.session_state[_STATE_KEY_ERROR] = None
-    st.session_state[_STATE_KEY_SNAP] = None
+    st.session_state[_STATE_KEY_ERROR]   = None
+    st.session_state[_STATE_KEY_SNAP]    = None
     st.session_state[_STATE_KEY_METRICS] = None
 
     try:
@@ -152,17 +136,16 @@ def _do_fetch(symbol: str) -> None:
     try:
         metrics = analyze_orderbook(snapshot)
     except Exception as exc:
-        # Analysis should never raise, but guard anyway
         st.session_state[_STATE_KEY_ERROR] = (
             "analysis", f"Analysis failed: {exc}. Raw data was fetched."
         )
         st.session_state[_STATE_KEY_SNAP] = snapshot
         return
 
-    st.session_state[_STATE_KEY_SNAP] = snapshot
+    st.session_state[_STATE_KEY_SNAP]    = snapshot
     st.session_state[_STATE_KEY_METRICS] = metrics
-    st.session_state[_STATE_KEY_TS] = time.time()
-    st.session_state[_STATE_KEY_SYMBOL] = sym
+    st.session_state[_STATE_KEY_TS]      = time.time()
+    st.session_state[_STATE_KEY_SYMBOL]  = sym
 
 
 # ── Error renderer ────────────────────────────────────────────────────────────
@@ -178,7 +161,7 @@ def _render_error(error: tuple[str, str] | None) -> None:
         st.markdown(
             f'<div class="pt-rate-limit">'
             f"<b>Rate limit hit.</b> Binance is temporarily blocking requests. "
-            f"Wait 30–60 seconds before refreshing.<br>"
+            f"Wait 30-60 seconds before refreshing.<br>"
             f"<span style='font-size:11px;color:#a16207'>{msg}</span>"
             f"</div>",
             unsafe_allow_html=True,
@@ -219,10 +202,10 @@ def _render_summary_bar(metrics, snapshot) -> None:
 
     _ts = st.session_state.get(_STATE_KEY_TS)
     _ts_str = (
-        datetime.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") if _ts else "—"
+        datetime.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") if _ts else "-"
     )
     _levels_str = (
-        f"{len(snapshot.bids)}×{len(snapshot.asks)}" if snapshot else "—"
+        f"{len(snapshot.bids)}x{len(snapshot.asks)}" if snapshot else "-"
     )
 
     st.markdown(
@@ -252,73 +235,30 @@ def render_pro_terminal() -> None:
     Render the full Pro Trading Terminal page.
 
     Call this from app.py when section == "Pro Terminal".
-    Handles its own session state, toolbar, fetching, error display,
-    and panel rendering.
+    Manual Refresh only — autorefresh removed to prevent rendering corruption.
     """
     _init_state()
 
-    # Inject CSS
     st.markdown(_CSS, unsafe_allow_html=True)
 
     # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown('<div class="pt-page-title">Pro Terminal</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="pt-page-title">Pro Terminal</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="pt-page-sub">'
-        "Live Binance orderbook — depth, imbalance, walls, slippage."
-        "</div>",
+        '<div class="pt-page-sub">Live Binance orderbook — depth, imbalance, walls, slippage.</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Optional autorefresh ──────────────────────────────────────────────────
-    _autorefresh_on = False
-    if _AUTOREFRESH_AVAILABLE:
-        _ar_col1, _ar_col2 = st.columns([0.6, 0.4])
-        with _ar_col1:
-            _autorefresh_on = st.checkbox(
-                "Auto-refresh",
-                value=False,
-                key="_pt_autorefresh_toggle",
-                help="Automatically re-fetches the orderbook at the selected interval.",
-            )
-        with _ar_col2:
-            if _autorefresh_on:
-                _ar_interval = st.selectbox(
-                    "Interval",
-                    options=[5, 10, 15, 30, 60],
-                    index=1,
-                    format_func=lambda x: f"Every {x}s",
-                    label_visibility="collapsed",
-                    key="_pt_autorefresh_interval",
-                )
-                _st_autorefresh(interval=_ar_interval * 1000, key="_pt_ar_counter")
-                st.markdown(
-                    f'<div class="pt-autorefresh-note">'
-                    f"Auto-refreshing every {_ar_interval}s</div>",
-                    unsafe_allow_html=True,
-                )
-    else:
-        st.markdown(
-            '<div class="pt-autorefresh-note">'
-            "Install <code>streamlit-autorefresh</code> for auto-refresh. "
-            "Use Refresh button for now."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-    # ── Toolbar: symbol selector + refresh button ─────────────────────────────
+    # ── Toolbar: symbol + depth + refresh ─────────────────────────────────────
     _tb_sym, _tb_btn, _tb_depth, _tb_spacer = st.columns([0.25, 0.15, 0.25, 0.35])
 
     with _tb_sym:
         _selected = st.selectbox(
             "Market",
             options=_SYMBOLS,
-            index=_SYMBOLS.index(
-                st.session_state.get(_STATE_KEY_SYMBOL, _SYMBOLS[0])
+            index=(
+                _SYMBOLS.index(st.session_state.get(_STATE_KEY_SYMBOL, _SYMBOLS[0]))
                 if st.session_state.get(_STATE_KEY_SYMBOL) in _SYMBOLS
-                else _SYMBOLS[0]
+                else 0
             ),
             key="_pt_symbol_select",
             label_visibility="collapsed",
@@ -342,20 +282,23 @@ def render_pro_terminal() -> None:
             type="primary",
         )
 
-    # ── Auto-fetch on symbol change or first load ─────────────────────────────
-    _last_sym = st.session_state.get(_STATE_KEY_SYMBOL)
-    _first_load = st.session_state.get(_STATE_KEY_SNAP) is None and st.session_state.get(_STATE_KEY_ERROR) is None
+    # ── Fetch: first load, symbol change, or manual refresh only ──────────────
+    _last_sym       = st.session_state.get(_STATE_KEY_SYMBOL)
+    _first_load     = (
+        st.session_state.get(_STATE_KEY_SNAP) is None
+        and st.session_state.get(_STATE_KEY_ERROR) is None
+    )
     _symbol_changed = _last_sym != _selected
 
-    if _refresh_clicked or _first_load or _symbol_changed or _autorefresh_on:
+    if _refresh_clicked or _first_load or _symbol_changed:
         with st.spinner(f"Fetching {_selected} orderbook from Binance..."):
             _do_fetch(_selected)
 
-    # ── Error display ─────────────────────────────────────────────────────────
+    # ── Error ─────────────────────────────────────────────────────────────────
     _render_error(st.session_state.get(_STATE_KEY_ERROR))
 
     # ── Summary bar ───────────────────────────────────────────────────────────
-    _metrics = st.session_state.get(_STATE_KEY_METRICS)
+    _metrics  = st.session_state.get(_STATE_KEY_METRICS)
     _snapshot = st.session_state.get(_STATE_KEY_SNAP)
     _render_summary_bar(_metrics, _snapshot)
 
@@ -368,7 +311,7 @@ def render_pro_terminal() -> None:
         render_orderbook_panel(
             snapshot=_snapshot,
             metrics=_metrics,
-            show_book_rows=_depth_choice // 2,  # half the depth for the table view
+            show_book_rows=_depth_choice // 2,
         )
     elif st.session_state.get(_STATE_KEY_ERROR) is None:
         st.markdown(
@@ -376,14 +319,15 @@ def render_pro_terminal() -> None:
             unsafe_allow_html=True,
         )
 
-    # ── Data note ─────────────────────────────────────────────────────────────
+    # ── Footer ────────────────────────────────────────────────────────────────
     _ts = st.session_state.get(_STATE_KEY_TS)
     if _ts:
-        _age = int(time.time() - _ts)
+        _age    = int(time.time() - _ts)
         _ts_fmt = datetime.datetime.fromtimestamp(_ts).strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(
             f'<div class="pt-last-updated">'
-            f"Data fetched at {_ts_fmt} ({_age}s ago) &nbsp;·&nbsp; "
+            f"Data fetched at {_ts_fmt} ({_age}s ago) "
+            f"&nbsp;&middot;&nbsp; "
             f"Source: Binance REST API (public, no key required)"
             f"</div>",
             unsafe_allow_html=True,
