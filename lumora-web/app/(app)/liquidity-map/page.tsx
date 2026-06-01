@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
 
 // ── Layout constants ───────────────────────────────────────────────────────────
 const CHART_H   = 560;
@@ -550,6 +551,37 @@ export default function LiquidityMapPage() {
         </GlassCard>
 
       </div>
+
+      {/* Canvas Renderer v1 — renders the live /api/heatmap payload on an HTML
+          canvas. The legacy DOM map above stays unchanged; this is the new
+          technical foundation. */}
+      <GlassCard className="overflow-hidden p-0">
+        <div className="px-3 py-2 border-b border-lumora-border flex items-center justify-between">
+          <span className="text-[11px] text-lumora-muted uppercase tracking-wide font-medium">
+            Canvas Renderer v1
+          </span>
+          <span className="text-[10px] text-lumora-muted">
+            {payload ? `${payload.meta.cellCount} cells · ${payload.meta.wallCount} walls` : "—"}
+          </span>
+        </div>
+        <div className="relative">
+          {payload ? (
+            <HeatmapCanvas
+              payload={payload}
+              height={CHART_H}
+              currentPrice={CURRENT_PRICE}
+              showDebug
+            />
+          ) : (
+            <div
+              className="flex items-center justify-center text-xs text-lumora-muted"
+              style={{ height: CHART_H, background: "#05030f" }}
+            >
+              {loading ? "Loading heatmap…" : apiError ? "No payload" : "Waiting for data…"}
+            </div>
+          )}
+        </div>
+      </GlassCard>
 
       {/* Key zone cards — API walls when available, static fallback otherwise */}
       <div>
