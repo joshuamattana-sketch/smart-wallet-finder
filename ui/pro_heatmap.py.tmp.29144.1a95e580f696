@@ -163,13 +163,6 @@ def render_pro_heatmap() -> None:
         st.button("Refresh", key="_ph_refresh",
                   use_container_width=True, type="primary")
 
-    # Persist current selections to URL so browser-refresh restores them.
-    try:
-        st.query_params["heatmap_symbol"] = _symbol
-        st.query_params["heatmap_range"] = _range_label
-    except Exception:
-        pass
-
     _range_mode = _RANGE_KEYS[_RANGE_LABELS.index(_range_label)]
     _mid        = _DEMO_MIDS.get(_symbol, 67_400.0)
 

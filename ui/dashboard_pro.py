@@ -227,6 +227,10 @@ def _open_in_terminal(ticker: str, key: str) -> None:
     if st.button("Open in Pro Terminal", key=key, use_container_width=True):
         st.session_state["pro_selected_symbol"] = ticker
         st.session_state["main_navigation"] = "Pro Terminal"
+        try:
+            st.query_params["page"] = "Pro Terminal"
+        except Exception:
+            pass
         st.rerun()
 
 

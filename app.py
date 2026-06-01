@@ -6157,15 +6157,51 @@ _NAV_ITEMS = [
     ("Settings",       "", "system"),
 ]
 
-if "main_navigation" not in st.session_state:
-    st.session_state.main_navigation = "Today"
+def _nav_init() -> None:
+    """Initialise main_navigation and key selections from query_params on session loss."""
+    _valid = [n for n, _, _ in _NAV_ITEMS]
+    if "main_navigation" not in st.session_state:
+        try:
+            _qp = st.query_params.get("page", "")
+        except Exception:
+            _qp = ""
+        st.session_state["main_navigation"] = _qp if _qp in _valid else "Today"
+    # Pro Terminal symbol → seeded into _pro_ob_symbol for _resolve_incoming_symbol()
+    _pt_syms = {"BTCUSDT", "ETHUSDT", "SOLUSDT"}
+    if "_pro_ob_symbol" not in st.session_state:
+        try:
+            _qp_ts = st.query_params.get("terminal_symbol", "")
+        except Exception:
+            _qp_ts = ""
+        if _qp_ts in _pt_syms:
+            st.session_state["_pro_ob_symbol"] = _qp_ts
+    # Heatmap symbol → seeded into _ph_symbol for pro_heatmap._init_state()
+    if "_ph_symbol" not in st.session_state:
+        try:
+            _qp_hs = st.query_params.get("heatmap_symbol", "")
+        except Exception:
+            _qp_hs = ""
+        if _qp_hs in _pt_syms:  # same valid set
+            st.session_state["_ph_symbol"] = _qp_hs
 
-if st.session_state.section_override:
+
+def _set_nav(name: str) -> None:
+    """Set active page in session_state and sync to query_params in one call."""
+    st.session_state["main_navigation"] = name
+    try:
+        st.query_params["page"] = name
+    except Exception:
+        pass
+
+
+_nav_init()
+
+if st.session_state.get("section_override"):
     _mapped = _SECTION_REMAP.get(st.session_state.section_override, st.session_state.section_override)
-    _valid = [n for n,_,_ in _NAV_ITEMS]
-    if _mapped in _valid:
-        st.session_state.main_navigation = _mapped
-    st.session_state.section_override = None
+    _valid_nav = [n for n, _, _ in _NAV_ITEMS]
+    if _mapped in _valid_nav:
+        _set_nav(_mapped)
+    st.session_state["section_override"] = None
 
 with st.sidebar:
     st.markdown("""
@@ -6279,7 +6315,7 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
         if st.button(_name, key=f"_nav_{_name}", use_container_width=True):
-            st.session_state.main_navigation = _name
+            _set_nav(_name)
             st.rerun()
 
     st.markdown("""
@@ -10107,7 +10143,7 @@ def render_wallet_documentation_cards(limit=10, only_pinned=False, compact=True,
                         st.session_state.sw_detail_wallet = full_wallet
                         st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
-                        st.session_state.main_navigation = "Smart Wallets"
+                        _set_nav("Smart Wallets")
                         st.rerun()
                 with b3:
                     if st.button("Watchlist", key=journal_button_key("wallet_doc_add", row_idx, full_wallet, key_scope), disabled=is_saved):
@@ -10529,7 +10565,7 @@ def render_monitor_wallet_memory_cards(wallet_df, limit=8):
                         st.session_state.sw_detail_wallet = full_wallet
                         st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
-                        st.session_state.main_navigation = "Smart Wallets"
+                        _set_nav("Smart Wallets")
                         st.rerun()
 
 
@@ -10738,7 +10774,7 @@ def render_wallet_candidate_row(row, idx, key_prefix="auto_wallets"):
                 st.session_state.sw_detail_wallet = full_wallet
                 st.session_state._sw_auto_scan = True
                 add_recent_item("recent_wallets", full_wallet)
-                st.session_state.main_navigation = "Smart Wallets"
+                _set_nav("Smart Wallets")
                 st.rerun()
         with b4:
             # Copy button for wallet address
@@ -11193,19 +11229,19 @@ with safe_section(section):
         _qc = st.columns(4)
         with _qc[0]:
             if st.button("Token Finder", key="today_go_token", use_container_width=True):
-                st.session_state.main_navigation = "Token Finder"
+                _set_nav("Token Finder")
                 st.rerun()
         with _qc[1]:
             if st.button("Smart Wallets", key="today_go_wallets", use_container_width=True):
-                st.session_state.main_navigation = "Smart Wallets"
+                _set_nav("Smart Wallets")
                 st.rerun()
         with _qc[2]:
             if st.button("Journal", key="today_go_journal", use_container_width=True):
-                st.session_state.main_navigation = "Wallet Journal"
+                _set_nav("Wallet Journal")
                 st.rerun()
         with _qc[3]:
             if st.button("Paper Trading", key="today_go_paper", use_container_width=True):
-                st.session_state.main_navigation = "Paper Trading"
+                _set_nav("Paper Trading")
                 st.rerun()
 
         # ── Top attention wallets (if any) ─────────────────────────
@@ -11379,11 +11415,11 @@ with safe_section(section):
                 with _a2:
                     if st.button("Paper trade", key="wd_paper", use_container_width=True):
                         st.session_state._paper_copy_wallet = {"address":_dw,"name":_dname2,"score":_sc}
-                        st.session_state.main_navigation = "Paper Trading"
+                        _set_nav("Paper Trading")
                         st.rerun()
                 with _a3:
                     if st.button("Open in Journal", key="wd_journal", use_container_width=True):
-                        st.session_state.main_navigation = "Wallet Journal"
+                        _set_nav("Wallet Journal")
                         st.rerun()
         else:
             st.markdown('<div class="sw-title">Smart Wallets</div>', unsafe_allow_html=True)
@@ -11840,7 +11876,7 @@ with safe_section(section):
                         st.session_state.token_scanner_input = latest_token_mint
                         st.session_state._token_finder_autoload = latest_token_mint
                         add_recent_item("recent_token_mints", latest_token_mint)
-                        st.session_state.main_navigation = "Token Finder"
+                        _set_nav("Token Finder")
                         st.rerun()
                 with recent_open_col:
                     if st.button("Open", key=f"recent_open_wallet_{index}_{full_wallet}", type="secondary"):
@@ -11848,7 +11884,7 @@ with safe_section(section):
                         st.session_state.sw_detail_wallet = full_wallet
                         st.session_state._sw_auto_scan = True
                         add_recent_item("recent_wallets", full_wallet)
-                        st.session_state.main_navigation = "Smart Wallets"
+                        _set_nav("Smart Wallets")
                         st.rerun()
 
                 if recent_mode == "Advanced":
@@ -12157,7 +12193,7 @@ with safe_section(section):
                             st.session_state.token_scanner_input = latest_token_mint
                             st.session_state._token_finder_autoload = latest_token_mint
                             add_recent_item("recent_token_mints", latest_token_mint)
-                            st.session_state.main_navigation = "Token Finder"
+                            _set_nav("Token Finder")
                             st.rerun()
                     with col_open:
                         if st.button("Open", key=f"wallet_open_card_{index}_{full_wallet}", type="secondary"):
@@ -13110,14 +13146,14 @@ No active trades yet.<br><span style="font-size:12px">Go to "Place trade" tab to
                             if st.button("Analyze token", key=f"pt_analyze_{_t.get('id','')[:8]}", use_container_width=True):
                                 if _mint:
                                     st.session_state._token_finder_autoload = _mint
-                                    st.session_state.main_navigation = "Token Finder"
+                                    _set_nav("Token Finder")
                                     st.rerun()
                         with _tc3:
                             if st.button("Open wallet", key=f"pt_wallet_{_t.get('id','')[:8]}", use_container_width=True):
                                 if _src:
                                     st.session_state.sw_detail_wallet = _src
                                     st.session_state.wallet_address_input = _src
-                                    st.session_state.main_navigation = "Smart Wallets"
+                                    _set_nav("Smart Wallets")
                                     st.rerun()
 
             # ══ CLOSED TRADES ═════════════════════════════════════
