@@ -68,6 +68,14 @@ export interface HeatmapMeta {
    * "binance_spot_rest_snapshot"), the route moves it to `dataSource`.
    */
   source?: string;
+  /** ISO timestamp of the last live fixture write (local live mode). */
+  liveUpdatedAt?: string;
+  /** Number of successful samples collected (export / live scripts). */
+  sampleCount?: number;
+  /** Seconds between samples (export / live scripts). */
+  intervalSeconds?: number;
+  /** Rolling frame cap used by the local live writer. */
+  maxFrames?: number;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */

@@ -217,14 +217,19 @@ export default function LiquidityMapPage() {
   const [exchange,  setExchange]  = useState("Binance Spot");
   const [timeframe, setTimeframe] = useState<string>("15m");
   const [dataSource, setDataSource] = useState<"mock" | "fixture">("mock");
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   const [payload,  setPayload]  = useState<HeatmapApiPayload | null>(null);
   const [loading,  setLoading]  = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
-  const fetchPayload = useCallback(async () => {
-    setLoading(true);
-    setApiError(null);
+  // `silent` skips the loading overlay so the 2s auto-refresh poll does not
+  // flicker the chart. On failure we keep the previous payload and surface the
+  // error — the next poll can recover on its own.
+  const fetchPayload = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
+    if (!silent) setLoading(true);
     try {
       const tf  = timeframe.toLowerCase();
       const exSlug = exchangeToApiSlug(exchange);
@@ -232,7 +237,7 @@ export default function LiquidityMapPage() {
       // Fixture mode opts into locally exported payloads; the API falls back to
       // mock automatically when no fixture file exists.
       if (dataSource === "fixture") params.set("source", "fixture");
-      const res = await fetch(`/api/heatmap?${params.toString()}`);
+      const res = await fetch(`/api/heatmap?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
@@ -240,14 +245,26 @@ export default function LiquidityMapPage() {
       }
       const data: HeatmapApiPayload = await res.json();
       setPayload(data);
+      setApiError(null);
+      setLastFetchedAt(new Date().toISOString());
     } catch (err) {
       setApiError(err instanceof Error ? err.message : "Network error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [symbol, exchange, timeframe, dataSource]);
 
+  // Initial load + reload whenever symbol/exchange/timeframe/source changes.
   useEffect(() => { fetchPayload(); }, [fetchPayload]);
+
+  // Auto-refresh: poll every 2s while in fixture mode with auto-refresh on.
+  // The interval resets (cleanup runs) when symbol/timeframe/source change, on
+  // unmount, or when the toggle flips — so there are no leaked timers.
+  useEffect(() => {
+    if (dataSource !== "fixture" || !autoRefresh) return;
+    const id = setInterval(() => { fetchPayload({ silent: true }); }, 2000);
+    return () => clearInterval(id);
+  }, [dataSource, autoRefresh, fetchPayload]);
 
   const curY   = pyPx(CURRENT_PRICE);
   const svgLine = RAW_PATH.map((p, i) => `${i},${pyPx(p).toFixed(1)}`).join(" ");
@@ -356,8 +373,21 @@ export default function LiquidityMapPage() {
             </button>
           ))}
         </div>
+        {/* Auto-refresh toggle — drives the 2s fixture poll */}
+        <button
+          onClick={() => setAutoRefresh(v => !v)}
+          title="Auto refresh (2s) in fixture mode"
+          className={clsx(
+            "px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors",
+            autoRefresh
+              ? "border-lumora-purple bg-lumora-purple/15 text-lumora-text"
+              : "border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text"
+          )}
+        >
+          Auto {autoRefresh ? "On" : "Off"}
+        </button>
         {/* Refresh */}
-        <button onClick={fetchPayload} title="Refresh"
+        <button onClick={() => fetchPayload()} title="Refresh"
           disabled={loading}
           className="p-1.5 rounded-md border border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text transition-colors disabled:opacity-50">
           <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
@@ -772,6 +802,19 @@ export default function LiquidityMapPage() {
             // reveals a fixture→mock fallback when no fixture file exists.
             { k: "Source",      v: dataSource },
             { k: "Meta Src",    v: payload?.meta.source ?? payload?.meta.dataSource ?? "—" },
+            { k: "Auto",        v: dataSource === "fixture" ? (autoRefresh ? "On (2s)" : "Off") : "—" },
+            {
+              k: "Live Upd",
+              v: payload?.meta.liveUpdatedAt
+                ? new Date(payload.meta.liveUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                : "—",
+            },
+            {
+              k: "Fetched",
+              v: lastFetchedAt
+                ? new Date(lastFetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                : "—",
+            },
           ].map(({ k, v }) => (
             <div key={k} className="flex items-center gap-1">
               <span className="text-[9px] uppercase tracking-wide text-lumora-muted">{k}</span>
