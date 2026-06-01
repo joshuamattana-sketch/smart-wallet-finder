@@ -140,23 +140,54 @@ export function HeatmapCanvas({
         return;
       }
 
-      const pMin = priceMin as number;
-      const pMax = priceMax as number;
+      const payloadMin = priceMin as number;
+      const payloadMax = priceMax as number;
+
+      // p index → price (always relative to the full payload axis).
+      const indexToPrice = (p: number) => payloadMin + p * step;
+
+      // ── Tighten the rendered range to the relevant data ─────────────────────
+      // A payload may span a far wider band than where liquidity actually sits.
+      // Focus the view on the cells/walls (plus a little padding and the current
+      // price) instead of drawing many empty price levels.
+      let dataLo = Infinity;
+      let dataHi = -Infinity;
+      for (const cell of payload.cells) {
+        if (cell.total < 6) continue;
+        const price = indexToPrice(cell.p);
+        if (price < dataLo) dataLo = price;
+        if (price > dataHi) dataHi = price;
+      }
+      for (const wall of payload.walls) {
+        if (wall.price_bucket < dataLo) dataLo = wall.price_bucket;
+        if (wall.price_bucket > dataHi) dataHi = wall.price_bucket;
+      }
+
+      let pMin = payloadMin;
+      let pMax = payloadMax;
+      if (dataHi > dataLo) {
+        const pad = Math.max(step * 2, (dataHi - dataLo) * 0.08);
+        pMin = Math.max(payloadMin, dataLo - pad);
+        pMax = Math.min(payloadMax, dataHi + pad);
+        // Keep the current price marker in view when it is reasonably close.
+        if (typeof currentPrice === "number" &&
+            currentPrice >= payloadMin && currentPrice <= payloadMax) {
+          pMin = Math.min(pMin, currentPrice - pad);
+          pMax = Math.max(pMax, currentPrice + pad);
+        }
+      }
+      if (!(pMax > pMin)) { pMin = payloadMin; pMax = payloadMax; }
+
       const priceRange = pMax - pMin;
       const levelCount = Math.max(1, Math.round(priceRange / step) + 1);
 
       // price → y (higher price near the top)
       const priceToY = (price: number) =>
         PAD_TOP + ((pMax - price) / priceRange) * plotH;
-      // p index → price
-      const indexToPrice = (p: number) => pMin + p * step;
-
-      const cellW = plotW / buckets;
-      const cellH = plotH / levelCount;
 
       // ── Layer 2: subtle grid lines ──────────────────────────────────────────
       ctx.lineWidth = 1;
-      ctx.strokeStyle = "rgba(255,255,255,0.035)";
+      ctx.strokeStyle = "rgba(255,255,255,0.03)";
       const hLines = 8;
       ctx.beginPath();
       for (let i = 0; i <= hLines; i++) {
@@ -172,51 +203,73 @@ export function HeatmapCanvas({
       }
       ctx.stroke();
 
-      // ── Layer 3: heatmap cells from payload.cells ───────────────────────────
+      // ── Layer 3: heatmap cells via a smoothed offscreen buffer ──────────────
+      // Paint cells onto a tiny buckets × levelCount canvas (one texel per
+      // cell), then scale it up with bilinear smoothing. This removes hard
+      // vertical blocks / gaps when there are only a few time buckets and gives
+      // the map a softer, more depth-like look — no external library needed.
       let drawn = 0;
-      for (const cell of payload.cells) {
-        if (cell.t < 0 || cell.t >= buckets) continue;
+      const rowForPrice = (price: number) => {
+        const row = Math.round((pMax - price) / step);
+        return Math.max(0, Math.min(levelCount - 1, row));
+      };
 
-        const price = indexToPrice(cell.p);
-        if (price < pMin || price > pMax) continue;
+      const off = document.createElement("canvas");
+      off.width = buckets;
+      off.height = levelCount;
+      const octx = off.getContext("2d");
+      if (octx) {
+        for (const cell of payload.cells) {
+          if (cell.t < 0 || cell.t >= buckets) continue;
+          const price = indexToPrice(cell.p);
+          if (price < pMin || price > pMax) continue;
 
-        // Tint by which side dominates this cell.
-        const side =
-          cell.bid > 0 && cell.ask > 0
-            ? "mixed"
-            : cell.ask > 0
-              ? "ask"
-              : "bid";
+          const side =
+            cell.bid > 0 && cell.ask > 0
+              ? "mixed"
+              : cell.ask > 0
+                ? "ask"
+                : "bid";
 
-        const color = intensityToColor(cell.total, side);
-        if (color.endsWith(",0)")) continue; // fully transparent — skip
+          const color = intensityToColor(cell.total, side);
+          if (color.endsWith(",0)")) continue; // fully transparent — skip
 
-        const x = PAD_LEFT + cell.t * cellW;
-        const yCenter = priceToY(price);
-        const y = yCenter - cellH / 2;
+          octx.fillStyle = color;
+          octx.fillRect(cell.t, rowForPrice(price), 1, 1);
+          drawn++;
+        }
 
-        ctx.fillStyle = color;
-        // +1 to avoid hairline gaps between adjacent cells.
-        ctx.fillRect(x, y, cellW + 1, cellH + 1);
-        drawn++;
+        const prevSmoothing = ctx.imageSmoothingEnabled;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(off, 0, 0, buckets, levelCount, PAD_LEFT, PAD_TOP, plotW, plotH);
+        ctx.imageSmoothingEnabled = prevSmoothing;
       }
 
-      // ── Layer 4: wall highlights from payload.walls ─────────────────────────
-      ctx.font = "10px sans-serif";
-      ctx.textAlign = "left";
+      // ── Layer 4: wall highlights — accents, not dominant bars ───────────────
       for (const wall of payload.walls) {
         if (wall.price_bucket < pMin || wall.price_bucket > pMax) continue;
         const y = Math.round(priceToY(wall.price_bucket)) + 0.5;
-        ctx.strokeStyle = wallColor(wall.side);
-        ctx.lineWidth = 1.5;
+        const critical = (wall.intensity ?? 0) >= 88;
+        const col = wallColor(wall.side);
+
+        ctx.save();
+        ctx.strokeStyle = col;
+        ctx.lineWidth = critical ? 1.25 : 1;
+        // Major walls glow gently; ordinary walls stay flat and quiet.
+        if (critical) {
+          ctx.shadowColor = col;
+          ctx.shadowBlur = 6;
+        }
         ctx.beginPath();
         ctx.moveTo(PAD_LEFT, y);
         ctx.lineTo(PAD_LEFT + plotW, y);
         ctx.stroke();
+        ctx.restore();
 
-        // Small marker swatch at the right edge.
-        ctx.fillStyle = wallColor(wall.side);
-        ctx.fillRect(PAD_LEFT + plotW - 4, y - 3, 4, 6);
+        // Tiny marker dot at the right edge.
+        ctx.fillStyle = col;
+        ctx.fillRect(PAD_LEFT + plotW - 3, y - 2, 3, 4);
       }
 
       // ── Layer 5: current price line (if in range) ───────────────────────────
@@ -263,6 +316,7 @@ export function HeatmapCanvas({
 
       // Time axis (bottom)
       ctx.textAlign = "center";
+      const colW = plotW / buckets;
       const labelEvery = Math.max(1, Math.ceil(buckets / 6));
       for (let i = 0; i < buckets; i += labelEvery) {
         const iso = payload.timeBuckets[i];
@@ -270,7 +324,7 @@ export function HeatmapCanvas({
         const label = Number.isNaN(d.getTime())
           ? String(i)
           : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        const x = PAD_LEFT + i * cellW + cellW / 2;
+        const x = PAD_LEFT + i * colW + colW / 2;
         ctx.fillText(label, x, PAD_TOP + plotH + 14);
       }
 
@@ -310,8 +364,8 @@ export function HeatmapCanvas({
       )}
 
       {showDebug && debug && !error && (
-        <div className="absolute top-1.5 right-1.5 px-2 py-1 rounded bg-black/60 border border-white/10 text-[9px] leading-tight text-white/60 font-mono pointer-events-none">
-          {debug.w}×{debug.h} · {debug.drawn}/{debug.cells} cells · {debug.ms}ms
+        <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/40 text-[8px] leading-none text-white/35 font-mono pointer-events-none">
+          {debug.drawn}/{debug.cells} · {debug.ms}ms
         </div>
       )}
     </div>
