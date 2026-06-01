@@ -36,6 +36,19 @@ except Exception:
     def _scan_markets(symbols=None):
         return []
 
+# Whale alerts — guarded: dashboard must work even if engine not deployed
+try:
+    from services.whale_alert_engine import demo_whale_alerts as _demo_whale_alerts
+    from ui.components.whale_alert_card import render_whale_alerts as _render_whale_alerts
+    _WHALE_ENGINE_AVAILABLE = True
+except Exception:
+    _WHALE_ENGINE_AVAILABLE = False
+    def _demo_whale_alerts():
+        return []
+    def _render_whale_alerts(alerts, **kw):
+        import streamlit as _st
+        _st.caption("Whale alert engine not available.")
+
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
 _CSS = """<style>
@@ -453,7 +466,15 @@ def render_pro_dashboard() -> None:
 
     with right_col:
         st.markdown('<div class="dash-section-label">Whale Alerts</div>', unsafe_allow_html=True)
-        _render_whale_feed(_WHALE_ALERTS)
+        if _WHALE_ENGINE_AVAILABLE:
+            try:
+                _whale_alerts = _demo_whale_alerts()
+                _render_whale_alerts(_whale_alerts, max_shown=5, show_header=False)
+            except Exception as _whale_exc:
+                st.warning(f"Whale alert engine error: {_whale_exc}")
+                _render_whale_feed(_WHALE_ALERTS)
+        else:
+            _render_whale_feed(_WHALE_ALERTS)
 
     st.markdown('<div class="dash-divider"></div>', unsafe_allow_html=True)
 
