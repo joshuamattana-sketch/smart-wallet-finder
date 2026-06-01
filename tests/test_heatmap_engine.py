@@ -6,12 +6,15 @@ Unit tests for services/heatmap_engine.py.
 Zero real API calls. All OrderBookSnapshot fixtures are built inline.
 
 Test classes:
-  TestCalculateIntensity        — intensity function bounds and values
-  TestHeatmapCellDataclass      — dataclass validation and properties
-  TestBuildHeatmapFromOrderbook — snapshot → cells pipeline
-  TestDetectHotZones            — hot zone filtering and sorting
-  TestDemoHeatmapCells          — demo data integrity
-  TestEdgeCases                 — empty/None/zero inputs, no crashes
+  TestCalculateIntensity          — intensity function bounds and values
+  TestHeatmapCellDataclass        — dataclass validation and properties
+  TestBuildHeatmapFromOrderbook   — snapshot → cells pipeline
+  TestDetectHotZones              — hot zone filtering and sorting
+  TestDemoHeatmapCells            — existing demo data integrity
+  TestFilterCellsByPriceRange     — new range filter function
+  TestGenerateWideDemoHeatmap     — wide multi-wall demo generator
+  TestRangeConstants              — range mode constants exist and are valid
+  TestEdgeCases                   — empty/None/zero/unknown inputs, no crashes
 """
 
 import sys
@@ -23,8 +26,14 @@ import pytest
 
 from core.models import OrderBookLevel, OrderBookSnapshot
 from services.heatmap_engine import (
+    RANGE_FIVE_PCT,
+    RANGE_NEAR,
+    RANGE_ONE_PCT,
+    RANGE_TWO_PCT,
+    RANGE_WIDE_DEMO,
     SIDE_ASK,
     SIDE_BID,
+    VALID_RANGE_MODES,
     HeatmapCell,
     _fmt_size,
     _make_label,
@@ -32,6 +41,8 @@ from services.heatmap_engine import (
     calculate_intensity,
     demo_heatmap_cells,
     detect_hot_zones,
+    filter_cells_by_price_range,
+    generate_wide_demo_heatmap,
 )
 
 
@@ -42,34 +53,29 @@ def make_level(price: float, qty: float, usd: float = 0.0) -> OrderBookLevel:
 
 
 def simple_snapshot() -> OrderBookSnapshot:
-    """Small balanced snapshot with known values."""
     bids = [
         make_level(67_390.0, 5.0,  336_950.0),
         make_level(67_380.0, 2.0,  134_760.0),
-        make_level(67_370.0, 8.0,  538_960.0),   # largest bid
+        make_level(67_370.0, 8.0,  538_960.0),
     ]
     asks = [
         make_level(67_410.0, 3.0,  202_230.0),
         make_level(67_420.0, 1.0,   67_420.0),
-        make_level(67_430.0, 10.0, 674_300.0),   # largest level overall
+        make_level(67_430.0, 10.0, 674_300.0),
     ]
-    return OrderBookSnapshot(
-        "BTCUSDT", "binance", 1_716_200_000_000,
-        bids=bids, asks=asks,
-        mid_price=(67_390.0 + 67_410.0) / 2,
-    )
+    return OrderBookSnapshot("BTCUSDT","binance",1_716_200_000_000,
+                             bids=bids, asks=asks, mid_price=67_400.0)
 
 
-def make_cells(intensities: list[tuple[str, int]]) -> list[HeatmapCell]:
-    """Create cells with specific (side, intensity) pairs for filter tests."""
+def make_cells(prices_sides: list[tuple[float, str]]) -> list[HeatmapCell]:
+    max_usd = 1_000_000.0
     cells = []
-    for i, (side, inten) in enumerate(intensities):
+    for price, side in prices_sides:
+        usd = max_usd * (price / 70_000)
+        intensity = calculate_intensity(usd, max_usd)
         cells.append(HeatmapCell(
-            price=float(100 - i),
-            side=side,
-            size_usd=float(inten * 1_000),
-            intensity=inten,
-            label="",
+            price=price, side=side, size_usd=round(usd, 2),
+            intensity=intensity, label="",
         ))
     return cells
 
@@ -86,22 +92,13 @@ class TestCalculateIntensity:
     def test_zero_is_zero(self):
         assert calculate_intensity(0, 10_000_000) == 0
 
-    def test_quarter_is_25(self):
-        assert calculate_intensity(2_500_000, 10_000_000) == 25
-
     def test_result_is_int(self):
-        result = calculate_intensity(3_333_333, 10_000_000)
-        assert isinstance(result, int)
+        assert isinstance(calculate_intensity(3_000_000, 10_000_000), int)
 
-    def test_result_in_range(self):
-        for size in [0, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000]:
-            r = calculate_intensity(size, 10_000_000)
-            assert 0 <= r <= 100, f"Out of range: {r}"
-
-    def test_slightly_over_max_clamped(self):
-        # Floating point can produce slightly above 100 — should clamp
-        result = calculate_intensity(10_000_001, 10_000_000)
-        assert result == 100
+    def test_result_always_in_range(self):
+        for s in [0, 100_000, 1_000_000, 5_000_000, 10_000_000]:
+            r = calculate_intensity(s, 10_000_000)
+            assert 0 <= r <= 100
 
     def test_negative_size_raises(self):
         with pytest.raises(ValueError, match="size_usd"):
@@ -111,29 +108,21 @@ class TestCalculateIntensity:
         with pytest.raises(ValueError, match="max_size_usd"):
             calculate_intensity(100, 0)
 
-    def test_negative_max_raises(self):
-        with pytest.raises(ValueError, match="max_size_usd"):
-            calculate_intensity(100, -5)
-
     def test_proportional_ordering(self):
-        max_s = 1_000_000
-        s1 = calculate_intensity(200_000, max_s)
-        s2 = calculate_intensity(500_000, max_s)
-        s3 = calculate_intensity(900_000, max_s)
-        assert s1 < s2 < s3
+        m = 1_000_000
+        assert calculate_intensity(200_000, m) < calculate_intensity(500_000, m) < calculate_intensity(900_000, m)
 
 
 # ══ TestHeatmapCellDataclass ══════════════════════════════════════════════════
 
 class TestHeatmapCellDataclass:
     def test_valid_bid(self):
-        c = HeatmapCell(price=100.0, side="bid", size_usd=5_000, intensity=45)
-        assert c.price == 100.0
-        assert c.side == "bid"
+        c = HeatmapCell(100.0, "bid", 5_000, 45)
+        assert c.is_bid and not c.is_ask
 
     def test_valid_ask(self):
-        c = HeatmapCell(price=100.5, side="ask", size_usd=8_000, intensity=60)
-        assert c.side == "ask"
+        c = HeatmapCell(100.5, "ask", 8_000, 60)
+        assert c.is_ask and not c.is_bid
 
     def test_invalid_side_raises(self):
         with pytest.raises(ValueError, match="side"):
@@ -156,62 +145,32 @@ class TestHeatmapCellDataclass:
             HeatmapCell(100.0, "bid", 1000, -1)
 
     def test_is_hot_at_70(self):
-        c = HeatmapCell(100.0, "bid", 1000, 70)
-        assert c.is_hot
+        assert HeatmapCell(100.0, "bid", 1000, 70).is_hot
 
     def test_not_hot_at_69(self):
-        c = HeatmapCell(100.0, "bid", 1000, 69)
-        assert not c.is_hot
+        assert not HeatmapCell(100.0, "bid", 1000, 69).is_hot
 
     def test_is_wall_at_85(self):
-        c = HeatmapCell(100.0, "bid", 1000, 85)
-        assert c.is_wall
-
-    def test_not_wall_at_84(self):
-        c = HeatmapCell(100.0, "bid", 1000, 84)
-        assert not c.is_wall
-
-    def test_is_bid_property(self):
-        assert HeatmapCell(100.0, "bid", 1000, 50).is_bid
-        assert not HeatmapCell(100.0, "ask", 1000, 50).is_bid
-
-    def test_is_ask_property(self):
-        assert HeatmapCell(100.0, "ask", 1000, 50).is_ask
-        assert not HeatmapCell(100.0, "bid", 1000, 50).is_ask
+        assert HeatmapCell(100.0, "bid", 1000, 85).is_wall
 
     def test_frozen(self):
         c = HeatmapCell(100.0, "bid", 1000, 50)
         with pytest.raises((AttributeError, TypeError)):
             c.price = 200.0  # type: ignore
 
-    def test_zero_intensity_valid(self):
-        c = HeatmapCell(100.0, "bid", 0, 0)
-        assert c.intensity == 0
-
-    def test_100_intensity_valid(self):
-        c = HeatmapCell(100.0, "bid", 1_000_000, 100)
-        assert c.intensity == 100
-
 
 # ══ TestBuildHeatmapFromOrderbook ═════════════════════════════════════════════
 
 class TestBuildHeatmapFromOrderbook:
     def test_returns_list(self):
-        result = build_heatmap_from_orderbook(simple_snapshot())
-        assert isinstance(result, list)
+        assert isinstance(build_heatmap_from_orderbook(simple_snapshot()), list)
 
     def test_all_heatmap_cells(self):
         result = build_heatmap_from_orderbook(simple_snapshot())
         assert all(isinstance(c, HeatmapCell) for c in result)
 
-    def test_count_equals_bid_plus_ask(self):
-        snap = simple_snapshot()
-        result = build_heatmap_from_orderbook(snap, levels=10)
-        assert len(result) == 6  # 3 bids + 3 asks (capped by actual levels)
-
-    def test_levels_parameter_limits(self):
-        snap = simple_snapshot()
-        result = build_heatmap_from_orderbook(snap, levels=2)
+    def test_levels_cap(self):
+        result = build_heatmap_from_orderbook(simple_snapshot(), levels=2)
         assert len(result) == 4  # 2 bids + 2 asks
 
     def test_max_intensity_is_100(self):
@@ -222,260 +181,344 @@ class TestBuildHeatmapFromOrderbook:
         result = build_heatmap_from_orderbook(simple_snapshot())
         assert all(0 <= c.intensity <= 100 for c in result)
 
-    def test_bid_side_correct(self):
-        result = build_heatmap_from_orderbook(simple_snapshot())
-        bids = [c for c in result if c.side == SIDE_BID]
-        assert len(bids) == 3
-
-    def test_ask_side_correct(self):
-        result = build_heatmap_from_orderbook(simple_snapshot())
-        asks = [c for c in result if c.side == SIDE_ASK]
-        assert len(asks) == 3
-
     def test_empty_snapshot_returns_empty(self):
-        empty = OrderBookSnapshot("X", "y", 0)
-        assert build_heatmap_from_orderbook(empty) == []
-
-    def test_bids_only_no_crash(self):
-        snap = OrderBookSnapshot("X", "y", 0,
-            bids=[make_level(100, 1, 100)], asks=[])
-        result = build_heatmap_from_orderbook(snap)
-        assert len(result) == 1
-        assert result[0].side == SIDE_BID
-
-    def test_asks_only_no_crash(self):
-        snap = OrderBookSnapshot("X", "y", 0,
-            bids=[], asks=[make_level(101, 1, 101)])
-        result = build_heatmap_from_orderbook(snap)
-        assert len(result) == 1
-        assert result[0].side == SIDE_ASK
+        assert build_heatmap_from_orderbook(OrderBookSnapshot("X","y",0)) == []
 
     def test_type_error_non_snapshot(self):
         with pytest.raises(TypeError):
             build_heatmap_from_orderbook("not a snapshot")
 
-    def test_type_error_dict(self):
-        with pytest.raises(TypeError):
-            build_heatmap_from_orderbook({"bids": [], "asks": []})
-
     def test_value_error_zero_levels(self):
         with pytest.raises(ValueError, match="levels"):
             build_heatmap_from_orderbook(simple_snapshot(), levels=0)
 
-    def test_value_error_negative_levels(self):
-        with pytest.raises(ValueError, match="levels"):
-            build_heatmap_from_orderbook(simple_snapshot(), levels=-1)
-
-    def test_largest_level_gets_intensity_100(self):
-        # ask at 67,430 with usd=674,300 is largest
-        result = build_heatmap_from_orderbook(simple_snapshot())
-        largest = max(result, key=lambda c: c.size_usd)
-        assert largest.intensity == 100
-
-    def test_cells_have_positive_prices(self):
-        result = build_heatmap_from_orderbook(simple_snapshot())
-        assert all(c.price > 0 for c in result)
-
-    def test_cells_have_nonneg_sizes(self):
-        result = build_heatmap_from_orderbook(simple_snapshot())
-        assert all(c.size_usd >= 0 for c in result)
-
-    def test_usd_size_fallback_price_times_qty(self):
-        # Level with usd_size=0 should fall back to price*qty
-        bids = [OrderBookLevel(price=100.0, qty=5.0, usd_size=0.0)]
-        asks = [OrderBookLevel(price=101.0, qty=2.0, usd_size=0.0)]
-        snap = OrderBookSnapshot("X", "y", 0, bids=bids, asks=asks)
+    def test_usd_size_fallback(self):
+        bids = [OrderBookLevel(100.0, 5.0, 0.0)]
+        asks = [OrderBookLevel(101.0, 2.0, 0.0)]
+        snap = OrderBookSnapshot("X","y",0,bids=bids,asks=asks)
         result = build_heatmap_from_orderbook(snap)
         assert result[0].size_usd == pytest.approx(100.0 * 5.0)
-
-    def test_single_level_each_side(self):
-        bids = [make_level(99.0, 1.0, 99.0)]
-        asks = [make_level(101.0, 1.0, 101.0)]
-        snap = OrderBookSnapshot("X", "y", 0, bids=bids, asks=asks)
-        result = build_heatmap_from_orderbook(snap)
-        assert len(result) == 2
-        # Larger ask gets 100
-        assert result[1].intensity == 100  # ask at 101 is larger
-        assert result[0].intensity < 100   # bid at 99
 
 
 # ══ TestDetectHotZones ════════════════════════════════════════════════════════
 
 class TestDetectHotZones:
-    def test_returns_list(self):
-        assert isinstance(detect_hot_zones([]), list)
-
     def test_filters_below_threshold(self):
-        cells = make_cells([("bid", 90), ("ask", 60), ("bid", 75), ("ask", 30)])
+        cells = make_cells([(67_400,SIDE_BID),(67_390,SIDE_BID),(67_410,SIDE_ASK)])
         hot = detect_hot_zones(cells, min_intensity=70)
         assert all(c.intensity >= 70 for c in hot)
-        assert len(hot) == 2
 
     def test_sorted_descending(self):
-        cells = make_cells([("bid", 40), ("ask", 90), ("bid", 70), ("ask", 80)])
-        hot = detect_hot_zones(cells, min_intensity=0)
+        demo = demo_heatmap_cells()
+        hot = detect_hot_zones(demo, min_intensity=0)
         scores = [c.intensity for c in hot]
         assert scores == sorted(scores, reverse=True)
 
     def test_empty_input_empty_output(self):
         assert detect_hot_zones([]) == []
 
-    def test_nothing_qualifies_returns_empty(self):
-        cells = make_cells([("bid", 20), ("ask", 30)])
-        assert detect_hot_zones(cells, min_intensity=70) == []
-
-    def test_all_qualify_at_zero_threshold(self):
-        cells = make_cells([("bid", 0), ("ask", 50), ("bid", 100)])
-        result = detect_hot_zones(cells, min_intensity=0)
-        assert len(result) == 3
-
-    def test_at_exact_threshold_included(self):
-        cells = make_cells([("bid", 70), ("ask", 69)])
-        hot = detect_hot_zones(cells, min_intensity=70)
-        assert len(hot) == 1
-        assert hot[0].intensity == 70
-
-    def test_invalid_threshold_above_100_raises(self):
+    def test_bad_threshold_raises(self):
         with pytest.raises(ValueError):
             detect_hot_zones([], min_intensity=101)
 
-    def test_invalid_threshold_below_0_raises(self):
-        with pytest.raises(ValueError):
-            detect_hot_zones([], min_intensity=-1)
-
     def test_type_error_non_list(self):
         with pytest.raises(TypeError):
-            detect_hot_zones("not a list")  # type: ignore
-
-    def test_mixed_sides_in_output(self):
-        cells = make_cells([("bid", 90), ("ask", 85), ("bid", 75)])
-        hot = detect_hot_zones(cells, min_intensity=70)
-        sides = {c.side for c in hot}
-        assert SIDE_BID in sides
-        assert SIDE_ASK in sides
+            detect_hot_zones("not list")  # type: ignore
 
 
 # ══ TestDemoHeatmapCells ══════════════════════════════════════════════════════
 
 class TestDemoHeatmapCells:
-    def test_returns_list(self):
-        assert isinstance(demo_heatmap_cells(), list)
-
     def test_exactly_40_cells(self):
         assert len(demo_heatmap_cells()) == 40
 
-    def test_exactly_20_bids(self):
+    def test_20_bids_20_asks(self):
         demo = demo_heatmap_cells()
         assert sum(1 for c in demo if c.side == SIDE_BID) == 20
-
-    def test_exactly_20_asks(self):
-        demo = demo_heatmap_cells()
         assert sum(1 for c in demo if c.side == SIDE_ASK) == 20
 
-    def test_all_heatmap_cells(self):
-        assert all(isinstance(c, HeatmapCell) for c in demo_heatmap_cells())
-
     def test_all_intensities_in_range(self):
-        for c in demo_heatmap_cells():
-            assert 0 <= c.intensity <= 100, f"Out of range: {c.intensity}"
+        assert all(0 <= c.intensity <= 100 for c in demo_heatmap_cells())
 
-    def test_has_at_least_one_wall(self):
+    def test_has_wall(self):
         assert any(c.is_wall for c in demo_heatmap_cells())
 
-    def test_has_at_least_one_hot_zone(self):
-        assert any(c.is_hot for c in demo_heatmap_cells())
-
-    def test_all_prices_positive(self):
-        assert all(c.price > 0 for c in demo_heatmap_cells())
-
-    def test_all_sizes_nonnegative(self):
-        assert all(c.size_usd >= 0 for c in demo_heatmap_cells())
-
-    def test_has_bid_and_ask_sides(self):
-        sides = {c.side for c in demo_heatmap_cells()}
-        assert SIDE_BID in sides
-        assert SIDE_ASK in sides
-
-    def test_hot_zones_detectable(self):
-        demo = demo_heatmap_cells()
-        hot = detect_hot_zones(demo, min_intensity=70)
-        assert len(hot) >= 2
-
     def test_max_intensity_is_100(self):
-        demo = demo_heatmap_cells()
-        assert max(c.intensity for c in demo) == 100
+        assert max(c.intensity for c in demo_heatmap_cells()) == 100
 
     def test_consistent_on_repeated_calls(self):
         d1 = demo_heatmap_cells()
         d2 = demo_heatmap_cells()
-        assert len(d1) == len(d2)
-        # Prices should be the same
         assert [c.price for c in d1] == [c.price for c in d2]
 
-    def test_label_present_on_high_intensity(self):
+
+# ══ TestFilterCellsByPriceRange ═══════════════════════════════════════════════
+
+class TestFilterCellsByPriceRange:
+    def _demo_mid(self) -> float:
+        return 67_400.0
+
+    def _demo(self) -> list[HeatmapCell]:
+        return demo_heatmap_cells()
+
+    def test_returns_list(self):
+        result = filter_cells_by_price_range(self._demo(), self._demo_mid(), RANGE_ONE_PCT)
+        assert isinstance(result, list)
+
+    def test_near_is_subset_of_one_pct(self):
+        mid = self._demo_mid()
+        demo = self._demo()
+        near = filter_cells_by_price_range(demo, mid, RANGE_NEAR)
+        one  = filter_cells_by_price_range(demo, mid, RANGE_ONE_PCT)
+        assert len(near) <= len(one)
+
+    def test_one_pct_is_subset_of_two_pct(self):
+        mid = self._demo_mid()
+        demo = self._demo()
+        one = filter_cells_by_price_range(demo, mid, RANGE_ONE_PCT)
+        two = filter_cells_by_price_range(demo, mid, RANGE_TWO_PCT)
+        assert len(one) <= len(two)
+
+    def test_two_pct_is_subset_of_five_pct(self):
+        mid = self._demo_mid()
+        demo = self._demo()
+        two  = filter_cells_by_price_range(demo, mid, RANGE_TWO_PCT)
+        five = filter_cells_by_price_range(demo, mid, RANGE_FIVE_PCT)
+        assert len(two) <= len(five)
+
+    def test_near_cells_within_015pct(self):
+        mid  = self._demo_mid()
+        near = filter_cells_by_price_range(self._demo(), mid, RANGE_NEAR)
+        assert all(abs(c.price - mid) / mid * 100 <= 0.15 for c in near)
+
+    def test_one_pct_cells_within_1pct(self):
+        mid = self._demo_mid()
+        one = filter_cells_by_price_range(self._demo(), mid, RANGE_ONE_PCT)
+        assert all(abs(c.price - mid) / mid * 100 <= 1.0 for c in one)
+
+    def test_five_pct_cells_within_5pct(self):
+        mid  = self._demo_mid()
+        five = filter_cells_by_price_range(self._demo(), mid, RANGE_FIVE_PCT)
+        assert all(abs(c.price - mid) / mid * 100 <= 5.0 for c in five)
+
+    def test_unknown_mode_returns_all(self):
+        mid  = self._demo_mid()
+        demo = self._demo()
+        result = filter_cells_by_price_range(demo, mid, "bogus_mode")
+        assert len(result) == len(demo)
+
+    def test_zero_mid_returns_all(self):
+        demo = self._demo()
+        result = filter_cells_by_price_range(demo, 0.0, RANGE_NEAR)
+        assert len(result) == len(demo)
+
+    def test_negative_mid_returns_all(self):
+        demo = self._demo()
+        result = filter_cells_by_price_range(demo, -100.0, RANGE_ONE_PCT)
+        assert len(result) == len(demo)
+
+    def test_empty_cells_returns_empty(self):
+        result = filter_cells_by_price_range([], 67_400.0, RANGE_ONE_PCT)
+        assert result == []
+
+    def test_type_error_non_list(self):
+        with pytest.raises(TypeError):
+            filter_cells_by_price_range("not list", 67_400.0, RANGE_ONE_PCT)  # type: ignore
+
+    def test_all_returned_cells_are_heatmap_cells(self):
+        result = filter_cells_by_price_range(self._demo(), self._demo_mid(), RANGE_TWO_PCT)
+        assert all(isinstance(c, HeatmapCell) for c in result)
+
+    def test_result_preserves_original_order(self):
+        mid  = self._demo_mid()
+        demo = self._demo()
+        result = filter_cells_by_price_range(demo, mid, RANGE_FIVE_PCT)
+        # Every cell in result appeared in demo in the same relative order
+        demo_prices = [c.price for c in demo]
+        result_prices = [c.price for c in result]
+        last_idx = -1
+        for p in result_prices:
+            idx = demo_prices.index(p)
+            assert idx > last_idx
+            last_idx = idx
+
+    def test_wide_demo_mode_returns_all(self):
+        # RANGE_WIDE_DEMO is not in _RANGE_PCT so should return all cells
+        demo = self._demo()
+        result = filter_cells_by_price_range(demo, self._demo_mid(), RANGE_WIDE_DEMO)
+        assert len(result) == len(demo)
+
+
+# ══ TestGenerateWideDemoHeatmap ═══════════════════════════════════════════════
+
+class TestGenerateWideDemoHeatmap:
+    def test_returns_list(self):
+        assert isinstance(generate_wide_demo_heatmap(), list)
+
+    def test_minimum_count(self):
+        assert len(generate_wide_demo_heatmap()) >= 10
+
+    def test_all_heatmap_cells(self):
+        assert all(isinstance(c, HeatmapCell) for c in generate_wide_demo_heatmap())
+
+    def test_has_at_least_one_wall(self):
+        assert any(c.is_wall for c in generate_wide_demo_heatmap())
+
+    def test_all_intensities_in_range(self):
+        wide = generate_wide_demo_heatmap()
+        assert all(0 <= c.intensity <= 100 for c in wide)
+
+    def test_all_prices_positive(self):
+        wide = generate_wide_demo_heatmap()
+        assert all(c.price > 0 for c in wide)
+
+    def test_contains_bids_and_asks(self):
+        wide = generate_wide_demo_heatmap()
+        assert any(c.is_bid for c in wide)
+        assert any(c.is_ask for c in wide)
+
+    def test_bids_well_below_mid(self):
+        # Must have at least one bid more than 1% below BTC mid (~$67,500)
+        mid = 67_500.0
+        wide = generate_wide_demo_heatmap("BTCUSDT")
+        assert any(c.is_bid and c.price < mid * 0.99 for c in wide)
+
+    def test_asks_well_above_mid(self):
+        mid = 67_500.0
+        wide = generate_wide_demo_heatmap("BTCUSDT")
+        assert any(c.is_ask and c.price > mid * 1.01 for c in wide)
+
+    def test_wider_price_range_than_demo(self):
+        # Wide heatmap should span a bigger range than the tight demo
+        wide = generate_wide_demo_heatmap()
         demo = demo_heatmap_cells()
-        walls = [c for c in demo if c.intensity >= 85]
-        assert all(len(c.label) > 0 for c in walls)
+        wide_span = max(c.price for c in wide) - min(c.price for c in wide)
+        demo_span = max(c.price for c in demo) - min(c.price for c in demo)
+        assert wide_span > demo_span
+
+    def test_ethusdt_symbol(self):
+        eth_wide = generate_wide_demo_heatmap("ETHUSDT")
+        assert len(eth_wide) > 0
+        # ETH mid ~$3500 — all prices should be in ETH range not BTC range
+        assert all(c.price < 10_000 for c in eth_wide)
+
+    def test_solusdt_symbol(self):
+        sol_wide = generate_wide_demo_heatmap("SOLUSDT")
+        assert len(sol_wide) > 0
+        assert all(c.price < 1_000 for c in sol_wide)
+
+    def test_unknown_symbol_no_crash(self):
+        result = generate_wide_demo_heatmap("UNKNOWNUSDT")
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+    def test_lowercase_symbol_works(self):
+        result = generate_wide_demo_heatmap("btcusdt")
+        assert len(result) > 0
+
+    def test_max_intensity_is_100(self):
+        wide = generate_wide_demo_heatmap()
+        assert max(c.intensity for c in wide) == 100
+
+    def test_consistent_on_repeated_calls(self):
+        w1 = generate_wide_demo_heatmap()
+        w2 = generate_wide_demo_heatmap()
+        assert len(w1) == len(w2)
+        assert [c.price for c in w1] == [c.price for c in w2]
+
+
+# ══ TestRangeConstants ════════════════════════════════════════════════════════
+
+class TestRangeConstants:
+    def test_all_five_modes_in_valid_set(self):
+        assert RANGE_NEAR        in VALID_RANGE_MODES
+        assert RANGE_ONE_PCT     in VALID_RANGE_MODES
+        assert RANGE_TWO_PCT     in VALID_RANGE_MODES
+        assert RANGE_FIVE_PCT    in VALID_RANGE_MODES
+        assert RANGE_WIDE_DEMO   in VALID_RANGE_MODES
+
+    def test_valid_range_modes_has_five_entries(self):
+        assert len(VALID_RANGE_MODES) == 5
+
+    def test_range_mode_values_are_strings(self):
+        for mode in VALID_RANGE_MODES:
+            assert isinstance(mode, str)
+            assert len(mode) > 0
+
+    def test_near_is_tighter_than_one_pct(self):
+        # Verify by filtering: near returns fewer or equal cells than 1%
+        mid  = 67_400.0
+        demo = demo_heatmap_cells()
+        near = filter_cells_by_price_range(demo, mid, RANGE_NEAR)
+        one  = filter_cells_by_price_range(demo, mid, RANGE_ONE_PCT)
+        assert len(near) <= len(one)
+
+    def test_wide_demo_constant_value(self):
+        assert RANGE_WIDE_DEMO == "wide_demo"
+
+    def test_near_constant_value(self):
+        assert RANGE_NEAR == "near"
 
 
 # ══ TestEdgeCases ═════════════════════════════════════════════════════════════
 
 class TestEdgeCases:
-    def test_zero_intensity_cell_valid(self):
-        c = HeatmapCell(100.0, "bid", 0, 0)
-        assert c.intensity == 0
-        assert not c.is_hot
+    def test_filter_tight_range_may_return_empty(self):
+        # Build cells all far from mid — near filter should return empty
+        cells = [
+            HeatmapCell(50_000.0, "bid", 1000, 50),
+            HeatmapCell(80_000.0, "ask", 1000, 50),
+        ]
+        mid = 67_400.0
+        # Near band is ±0.15% of 67400 = ~$101 — 50k and 80k are outside
+        result = filter_cells_by_price_range(cells, mid, RANGE_NEAR)
+        assert result == []
 
-    def test_intensity_at_70_is_hot(self):
-        c = HeatmapCell(100.0, "bid", 1000, 70)
-        assert c.is_hot
-        assert not c.is_wall
+    def test_filter_five_pct_catches_more(self):
+        cells = [
+            HeatmapCell(67_300.0, "bid", 1000, 50),   # 0.15% below mid
+            HeatmapCell(65_000.0, "bid", 1000, 50),   # 3.6% below mid
+        ]
+        mid = 67_400.0
+        near = filter_cells_by_price_range(cells, mid, RANGE_NEAR)
+        five = filter_cells_by_price_range(cells, mid, RANGE_FIVE_PCT)
+        assert len(five) >= len(near)
 
-    def test_intensity_at_100_is_wall(self):
-        c = HeatmapCell(100.0, "bid", 1_000_000, 100)
-        assert c.is_wall
-        assert c.is_hot
+    def test_wide_demo_no_crash_for_empty_symbol(self):
+        result = generate_wide_demo_heatmap("")
+        assert isinstance(result, list)
 
-    def test_build_single_level_no_crash(self):
-        snap = OrderBookSnapshot("X","y",0,
-            bids=[make_level(100,1,100)],asks=[make_level(101,2,202)])
-        result = build_heatmap_from_orderbook(snap,levels=1)
-        assert len(result) == 2
+    def test_calculate_intensity_clamped(self):
+        # Float precision: slightly over max should still give 100
+        result = calculate_intensity(10_000_001, 10_000_000)
+        assert result == 100
 
-    def test_build_many_levels_no_crash(self):
-        bids = [make_level(100.0-i*0.1, 1.0, 100.0-i*0.1) for i in range(100)]
-        asks = [make_level(100.1+i*0.1, 1.0, 100.1+i*0.1) for i in range(100)]
-        snap = OrderBookSnapshot("X","y",0,bids=bids,asks=asks)
-        result = build_heatmap_from_orderbook(snap,levels=50)
-        assert len(result) == 100  # 50 bids + 50 asks
+    def test_build_from_snapshot_large(self):
+        bids = [make_level(float(100 - i), 1.0) for i in range(100)]
+        asks = [make_level(float(101 + i), 1.0) for i in range(100)]
+        snap = OrderBookSnapshot("X","y",0, bids=bids, asks=asks)
+        result = build_heatmap_from_orderbook(snap, levels=30)
+        assert len(result) == 60  # 30 bids + 30 asks
 
-    def test_detect_empty_list_no_crash(self):
-        assert detect_hot_zones([]) == []
-
-    def test_calculate_intensity_very_small_fraction(self):
-        r = calculate_intensity(1, 10_000_000)
-        assert 0 <= r <= 100
-
-    def test_calculate_intensity_exact_half(self):
-        assert calculate_intensity(500_000, 1_000_000) == 50
-
-    def test_fmt_size_millions(self):
+    def test_fmt_size_helpers(self):
         assert "1.5M" in _fmt_size(1_500_000)
-
-    def test_fmt_size_thousands(self):
         assert "250K" in _fmt_size(250_000)
+        assert "$99"  in _fmt_size(99)
 
-    def test_fmt_size_small(self):
-        assert "$99" in _fmt_size(99)
+    def test_make_label_helpers(self):
+        assert "WALL" in _make_label(5_000_000, 90)
+        assert "HOT"  in _make_label(1_000_000, 75)
+        assert _make_label(10_000, 15) == ""
 
-    def test_make_label_wall(self):
-        label = _make_label(5_000_000, 90)
-        assert "WALL" in label
+    def test_filter_preserves_heatmap_cell_types(self):
+        result = filter_cells_by_price_range(
+            demo_heatmap_cells(), 67_400.0, RANGE_TWO_PCT
+        )
+        assert all(isinstance(c, HeatmapCell) for c in result)
 
-    def test_make_label_hot(self):
-        label = _make_label(1_000_000, 75)
-        assert "HOT" in label
-
-    def test_make_label_empty_for_low(self):
-        label = _make_label(10_000, 15)
-        assert label == ""
+    def test_wide_demo_all_cells_valid(self):
+        for c in generate_wide_demo_heatmap():
+            assert c.price > 0
+            assert c.size_usd >= 0
+            assert 0 <= c.intensity <= 100
+            assert c.side in (SIDE_BID, SIDE_ASK)

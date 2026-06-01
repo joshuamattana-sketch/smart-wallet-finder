@@ -334,6 +334,157 @@ def demo_heatmap_cells() -> list[HeatmapCell]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
+# ── Range modes ───────────────────────────────────────────────────────────────
+
+RANGE_NEAR        = "near"          # ±0.15% of mid — tightest view
+RANGE_ONE_PCT     = "one_percent"   # ±1% of mid
+RANGE_TWO_PCT     = "two_percent"   # ±2% of mid
+RANGE_FIVE_PCT    = "five_percent"  # ±5% of mid
+RANGE_WIDE_DEMO   = "wide_demo"     # full wide demo — pre-built multi-wall map
+
+VALID_RANGE_MODES: frozenset[str] = frozenset({
+    RANGE_NEAR,
+    RANGE_ONE_PCT,
+    RANGE_TWO_PCT,
+    RANGE_FIVE_PCT,
+    RANGE_WIDE_DEMO,
+})
+
+_RANGE_PCT: dict[str, float] = {
+    RANGE_NEAR:      0.15,
+    RANGE_ONE_PCT:   1.0,
+    RANGE_TWO_PCT:   2.0,
+    RANGE_FIVE_PCT:  5.0,
+}
+
+
+def filter_cells_by_price_range(
+    cells: list[HeatmapCell],
+    mid_price: float,
+    range_mode: str = RANGE_ONE_PCT,
+) -> list[HeatmapCell]:
+    """
+    Return only the cells whose price falls within the selected range of mid.
+
+    Args:
+        cells:      List of HeatmapCell objects.
+        mid_price:  Reference mid price. Must be > 0.
+        range_mode: One of VALID_RANGE_MODES (except RANGE_WIDE_DEMO, which
+                    has its own generator). Unknown modes return all cells.
+
+    Returns:
+        Filtered list, preserving original order.
+        Returns all cells if mid_price <= 0 or range_mode unknown.
+
+    Raises:
+        TypeError: if cells is not a list.
+
+    Examples:
+        >>> cells = demo_heatmap_cells()
+        >>> mid = 67_400.0
+        >>> near = filter_cells_by_price_range(cells, mid, RANGE_NEAR)
+        >>> all(abs(c.price - mid) / mid * 100 <= 0.15 for c in near)
+        True
+    """
+    if not isinstance(cells, list):
+        raise TypeError(f"cells must be a list, got {type(cells).__name__}")
+
+    if mid_price <= 0 or range_mode not in _RANGE_PCT:
+        return cells  # safe fallback — return everything
+
+    pct_band = _RANGE_PCT[range_mode]
+    band_abs = mid_price * (pct_band / 100.0)
+
+    return [c for c in cells if abs(c.price - mid_price) <= band_abs]
+
+
+def generate_wide_demo_heatmap(symbol: str = "BTCUSDT") -> list[HeatmapCell]:
+    """
+    Generate a wide-range demo heatmap with walls at realistic structural levels.
+
+    Simulates a BTC-like price map covering levels from ~$63k to ~$80k,
+    placing major walls at round-number and technically significant prices.
+    Useful for showing how large-scale orderbook structure looks across
+    a broader price range.
+
+    For non-BTC symbols a scaled version is produced using approximate
+    mid prices (ETH ≈ $3,500, SOL ≈ $175, others ≈ $100).
+
+    Args:
+        symbol: Trading symbol. Default "BTCUSDT". Case-insensitive prefix match.
+
+    Returns:
+        List of HeatmapCell objects sorted by price ascending.
+        Never raises.
+    """
+    _sym = symbol.upper()
+
+    # Approximate mid prices per symbol
+    _mids: dict[str, float] = {
+        "BTC": 67_500.0,
+        "ETH": 3_500.0,
+        "SOL": 175.0,
+    }
+    _prefix = next((k for k in _mids if _sym.startswith(k)), None)
+    mid = _mids.get(_prefix, 100.0)
+
+    # Structural levels as % offsets from mid, each with a USD wall size
+    # Positive = above mid (ask side), negative = below mid (bid side)
+    _structure: list[tuple[float, float]] = [
+        # bids (support)
+        (-0.05,   180_000),   # tight bid just below
+        (-0.15,   320_000),
+        (-0.30,   4_800_000), # strong support wall
+        (-0.50,   240_000),
+        (-0.80,   150_000),
+        (-1.00, 1_200_000),   # psychological round level
+        (-1.50,    90_000),
+        (-2.00,   220_000),
+        (-3.00, 2_500_000),   # major support
+        (-4.00,   180_000),
+        (-5.00, 6_800_000),   # key structure wall (e.g. prior ATH)
+        (-7.50,   140_000),
+        # asks (resistance)
+        ( 0.05,   160_000),   # tight ask just above
+        ( 0.15,   300_000),
+        ( 0.30, 5_200_000),   # strong resistance wall
+        ( 0.50,   220_000),
+        ( 0.80,   130_000),
+        ( 1.00, 1_500_000),   # round-number resistance
+        ( 1.50,    80_000),
+        ( 2.00,   190_000),
+        ( 3.00, 3_100_000),   # major resistance
+        ( 4.50,   160_000),
+        ( 5.00, 4_400_000),   # key structure wall
+        ( 8.00,   120_000),
+        (10.00, 7_500_000),   # extreme resistance / all-time-high zone
+    ]
+
+    if not _structure:
+        return []
+
+    max_size = max(size for _, size in _structure)
+    if max_size <= 0:
+        return []
+
+    cells: list[HeatmapCell] = []
+    for pct_offset, size in _structure:
+        price = round(mid * (1 + pct_offset / 100), 2)
+        side  = SIDE_BID if pct_offset < 0 else SIDE_ASK
+        intensity = calculate_intensity(size, max_size)
+        label = _make_label(size, intensity)
+        try:
+            cells.append(HeatmapCell(
+                price=price, side=side,
+                size_usd=size, intensity=intensity, label=label,
+            ))
+        except ValueError:
+            continue  # skip any degenerate cell silently
+
+    cells.sort(key=lambda c: c.price, reverse=(False))
+    return cells
+
 def _make_label(size_usd: float, intensity: int) -> str:
     """Generate a compact label for a heatmap cell."""
     size_str = _fmt_size(size_usd)
@@ -466,5 +617,46 @@ if __name__ == "__main__":
     assert any(c.is_wall for c in demo)
     hot = detect_hot_zones(demo, min_intensity=70)
     assert len(hot) >= 2
+
+
+    # filter_cells_by_price_range
+    demo = demo_heatmap_cells()
+    mid = 67_400.0
+    near = filter_cells_by_price_range(demo, mid, RANGE_NEAR)
+    assert isinstance(near, list)
+    assert all(abs(c.price - mid) / mid * 100 <= 0.15 for c in near)
+    one_pct = filter_cells_by_price_range(demo, mid, RANGE_ONE_PCT)
+    assert len(one_pct) >= len(near)  # wider band = more cells
+    # unknown mode returns all
+    all_back = filter_cells_by_price_range(demo, mid, "unknown_mode")
+    assert len(all_back) == len(demo)
+    # mid<=0 returns all
+    all_zero = filter_cells_by_price_range(demo, 0, RANGE_NEAR)
+    assert len(all_zero) == len(demo)
+    # type error
+    try: filter_cells_by_price_range("not list", mid, RANGE_NEAR); assert False
+    except TypeError: pass
+
+    # generate_wide_demo_heatmap
+    wide = generate_wide_demo_heatmap("BTCUSDT")
+    assert isinstance(wide, list)
+    assert len(wide) >= 10
+    assert all(isinstance(c, HeatmapCell) for c in wide)
+    assert any(c.intensity >= 85 for c in wide)  # has at least one wall
+    prices = [c.price for c in wide]
+    # wide range: some bids below mid, some asks above
+    mid_price = 67_500.0
+    assert any(c.price < mid_price * 0.99 for c in wide)  # bids well below mid
+    assert any(c.price > mid_price * 1.01 for c in wide)  # asks well above mid
+    # Works for other symbols
+    eth_wide = generate_wide_demo_heatmap("ETHUSDT")
+    assert len(eth_wide) > 0
+    unknown_wide = generate_wide_demo_heatmap("UNKNOWNUSDT")
+    assert len(unknown_wide) > 0
+
+    # RANGE constants are strings
+    assert RANGE_NEAR == "near"
+    assert RANGE_WIDE_DEMO == "wide_demo"
+    assert len(VALID_RANGE_MODES) == 5
 
     print("services/heatmap_engine.py — all assertions passed.")

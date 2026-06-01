@@ -1,16 +1,16 @@
 """
 ui/pro_heatmap.py
 ------------------
-Pro Liquidity Wall Map page for the Pro Trading Terminal.
+Pro Liquidity Wall Map page with range controls.
 
-Renders a Bookmap-style liquidity heatmap using demo snapshot data.
-WebSocket-driven live orderbook history is planned for a future patch.
+Renders a Bookmap-style liquidity heatmap with user-selectable
+price range and symbol. Demo/snapshot data only — live WebSocket
+orderbook history is planned for a future patch.
 
 Rules:
-- No API calls.
-- No WebSockets (planned for later).
-- No Streamlit-incompatible external libraries.
-- Falls back gracefully if heatmap engine is unavailable.
+- No API calls. No WebSockets.
+- Falls back gracefully if engine not deployed.
+- Existing demo heatmap continues to work at all range settings.
 """
 
 from __future__ import annotations
@@ -20,36 +20,87 @@ import streamlit as st
 # ── Guarded imports ───────────────────────────────────────────────────────────
 try:
     from services.heatmap_engine import (
+        RANGE_FIVE_PCT,
+        RANGE_NEAR,
+        RANGE_ONE_PCT,
+        RANGE_TWO_PCT,
+        RANGE_WIDE_DEMO,
         demo_heatmap_cells,
         detect_hot_zones,
+        filter_cells_by_price_range,
+        generate_wide_demo_heatmap,
     )
     from ui.components.liquidity_heatmap_panel import render_liquidity_heatmap
     _ENGINE_AVAILABLE = True
 except Exception:
     _ENGINE_AVAILABLE = False
-    def demo_heatmap_cells(): return []          # type: ignore[misc]
-    def detect_hot_zones(c, **kw): return []     # type: ignore[misc]
-    def render_liquidity_heatmap(c, **kw): pass  # type: ignore[misc]
+    RANGE_NEAR      = "near"
+    RANGE_ONE_PCT   = "one_percent"
+    RANGE_TWO_PCT   = "two_percent"
+    RANGE_FIVE_PCT  = "five_percent"
+    RANGE_WIDE_DEMO = "wide_demo"
+    def demo_heatmap_cells(): return []             # type: ignore[misc]
+    def detect_hot_zones(c, **kw): return []        # type: ignore[misc]
+    def filter_cells_by_price_range(c, m, r): return c  # type: ignore[misc]
+    def generate_wide_demo_heatmap(s="BTCUSDT"): return []  # type: ignore[misc]
+    def render_liquidity_heatmap(c, **kw): pass     # type: ignore[misc]
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+_RANGE_OPTIONS: list[tuple[str, str]] = [
+    (RANGE_NEAR,      "Near price  (±0.15%)"),
+    (RANGE_ONE_PCT,   "1%  (±1%)"),
+    (RANGE_TWO_PCT,   "2%  (±2%)"),
+    (RANGE_FIVE_PCT,  "5%  (±5%)"),
+    (RANGE_WIDE_DEMO, "Wide demo   (multi-wall)"),
+]
+_RANGE_KEYS   = [r[0] for r in _RANGE_OPTIONS]
+_RANGE_LABELS = [r[1] for r in _RANGE_OPTIONS]
+
+# Approximate demo mid prices (matches heatmap_engine internals)
+_DEMO_MIDS: dict[str, float] = {
+    "BTCUSDT": 67_400.0,
+    "ETHUSDT":  3_500.0,
+    "SOLUSDT":    175.0,
+}
 
 _CSS = """<style>
-.ph-title { font-size:26px; font-weight:700; color:#f5f5f7; padding:24px 0 2px; letter-spacing:-.01em; }
+.ph-title { font-size:26px; font-weight:700; color:#f5f5f7;
+            padding:24px 0 2px; letter-spacing:-.01em; }
 .ph-sub   { font-size:14px; color:#5a5b62; margin-bottom:20px; }
-.ph-info  { background:#1a1b1f; border:1px solid #2a2b30; border-radius:12px;
-            padding:12px 16px; font-size:12px; color:#5a5b62; margin-top:16px; }
+.ph-mode-row { display:flex; align-items:center; gap:10px;
+               margin-bottom:12px; flex-wrap:wrap; }
+.ph-badge {
+    display:inline-block; padding:3px 10px; border-radius:8px;
+    font-size:11px; font-weight:700;
+}
+.ph-badge.demo  { background:rgba(251,191,36,.10); color:#fbbf24;
+                  border:1px solid rgba(251,191,36,.25); }
+.ph-badge.live  { background:rgba(34,197,94,.10);  color:#4ade80;
+                  border:1px solid rgba(34,197,94,.25); }
+.ph-badge.wide  { background:rgba(124,92,252,.10); color:#a78bfa;
+                  border:1px solid rgba(124,92,252,.25); }
+.ph-info {
+    background:#1a1b1f; border:1px solid #2a2b30; border-radius:12px;
+    padding:12px 16px; font-size:12px; color:#5a5b62; margin-top:16px;
+}
 .ph-info b { color:#a78bfa; }
-.ph-badge { display:inline-block; padding:3px 10px; border-radius:8px; font-size:11px;
-            font-weight:700; background:rgba(251,191,36,.10); color:#fbbf24;
-            border:1px solid rgba(251,191,36,.25); margin-right:8px; }
 </style>"""
 
 
 def render_pro_heatmap() -> None:
     """
-    Render the Pro Liquidity Wall Map page.
+    Render the Pro Liquidity Wall Map page with range controls.
 
-    Uses demo_heatmap_cells() as the data source until live WebSocket
-    orderbook history is available. Symbol selector and refresh button
-    are present as placeholders for future live connectivity.
+    Controls:
+      Symbol   — BTCUSDT / ETHUSDT / SOLUSDT
+      Range    — Near price / 1% / 2% / 5% / Wide demo
+
+    Data flow:
+      Wide demo  → generate_wide_demo_heatmap(symbol)
+      All others → demo_heatmap_cells() filtered by filter_cells_by_price_range()
     """
     st.markdown(_CSS, unsafe_allow_html=True)
     st.markdown('<div class="ph-title">Liquidity Wall Map</div>', unsafe_allow_html=True)
@@ -69,68 +120,108 @@ def render_pro_heatmap() -> None:
         )
         return
 
-    # ── Toolbar (placeholder for future live symbol selector) ─────────────────
-    _col_sym, _col_ref, _col_mode, _col_spacer = st.columns([0.22, 0.13, 0.30, 0.35])
+    # ── Toolbar ───────────────────────────────────────────────────────────────
+    _c1, _c2, _c3, _c_sp = st.columns([0.20, 0.25, 0.15, 0.40])
 
-    with _col_sym:
+    with _c1:
         _symbol = st.selectbox(
             "Symbol",
-            options=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            options=_SYMBOLS,
             index=0,
             key="_ph_symbol",
             label_visibility="collapsed",
         )
 
-    with _col_ref:
-        _refresh = st.button(
-            "Refresh",
-            key="_ph_refresh",
-            use_container_width=True,
-            type="primary",
+    with _c2:
+        _range_label = st.selectbox(
+            "Range",
+            options=_RANGE_LABELS,
+            index=1,   # default: 1%
+            key="_ph_range",
+            label_visibility="collapsed",
         )
 
-    with _col_mode:
-        st.markdown(
-            '<div style="padding-top:6px">'
-            '<span class="ph-badge">DEMO</span>'
-            '<span style="font-size:11px;color:#3a3b42">Live WebSocket — coming soon</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+    with _c3:
+        st.button("Refresh", key="_ph_refresh",
+                  use_container_width=True, type="primary")
 
-    # ── Heatmap ───────────────────────────────────────────────────────────────
+    _range_mode = _RANGE_KEYS[_RANGE_LABELS.index(_range_label)]
+    _mid        = _DEMO_MIDS.get(_symbol, 67_400.0)
+
+    # ── Build cells ───────────────────────────────────────────────────────────
+    _heatmap_mode = "demo"
+    _cells: list = []
+
     try:
-        cells = demo_heatmap_cells()
-    except Exception as exc:
-        st.error(f"Could not generate heatmap data: {exc}")
-        return
+        if _range_mode == RANGE_WIDE_DEMO:
+            _cells        = generate_wide_demo_heatmap(_symbol)
+            _heatmap_mode = "wide"
+        else:
+            _all_cells = demo_heatmap_cells()
+            _cells     = filter_cells_by_price_range(_all_cells, _mid, _range_mode)
+            if not _cells:
+                _cells = _all_cells   # fallback: show everything if filter is too tight
+    except Exception as _exc:
+        st.warning(f"Heatmap build error: {_exc}")
+        try:
+            _cells = demo_heatmap_cells()
+        except Exception:
+            pass
 
-    if not cells:
-        st.info("No heatmap data available.")
-        return
+    # ── Mode badge ────────────────────────────────────────────────────────────
+    _badge_cls  = {"demo": "demo", "wide": "wide"}.get(_heatmap_mode, "demo")
+    _badge_text = {
+        "demo": "DEMO",
+        "wide": "WIDE DEMO",
+    }.get(_heatmap_mode, "DEMO")
+    _range_desc = {
+        RANGE_NEAR:     "Near price ±0.15%",
+        RANGE_ONE_PCT:  "1% range",
+        RANGE_TWO_PCT:  "2% range",
+        RANGE_FIVE_PCT: "5% range",
+        RANGE_WIDE_DEMO:"Wide multi-wall demo",
+    }.get(_range_mode, _range_mode)
 
-    render_liquidity_heatmap(
-        cells,
-        title=f"Liquidity Wall Map — {_symbol} (Demo)",
-        hot_zone_threshold=70,
-        show_hot_zones=True,
-        max_rows=20,
+    st.markdown(
+        f'<div class="ph-mode-row">'
+        f'<span class="ph-badge {_badge_cls}">{_badge_text}</span>'
+        f'<span style="font-size:12px;color:#5a5b62">'
+        f'{_symbol} &nbsp;&middot;&nbsp; {_range_desc}'
+        f' &nbsp;&middot;&nbsp; {len(_cells)} levels'
+        f'</span>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
 
-    # ── Info footer ───────────────────────────────────────────────────────────
-    hot_count  = sum(1 for c in cells if c.intensity >= 70)
-    wall_count = sum(1 for c in cells if c.intensity >= 85)
-    bid_depth  = sum(c.size_usd for c in cells if c.is_bid)
-    ask_depth  = sum(c.size_usd for c in cells if c.is_ask)
+    # ── Render heatmap ────────────────────────────────────────────────────────
+    if not _cells:
+        st.info("No levels match the selected range. Try a wider range.")
+        return
+
+    _map_title = f"Liquidity Wall Map — {_symbol} ({_range_desc})"
+    render_liquidity_heatmap(
+        _cells,
+        title=_map_title,
+        hot_zone_threshold=70,
+        show_hot_zones=True,
+        max_rows=25 if _range_mode == RANGE_WIDE_DEMO else 20,
+    )
+
+    # ── Footer stats ──────────────────────────────────────────────────────────
+    _hot_count  = sum(1 for c in _cells if c.intensity >= 70)
+    _wall_count = sum(1 for c in _cells if c.intensity >= 85)
+    _bid_depth  = sum(c.size_usd for c in _cells if c.is_bid)
+    _ask_depth  = sum(c.size_usd for c in _cells if c.is_ask)
 
     st.markdown(
         f'<div class="ph-info">'
-        f'<b>Mode: Demo heatmap</b> &nbsp;&middot;&nbsp; '
-        f'{len(cells)} price levels &nbsp;&middot;&nbsp; '
-        f'{hot_count} hot zones &nbsp;&middot;&nbsp; '
-        f'{wall_count} walls detected<br>'
-        f'Bid depth: <b>${bid_depth/1e6:.1f}M</b> &nbsp;|&nbsp; '
-        f'Ask depth: <b>${ask_depth/1e6:.1f}M</b><br>'
+        f'<b>Mode: {_badge_text}</b> &nbsp;&middot;&nbsp; '
+        f'{len(_cells)} levels shown &nbsp;&middot;&nbsp; '
+        f'{_hot_count} hot zones &nbsp;&middot;&nbsp; '
+        f'{_wall_count} walls detected<br>'
+        f'Bid depth: <b>${_bid_depth/1_000_000:.1f}M</b>'
+        f' &nbsp;|&nbsp; '
+        f'Ask depth: <b>${_ask_depth/1_000_000:.1f}M</b><br>'
         f'<span style="color:#3a3b42;font-size:11px">'
         f'Future: live WebSocket orderbook history with time-axis replay.'
         f'</span>'
