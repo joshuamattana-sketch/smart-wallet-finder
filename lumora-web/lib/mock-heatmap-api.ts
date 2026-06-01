@@ -2,56 +2,22 @@
 // Synthetic heatmap payload — no network calls, no database.
 // Shape mirrors services/heatmap_api_payload.py build_heatmap_api_payload output.
 
-export interface HeatmapCell {
-  p: number;  // price-axis index
-  t: number;  // time-axis index
-  bid: number;
-  ask: number;
-  total: number;
-}
+export type {
+  HeatmapCell,
+  HeatmapWall,
+  HeatmapSummary,
+  HeatmapMeta,
+  HeatmapApiPayload,
+  HeatmapApiError,
+  HeatmapTimeframe,
+} from "@/lib/heatmap-types";
 
-export interface HeatmapWall {
-  price_bucket: number;
-  side: "bid" | "ask" | "mixed";
-  total_usd: number;
-  intensity: number;
-  label: string;
-}
-
-export interface HeatmapSummary {
-  symbol: string;
-  frame_count: number;
-  price_min: number;
-  price_max: number;
-  time_start: string;
-  time_end: string;
-  max_bid_intensity: number;
-  max_ask_intensity: number;
-  max_total_intensity: number;
-  wall_count: number;
-}
-
-export interface HeatmapMeta {
-  schemaVersion: string;
-  generatedAt: string;
-  cellCount: number;
-  wallCount: number;
-  isDemo: boolean;
-}
-
-export interface HeatmapApiPayload {
-  symbol: string;
-  exchange: string;
-  timeframe: string;
-  priceMin: number;
-  priceMax: number;
-  priceStep: number;
-  timeBuckets: string[];
-  cells: HeatmapCell[];
-  walls: HeatmapWall[];
-  summary: HeatmapSummary;
-  meta: HeatmapMeta;
-}
+import type {
+  HeatmapCell,
+  HeatmapWall,
+  HeatmapSummary,
+  HeatmapApiPayload,
+} from "@/lib/heatmap-types";
 
 // ── Synthetic data generation ─────────────────────────────────────────────────
 

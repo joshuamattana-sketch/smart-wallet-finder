@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
-import type { HeatmapApiPayload } from "@/lib/mock-heatmap-api";
+import type { HeatmapApiPayload } from "@/lib/heatmap-types";
 
 // ── Layout constants ───────────────────────────────────────────────────────────
 const CHART_H   = 560;
