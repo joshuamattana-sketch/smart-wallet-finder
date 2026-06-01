@@ -4,13 +4,20 @@ ui/pro_terminal.py
 Pro Trading Terminal — main Streamlit page.
 
 Fetches live Binance orderbook data, runs analysis via orderbook_engine,
-and renders the result via the orderbook panel component.
+and renders the result via the orderbook panel and liquidity heatmap.
+
+Refresh modes:
+  Manual   — user clicks the Refresh button (always available)
+  Auto     — optional via streamlit-autorefresh (5s / 10s / 30s intervals)
+             Falls back gracefully to manual-only if not installed.
 
 Rules:
 - No business logic here — only Streamlit orchestration.
 - All errors surface as user-visible warnings, never uncaught exceptions.
-- No WebSockets. Manual Refresh button only — no autorefresh.
-- Reads st.session_state["pro_selected_symbol"] set by Pro Dashboard.
+- No WebSockets.
+- st_autorefresh is called as the FIRST widget call when active — this
+  prevents widget tree corruption after re-runs (root cause of Patch F bug).
+- Symbol selection and heatmap are preserved across every refresh.
 """
 
 from __future__ import annotations
@@ -49,23 +56,42 @@ except Exception:
     def _demo_heatmap_cells(): return []
     def _render_liquidity_heatmap(cells, **kw): pass
 
+# Optional autorefresh — must be imported at module level
+try:
+    from streamlit_autorefresh import st_autorefresh as _st_autorefresh
+    _AUTOREFRESH_AVAILABLE = True
+except ImportError:
+    _AUTOREFRESH_AVAILABLE = False
+    def _st_autorefresh(interval: int, key: str = "") -> int:
+        return 0
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# Live Binance-supported symbols shown in the selector
-_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-
-# HYPE is listed on Hyperliquid, not Binance — shown with a note if selected
+_SYMBOLS         = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 _BINANCE_SYMBOLS = set(_SYMBOLS)
-_HYPE_NOTE = "HYPEUSDT is traded on Hyperliquid, not Binance. Showing BTCUSDT instead."
+_DEPTH_LIMIT     = 20
+_HYPE_NOTE       = (
+    "HYPEUSDT is traded on Hyperliquid, not Binance. Showing BTCUSDT instead."
+)
 
-_DEPTH_LIMIT       = 20
-_STATE_KEY_SNAP    = "_pro_ob_snapshot"
-_STATE_KEY_METRICS = "_pro_ob_metrics"
-_STATE_KEY_ERROR   = "_pro_ob_error"
-_STATE_KEY_TS      = "_pro_ob_fetched_at"
-_STATE_KEY_SYMBOL  = "_pro_ob_symbol"
-_STATE_KEY_DEMO    = "_pro_ob_demo_mode"
+_STATE_KEY_SNAP     = "_pro_ob_snapshot"
+_STATE_KEY_METRICS  = "_pro_ob_metrics"
+_STATE_KEY_ERROR    = "_pro_ob_error"
+_STATE_KEY_TS       = "_pro_ob_fetched_at"
+_STATE_KEY_SYMBOL   = "_pro_ob_symbol"
+_STATE_KEY_DEMO     = "_pro_ob_demo_mode"
+# New state keys for refresh controls
+_STATE_KEY_AUTO_ON  = "_pro_ob_auto_on"
+_STATE_KEY_INTERVAL = "pro_refresh_interval"   # shared, matches task spec
+
+_INTERVAL_OPTIONS: list[tuple[str, int | None]] = [
+    ("5 s",  5),
+    ("10 s", 10),
+    ("30 s", 30),
+]
+_INTERVAL_LABELS = [lbl for lbl, _ in _INTERVAL_OPTIONS]
+_INTERVAL_VALUES = [val for _, val in _INTERVAL_OPTIONS]
 
 _CSS = """
 <style>
@@ -73,7 +99,7 @@ _CSS = """
     font-size: 26px; font-weight: 700; color: #f5f5f7;
     padding: 24px 0 2px; letter-spacing: -.01em;
 }
-.pt-page-sub { font-size: 14px; color: #5a5b62; margin-bottom: 20px; }
+.pt-page-sub { font-size: 14px; color: #5a5b62; margin-bottom: 16px; }
 .pt-last-updated { font-size: 11px; color: #3a3b42; padding: 4px 0; }
 .pt-error {
     background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3);
@@ -109,70 +135,65 @@ _CSS = """
     border-radius: 10px; padding: 9px 14px;
     font-size: 12px; color: #a78bfa; margin-bottom: 12px;
 }
+.pt-auto-note {
+    font-size: 11px; color: #3a3b42; padding: 6px 0;
+}
+.pt-auto-note.active { color: #4ade80; }
 </style>
 """
 
 
-# ── Session state helpers ──────────────────────────────────────────────────────
+# ── Session state ──────────────────────────────────────────────────────────────
 
 def _init_state() -> None:
     defaults = {
-        _STATE_KEY_SNAP:    None,
-        _STATE_KEY_METRICS: None,
-        _STATE_KEY_ERROR:   None,
-        _STATE_KEY_TS:      None,
-        _STATE_KEY_SYMBOL:  _SYMBOLS[0],
-        _STATE_KEY_DEMO:    False,
+        _STATE_KEY_SNAP:     None,
+        _STATE_KEY_METRICS:  None,
+        _STATE_KEY_ERROR:    None,
+        _STATE_KEY_TS:       None,
+        _STATE_KEY_SYMBOL:   _SYMBOLS[0],
+        _STATE_KEY_DEMO:     False,
+        _STATE_KEY_AUTO_ON:  False,
+        _STATE_KEY_INTERVAL: 10,
     }
     for key, default in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default
-
-    # Initialise cross-page symbol key if missing
     if "pro_selected_symbol" not in st.session_state:
         st.session_state["pro_selected_symbol"] = ""
 
 
 def _resolve_incoming_symbol() -> str:
     """
-    Return the symbol to pre-select in the dropdown.
-
-    Priority:
-      1. st.session_state["pro_selected_symbol"] set by Pro Dashboard
-         (consumed once — cleared after reading)
-      2. Last used symbol stored in _STATE_KEY_SYMBOL
-      3. Default: BTCUSDT
+    Return the symbol to pre-select, consuming pro_selected_symbol once.
+    Falls back to last-used or BTCUSDT if incoming symbol is unsupported.
     """
     incoming = str(st.session_state.get("pro_selected_symbol", "")).strip().upper()
     if incoming:
-        # Consume — don't keep re-triggering on every rerun
         st.session_state["pro_selected_symbol"] = ""
-        # If it's HYPE or another non-Binance symbol, fall back to BTCUSDT
         if incoming not in _BINANCE_SYMBOLS:
             st.session_state[_STATE_KEY_SYMBOL] = _SYMBOLS[0]
             return _SYMBOLS[0]
         st.session_state[_STATE_KEY_SYMBOL] = incoming
         return incoming
-
     saved = str(st.session_state.get(_STATE_KEY_SYMBOL, _SYMBOLS[0]))
     return saved if saved in _BINANCE_SYMBOLS else _SYMBOLS[0]
 
 
-# ── Demo snapshot builder ─────────────────────────────────────────────────────
+# ── Demo snapshot ─────────────────────────────────────────────────────────────
 
-def _build_demo_snapshot(symbol: str) -> "OrderBookSnapshot":  # type: ignore[name-defined]
-    """Static demo OrderBookSnapshot for when Binance is region-blocked."""
+def _build_demo_snapshot(symbol: str):
     from core.models import OrderBookLevel, OrderBookSnapshot
     _mids = {"BTCUSDT": 67_500.0, "ETHUSDT": 3_500.0, "SOLUSDT": 175.0}
     mid = _mids.get(symbol, 100.0)
     bids = [
-        OrderBookLevel(price=round(mid - (i + 1) * mid * 0.0002, 2),
-                       qty=round(0.5 + i * 0.3, 4), usd_size=0.0)
+        OrderBookLevel(round(mid - (i + 1) * mid * 0.0002, 2),
+                       round(0.5 + i * 0.3, 4), 0.0)
         for i in range(10)
     ]
     asks = [
-        OrderBookLevel(price=round(mid + (i + 1) * mid * 0.0002, 2),
-                       qty=round(0.4 + i * 0.25, 4), usd_size=0.0)
+        OrderBookLevel(round(mid + (i + 1) * mid * 0.0002, 2),
+                       round(0.4 + i * 0.25, 4), 0.0)
         for i in range(10)
     ]
     for lvl in bids + asks:
@@ -235,9 +256,9 @@ def _do_fetch(symbol: str) -> None:
     st.session_state[_STATE_KEY_SYMBOL]  = sym
 
 
-# ── Error renderer ────────────────────────────────────────────────────────────
+# ── Sub-renderers ─────────────────────────────────────────────────────────────
 
-def _render_error(error: tuple[str, str] | None) -> None:
+def _render_error(error) -> None:
     if error is None:
         return
     kind, msg = error
@@ -274,14 +295,12 @@ def _render_error(error: tuple[str, str] | None) -> None:
         )
 
 
-# ── Summary bar ───────────────────────────────────────────────────────────────
-
 def _render_summary_bar(metrics, snapshot) -> None:
     if metrics is None:
         return
-    _ts  = st.session_state.get(_STATE_KEY_TS)
+    _ts     = st.session_state.get(_STATE_KEY_TS)
     _ts_str = datetime.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") if _ts else "-"
-    _lvl = f"{len(snapshot.bids)}x{len(snapshot.asks)}" if snapshot else "-"
+    _lvl    = f"{len(snapshot.bids)}x{len(snapshot.asks)}" if snapshot else "-"
 
     def _pfmt(p: float) -> str:
         return f"{p:,.2f}" if p >= 1_000 else f"{p:.4f}" if p >= 1 else f"{p:.6f}"
@@ -298,33 +317,72 @@ def _render_summary_bar(metrics, snapshot) -> None:
     )
 
 
+def _render_heatmap(snapshot) -> None:
+    if not _HEATMAP_AVAILABLE:
+        return
+    if snapshot is None and st.session_state.get(_STATE_KEY_METRICS) is None:
+        return
+    st.markdown('<div class="pt-section-label">Liquidity Wall Map</div>',
+                unsafe_allow_html=True)
+    _mode = "demo"
+    try:
+        if snapshot is not None and not snapshot.is_empty:
+            _cells = _build_heatmap(snapshot, levels=20)
+            if _cells:
+                _mode = "snapshot"
+            else:
+                _cells = _demo_heatmap_cells()
+        else:
+            _cells = _demo_heatmap_cells()
+    except Exception:
+        _cells = _demo_heatmap_cells()
+
+    _title = ("Liquidity Wall Map — Live" if _mode == "snapshot"
+              else "Liquidity Wall Map — Demo")
+    _render_liquidity_heatmap(_cells, title=_title)
+    st.markdown(
+        f'<div class="pt-last-updated">Heatmap mode: '
+        f'<b>{"Snapshot" if _mode == "snapshot" else "Demo fallback"}</b></div>',
+        unsafe_allow_html=True,
+    )
+
+
 # ── Main render function ───────────────────────────────────────────────────────
 
 def render_pro_terminal() -> None:
     """
-    Render the full Pro Trading Terminal page.
+    Render the full Pro Trading Terminal.
 
-    Reads st.session_state["pro_selected_symbol"] if set by Pro Dashboard,
-    pre-selects it in the symbol dropdown, then clears it.
-    Manual Refresh only.
+    Auto-refresh is the FIRST widget operation so it doesn't corrupt
+    the widget tree when the page re-runs. All other state is read
+    from session_state and preserved across refreshes.
     """
     _init_state()
-    st.markdown(_CSS, unsafe_allow_html=True)
 
+    # ── STEP 1: Auto-refresh (must be first to avoid widget-tree corruption) ──
+    # We read the current toggle state from session_state — the checkbox
+    # that sets it comes later in the render, but session_state persists
+    # across re-runs so the value is already correct.
+    _auto_on = st.session_state.get(_STATE_KEY_AUTO_ON, False)
+    _interval_ms = (st.session_state.get(_STATE_KEY_INTERVAL, 10) or 10) * 1000
+
+    if _auto_on:
+        if _AUTOREFRESH_AVAILABLE:
+            _st_autorefresh(interval=_interval_ms, key="_pt_ar_counter")
+        # If not available we just skip — user sees the note in the toolbar
+
+    # ── STEP 2: CSS + header ──────────────────────────────────────────────────
+    st.markdown(_CSS, unsafe_allow_html=True)
     st.markdown('<div class="pt-page-title">Pro Terminal</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="pt-page-sub">Live Binance orderbook — depth, imbalance, walls, slippage.</div>',
+        '<div class="pt-page-sub">'
+        'Live Binance orderbook — depth, imbalance, walls, slippage.'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Resolve symbol (may come from Pro Dashboard) ──────────────────────────
+    # ── STEP 3: Resolve incoming symbol from Pro Dashboard ────────────────────
     _initial_sym = _resolve_incoming_symbol()
-
-    # Show HYPE note if it was requested but not available on Binance
-    _raw_incoming = str(st.session_state.get("pro_selected_symbol", "")).strip().upper()
-    # Note: already cleared by _resolve_incoming_symbol, so check the stored symbol
-    # We detect the HYPE case by checking if the stored key was HYPEUSDT before fallback
-    # Simpler: just check if user's last session symbol was HYPE
     if st.session_state.get("_pt_showed_hype_note"):
         st.markdown(
             f'<div class="pt-hype-note">{_HYPE_NOTE}</div>',
@@ -332,12 +390,12 @@ def render_pro_terminal() -> None:
         )
         st.session_state["_pt_showed_hype_note"] = False
 
-    # ── Toolbar ───────────────────────────────────────────────────────────────
+    # ── STEP 4: Toolbar ───────────────────────────────────────────────────────
     _sym_idx = _SYMBOLS.index(_initial_sym) if _initial_sym in _SYMBOLS else 0
 
-    _tb_sym, _tb_btn, _tb_depth, _tb_spacer = st.columns([0.25, 0.15, 0.25, 0.35])
+    _c_sym, _c_depth, _c_btn, _c_auto, _c_intv = st.columns([0.22, 0.20, 0.12, 0.16, 0.30])
 
-    with _tb_sym:
+    with _c_sym:
         _selected = st.selectbox(
             "Market",
             options=_SYMBOLS,
@@ -346,7 +404,7 @@ def render_pro_terminal() -> None:
             label_visibility="collapsed",
         )
 
-    with _tb_depth:
+    with _c_depth:
         _depth_choice = st.selectbox(
             "Book depth",
             options=[20, 50, 100],
@@ -356,7 +414,7 @@ def render_pro_terminal() -> None:
             label_visibility="collapsed",
         )
 
-    with _tb_btn:
+    with _c_btn:
         _refresh_clicked = st.button(
             "Refresh",
             key="_pt_refresh_btn",
@@ -364,19 +422,75 @@ def render_pro_terminal() -> None:
             type="primary",
         )
 
-    # ── Fetch trigger ─────────────────────────────────────────────────────────
-    _last_sym     = st.session_state.get(_STATE_KEY_SYMBOL)
-    _first_load   = (
+    with _c_auto:
+        _auto_toggle = st.checkbox(
+            "Auto",
+            value=_auto_on,
+            key="_pt_auto_toggle",
+            help="Auto-refresh at the selected interval. Requires streamlit-autorefresh.",
+        )
+        # Persist to session state immediately so next re-run picks it up
+        st.session_state[_STATE_KEY_AUTO_ON] = _auto_toggle
+
+    with _c_intv:
+        if _auto_toggle:
+            _intv_idx = (
+                _INTERVAL_VALUES.index(st.session_state.get(_STATE_KEY_INTERVAL, 10))
+                if st.session_state.get(_STATE_KEY_INTERVAL) in _INTERVAL_VALUES
+                else 1
+            )
+            _intv_label = st.selectbox(
+                "Interval",
+                options=_INTERVAL_LABELS,
+                index=_intv_idx,
+                key="_pt_interval_select",
+                label_visibility="collapsed",
+            )
+            _chosen_interval = _INTERVAL_VALUES[_INTERVAL_LABELS.index(_intv_label)]
+            st.session_state[_STATE_KEY_INTERVAL] = _chosen_interval
+
+            if _AUTOREFRESH_AVAILABLE:
+                st.markdown(
+                    f'<div class="pt-auto-note active">'
+                    f'Auto {_intv_label}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div class="pt-auto-note">'
+                    'pip install streamlit-autorefresh'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="pt-auto-note">Manual refresh only</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── STEP 5: Decide whether to fetch ──────────────────────────────────────
+    _last_sym       = st.session_state.get(_STATE_KEY_SYMBOL)
+    _first_load     = (
         st.session_state.get(_STATE_KEY_SNAP) is None
         and st.session_state.get(_STATE_KEY_ERROR) is None
     )
     _symbol_changed = _last_sym != _selected
+    # Auto-refresh fires because st_autorefresh triggers a full re-run.
+    # We detect it by checking if neither manual click nor symbol-change
+    # caused the run — if auto is on and data is stale, we re-fetch.
+    _auto_triggered = (
+        _auto_toggle
+        and _AUTOREFRESH_AVAILABLE
+        and not _refresh_clicked
+        and not _symbol_changed
+        and not _first_load
+    )
 
-    if _refresh_clicked or _first_load or _symbol_changed:
-        with st.spinner(f"Fetching {_selected} orderbook from Binance..."):
+    if _refresh_clicked or _first_load or _symbol_changed or _auto_triggered:
+        with st.spinner(f"Fetching {_selected} orderbook…"):
             _do_fetch(_selected)
 
-    # ── Demo mode banner ──────────────────────────────────────────────────────
+    # ── STEP 6: Demo mode banner ──────────────────────────────────────────────
     if st.session_state.get(_STATE_KEY_DEMO):
         st.warning(
             "**Demo mode** — Binance is blocked from this hosted region (HTTP 451). "
@@ -384,20 +498,18 @@ def render_pro_terminal() -> None:
             icon="⚠️",
         )
 
-    # ── Error ─────────────────────────────────────────────────────────────────
+    # ── STEP 7: Error display ─────────────────────────────────────────────────
     _render_error(st.session_state.get(_STATE_KEY_ERROR))
 
-    # ── Summary bar ───────────────────────────────────────────────────────────
+    # ── STEP 8: Summary bar ───────────────────────────────────────────────────
     _metrics  = st.session_state.get(_STATE_KEY_METRICS)
     _snapshot = st.session_state.get(_STATE_KEY_SNAP)
     _render_summary_bar(_metrics, _snapshot)
 
-    # ── Orderbook panel ───────────────────────────────────────────────────────
+    # ── STEP 9: Orderbook panel ───────────────────────────────────────────────
     if _snapshot is not None or _metrics is not None:
-        st.markdown(
-            '<div class="pt-section-label">Order book</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="pt-section-label">Order book</div>',
+                    unsafe_allow_html=True)
         render_orderbook_panel(
             snapshot=_snapshot,
             metrics=_metrics,
@@ -409,47 +521,16 @@ def render_pro_terminal() -> None:
             unsafe_allow_html=True,
         )
 
-    # ── Liquidity heatmap ──────────────────────────────────────────────────────
-    if _HEATMAP_AVAILABLE and (_snapshot is not None or _metrics is not None):
-        st.markdown(
-            '<div class="pt-section-label">Liquidity Wall Map</div>',
-            unsafe_allow_html=True,
-        )
-        _heatmap_mode = "demo"
-        try:
-            if _snapshot is not None and not _snapshot.is_empty:
-                _hm_cells = _build_heatmap(_snapshot, levels=20)
-                if _hm_cells:
-                    _heatmap_mode = "snapshot"
-                else:
-                    _hm_cells = _demo_heatmap_cells()
-            else:
-                _hm_cells = _demo_heatmap_cells()
-        except Exception:
-            _hm_cells = _demo_heatmap_cells()
+    # ── STEP 10: Liquidity heatmap ────────────────────────────────────────────
+    _render_heatmap(_snapshot)
 
-        _hm_title = (
-            "Liquidity Wall Map — Live"
-            if _heatmap_mode == "snapshot"
-            else "Liquidity Wall Map — Demo"
-        )
-        _render_liquidity_heatmap(_hm_cells, title=_hm_title)
-        st.markdown(
-            f'<div class="pt-last-updated">'
-            f'Heatmap mode: <b>{"Snapshot" if _heatmap_mode == "snapshot" else "Demo fallback"}</b>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-    # ── Footer ────────────────────────────────────────────────────────────────
+    # ── STEP 11: Footer ───────────────────────────────────────────────────────
     _ts      = st.session_state.get(_STATE_KEY_TS)
     _is_demo = st.session_state.get(_STATE_KEY_DEMO, False)
     if _is_demo:
         st.markdown(
-            '<div class="pt-last-updated">'
-            "Mode: <b>Demo fallback</b> &nbsp;&middot;&nbsp; "
-            "Binance unavailable from this region"
-            "</div>",
+            '<div class="pt-last-updated">Mode: <b>Demo fallback</b>'
+            ' &nbsp;&middot;&nbsp; Binance unavailable from this region</div>',
             unsafe_allow_html=True,
         )
     elif _ts:
@@ -457,9 +538,8 @@ def render_pro_terminal() -> None:
         _ts_fmt = datetime.datetime.fromtimestamp(_ts).strftime("%Y-%m-%d %H:%M:%S")
         st.markdown(
             f'<div class="pt-last-updated">'
-            f"Data fetched at {_ts_fmt} ({_age}s ago) "
-            f"&nbsp;&middot;&nbsp; "
-            f"Source: Binance REST API (public, no key required)"
+            f"Data fetched at {_ts_fmt} ({_age}s ago)"
+            f" &nbsp;&middot;&nbsp; Source: Binance REST API (public, no key required)"
             f"</div>",
             unsafe_allow_html=True,
         )
