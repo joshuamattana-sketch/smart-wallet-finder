@@ -81,17 +81,22 @@ def thin_book() -> OrderBookSnapshot:
 
 
 def bid_heavy_book() -> OrderBookSnapshot:
-    """A book strongly skewed toward bids."""
+    """
+    A book strongly skewed toward bids.
+    Levels are placed within 0.5% of mid so the engine counts them in its
+    depth calculation and does not classify the book as thin.
+    Mid = (99.8 + 100.2) / 2 = 100.0; 0.5% band = [99.5, 100.5].
+    """
     return OrderBookSnapshot(
         symbol="SOLUSDT",
         exchange="bybit",
         timestamp_ms=4_000_000,
         bids=[
-            make_level(99.0, 1000.0),  # $99,000
-            make_level(98.5, 500.0),   # $49,250
+            make_level(99.8, 1000.0),  # $99,800 — within band
+            make_level(99.5, 500.0),   # $49,750 — within band
         ],
         asks=[
-            make_level(101.0, 10.0),   # $1,010
+            make_level(100.2, 60.0),   # $6,012 — within band, > $5k threshold
         ],
     )
 

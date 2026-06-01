@@ -502,9 +502,13 @@ class TestListenDepthImportGuard:
         import asyncio
         from connectors.binance_ws import listen_depth
 
-        # Stash and remove websockets from sys.modules
-        _ws_saved = sys.modules.pop("websockets", None)
-        _ws_client_saved = sys.modules.pop("websockets.client", None)
+        # Setting a module to None in sys.modules causes `import <name>` to raise
+        # ImportError — this works even when the package is installed.
+        _MISSING = object()
+        _ws_saved = sys.modules.get("websockets", _MISSING)
+        _ws_client_saved = sys.modules.get("websockets.client", _MISSING)
+        sys.modules["websockets"] = None  # type: ignore[assignment]
+        sys.modules["websockets.client"] = None  # type: ignore[assignment]
         try:
             async def try_listen():
                 # listen_depth is an async generator — must be iterated
@@ -514,9 +518,13 @@ class TestListenDepthImportGuard:
             with pytest.raises(ImportError, match="websockets"):
                 asyncio.run(try_listen())
         finally:
-            if _ws_saved is not None:
+            if _ws_saved is _MISSING:
+                sys.modules.pop("websockets", None)
+            else:
                 sys.modules["websockets"] = _ws_saved
-            if _ws_client_saved is not None:
+            if _ws_client_saved is _MISSING:
+                sys.modules.pop("websockets.client", None)
+            else:
                 sys.modules["websockets.client"] = _ws_client_saved
 
     def test_listen_depth_is_async_generator(self):
