@@ -27,6 +27,15 @@ import streamlit as st
 from ui.components.market_cards import render_market_kpi_cards, render_market_stat_cards
 from ui.components.market_heatmap import render_market_heatmap
 
+# Scanner — guarded: dashboard must work even if services/ not deployed
+try:
+    from services.pro_market_scanner import scan_markets as _scan_markets
+    _SCANNER_AVAILABLE = True
+except Exception:
+    _SCANNER_AVAILABLE = False
+    def _scan_markets(symbols=None):
+        return []
+
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
 _CSS = """<style>
@@ -256,6 +265,50 @@ def _render_heatmap_with_buttons(items: list[dict]) -> None:
         idx += 1
 
 
+
+def _signals_to_setup_cards(signals) -> list[dict]:
+    """Convert ProSetupSignal objects to the dict format _render_setup_cards expects."""
+    cards = []
+    for sig in signals:
+        score = sig.score
+        risk  = sig.risk_level   # "low" / "medium" / "high" / "extreme"
+        level = sig.signal_level  # "strong_buy" / "buy" / "watch" / "neutral" / "avoid"
+
+        # Tier drives border colour on the card
+        if score >= 75:
+            tier = "strong"
+        elif score >= 50:
+            tier = "watch"
+        else:
+            tier = ""
+
+        # Tags: signal level + risk + market_type
+        _risk_cls = {"low": "g", "medium": "y", "high": "r", "extreme": "r"}.get(risk, "")
+        _lvl_cls  = {"strong_buy": "g", "buy": "g", "watch": "y",
+                     "neutral": "", "avoid": "r", "strong_sell": "r"}.get(level, "")
+        tags = [
+            (level.replace("_", " ").title(), _lvl_cls),
+            (f"{risk.title()} risk", _risk_cls),
+            (sig.market_type.upper(), ""),
+        ]
+
+        # Display symbol: strip USDT suffix for readability
+        display = sig.symbol.replace("USDT", "").replace("USD", "") or sig.symbol
+
+        # Terminal symbol: only BTCUSDT / ETHUSDT / SOLUSDT go to live Binance
+        terminal_sym = sig.symbol if sig.symbol in _TERMINAL_SYMBOLS else ""
+
+        cards.append({
+            "symbol":  terminal_sym or sig.symbol,
+            "display": display,
+            "type":    f"{sig.market_type.capitalize()} / {level.replace('_', ' ').title()}",
+            "score":   int(score),
+            "reason":  sig.reason[:180] if sig.reason else "No reason available.",
+            "tags":    tags,
+            "tier":    tier,
+        })
+    return cards
+
 def _render_setup_cards(setups: list[dict]) -> None:
     cols = st.columns(len(setups))
     for col, s in zip(cols, setups):
@@ -329,11 +382,30 @@ def render_pro_dashboard() -> None:
     """
     Render the full Pro Market Overview Dashboard.
 
-    Symbols in the heatmap and setup cards have "Open in Pro Terminal" buttons
-    that store the ticker in st.session_state["pro_selected_symbol"] and
-    navigate directly to Pro Terminal.
+    Attempts to fetch live ProSetupSignals from services/pro_market_scanner.
+    Falls back to static demo data if scanner is unavailable or fails.
+    Symbols in the heatmap and setup cards have "Open in Pro Terminal" buttons.
     """
     st.markdown(_CSS, unsafe_allow_html=True)
+
+    # ── Try live scanner ──────────────────────────────────────────────────────
+    _live_signals: list = []
+    _scanner_error: str = ""
+    _mode: str = "demo"
+
+    if _SCANNER_AVAILABLE:
+        try:
+            _live_signals = _scan_markets() or []
+            if _live_signals:
+                _mode = "live"
+        except Exception as exc:
+            _scanner_error = str(exc)
+
+    # ── Decide which setup cards to show ──────────────────────────────────────
+    if _mode == "live" and _live_signals:
+        _setup_cards = _signals_to_setup_cards(_live_signals[:3])
+    else:
+        _setup_cards = _TOP_SETUPS  # static demo
 
     # 1. Header
     _render_header()
@@ -355,8 +427,30 @@ def render_pro_dashboard() -> None:
     # 5. Top Pro Setups + Whale Alerts
     left_col, right_col = st.columns([0.62, 0.38])
     with left_col:
-        st.markdown('<div class="dash-section-label">Top Pro Setups</div>', unsafe_allow_html=True)
-        _render_setup_cards(_TOP_SETUPS)
+        _setup_label_col, _mode_col = st.columns([0.7, 0.3])
+        with _setup_label_col:
+            st.markdown('<div class="dash-section-label">Top Pro Setups</div>', unsafe_allow_html=True)
+        with _mode_col:
+            if _mode == "live":
+                st.markdown(
+                    '<div style="font-size:10px;color:#4ade80;font-weight:600;'
+                    'padding-top:22px;text-align:right">Mode: Live scanner</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                _fallback_reason = "scanner unavailable" if not _SCANNER_AVAILABLE else (
+                    f"error: {_scanner_error[:40]}" if _scanner_error else "no signals returned"
+                )
+                st.markdown(
+                    f'<div style="font-size:10px;color:#5a5b62;font-weight:600;'
+                    f'padding-top:22px;text-align:right">'
+                    f'Mode: Demo fallback<br>'
+                    f'<span style="font-weight:400;color:#3a3b42">{_fallback_reason}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        _render_setup_cards(_setup_cards)
+
     with right_col:
         st.markdown('<div class="dash-section-label">Whale Alerts</div>', unsafe_allow_html=True)
         _render_whale_feed(_WHALE_ALERTS)
@@ -368,10 +462,14 @@ def render_pro_dashboard() -> None:
     _render_alpha_preview()
 
     # 7. Footer
+    _footer_note = (
+        "Top Pro Setups are live-scored from Binance orderbook data."
+        if _mode == "live"
+        else "Top Pro Setups show static demo data — scanner unavailable or failed."
+    )
     st.markdown(
-        '<div style="font-size:11px;color:#3a3b42;margin-top:18px;padding-bottom:8px">'
-        'All data shown is static demo data. '
-        'Connect live exchange connectors to enable real-time signals.'
-        '</div>',
+        f'<div style="font-size:11px;color:#3a3b42;margin-top:18px;padding-bottom:8px">'
+        f'{_footer_note} KPIs, heatmap and stats are static demo data.'
+        f'</div>',
         unsafe_allow_html=True,
     )
