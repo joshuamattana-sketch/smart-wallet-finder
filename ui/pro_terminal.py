@@ -33,6 +33,22 @@ from core.formatting import format_usd, safe_float
 from services.orderbook_engine import analyze_orderbook
 from ui.components.orderbook_panel import render_orderbook_panel
 
+# Heatmap — guarded so terminal works even if engine not deployed
+try:
+    from services.heatmap_engine import (
+        build_heatmap_from_orderbook as _build_heatmap,
+        demo_heatmap_cells as _demo_heatmap_cells,
+    )
+    from ui.components.liquidity_heatmap_panel import (
+        render_liquidity_heatmap as _render_liquidity_heatmap,
+    )
+    _HEATMAP_AVAILABLE = True
+except Exception:
+    _HEATMAP_AVAILABLE = False
+    def _build_heatmap(snapshot, **kw): return []
+    def _demo_heatmap_cells(): return []
+    def _render_liquidity_heatmap(cells, **kw): pass
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -390,6 +406,38 @@ def render_pro_terminal() -> None:
     elif st.session_state.get(_STATE_KEY_ERROR) is None:
         st.markdown(
             '<div class="pt-loading">Select a market and click Refresh to load live data.</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Liquidity heatmap ──────────────────────────────────────────────────────
+    if _HEATMAP_AVAILABLE and (_snapshot is not None or _metrics is not None):
+        st.markdown(
+            '<div class="pt-section-label">Liquidity Wall Map</div>',
+            unsafe_allow_html=True,
+        )
+        _heatmap_mode = "demo"
+        try:
+            if _snapshot is not None and not _snapshot.is_empty:
+                _hm_cells = _build_heatmap(_snapshot, levels=20)
+                if _hm_cells:
+                    _heatmap_mode = "snapshot"
+                else:
+                    _hm_cells = _demo_heatmap_cells()
+            else:
+                _hm_cells = _demo_heatmap_cells()
+        except Exception:
+            _hm_cells = _demo_heatmap_cells()
+
+        _hm_title = (
+            "Liquidity Wall Map — Live"
+            if _heatmap_mode == "snapshot"
+            else "Liquidity Wall Map — Demo"
+        )
+        _render_liquidity_heatmap(_hm_cells, title=_hm_title)
+        st.markdown(
+            f'<div class="pt-last-updated">'
+            f'Heatmap mode: <b>{"Snapshot" if _heatmap_mode == "snapshot" else "Demo fallback"}</b>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
