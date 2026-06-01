@@ -7,7 +7,7 @@ import { TrendingUp, TrendingDown, Minus, Activity, Zap } from "lucide-react";
 
 export default function DashboardPage() {
   return (
-    <div className="space-y-6 animate-[fadeIn_0.4s_ease-out]">
+    <div className="space-y-5 animate-[fadeIn_0.4s_ease-out]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -27,126 +27,150 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Main grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Top Setups */}
-        <div className="lg:col-span-2 space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2">
-            <TrendingUp className="h-3.5 w-3.5 text-lumora-purple" /> Top Market Setups
-          </h2>
-          <div className="space-y-2">
-            {mockSetups.map((s) => (
-              <GlassCard key={s.symbol} className="p-4 flex items-center gap-4">
-                <div className="shrink-0 w-20">
-                  <p className="num text-sm font-semibold text-lumora-text">{s.symbol}</p>
-                  <Badge variant={s.bias === "LONG" ? "green" : s.bias === "SHORT" ? "red" : "muted"} className="mt-1">
-                    {s.bias}
-                  </Badge>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-lumora-muted truncate">{s.reason}</p>
-                </div>
-                <div className="shrink-0 text-right space-y-1">
-                  <div className="flex items-center gap-3 text-xs num">
+      {/* Main 2-col grid — left takes 2/3, right panel takes 1/3 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+
+        {/* Left — setups + bias */}
+        <div className="lg:col-span-2 space-y-5">
+          {/* Top Setups */}
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2 mb-2">
+              <TrendingUp className="h-3.5 w-3.5 text-lumora-purple" /> Top Market Setups
+            </h2>
+            <div className="space-y-2">
+              {mockSetups.map((s) => (
+                <GlassCard key={s.symbol} className="p-3 flex items-center gap-4">
+                  <div className="shrink-0 w-24">
+                    <p className="num text-sm font-semibold text-lumora-text">{s.symbol}</p>
+                    <Badge
+                      variant={s.bias === "LONG" ? "green" : s.bias === "SHORT" ? "red" : "muted"}
+                      className="mt-1"
+                    >
+                      {s.bias}
+                    </Badge>
+                  </div>
+                  <div className="flex-1 min-w-0 hidden sm:block">
+                    <p className="text-xs text-lumora-muted truncate">{s.reason}</p>
+                  </div>
+                  <div className="shrink-0 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs num">
                     <span className="text-lumora-muted">Entry</span>
-                    <span className="text-lumora-text">{s.entry}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs num">
+                    <span className="text-lumora-text text-right">{s.entry}</span>
                     <span className="text-lumora-muted">Target</span>
-                    <span className="text-lumora-green">{s.target}</span>
+                    <span className="text-lumora-green text-right">{s.target}</span>
+                    <span className="text-lumora-muted">Stop</span>
+                    <span className="text-lumora-red text-right">{s.stop}</span>
                   </div>
-                </div>
-                <div className="shrink-0 w-16 text-right">
-                  <div className="text-xs text-lumora-muted mb-1">Confidence</div>
-                  <div className="h-1.5 rounded-full bg-lumora-border overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-lumora-purple to-lumora-cyan"
-                      style={{ width: `${s.confidence}%` }}
-                    />
+                  <div className="shrink-0 w-14 text-right">
+                    <div className="h-1.5 rounded-full bg-lumora-border overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-lumora-purple to-lumora-cyan"
+                        style={{ width: `${s.confidence}%` }}
+                      />
+                    </div>
+                    <p className="num text-[11px] text-lumora-text-dim mt-1">{s.confidence}%</p>
                   </div>
-                  <p className="num text-xs text-lumora-text-dim mt-1">{s.confidence}%</p>
-                </div>
-              </GlassCard>
-            ))}
+                </GlassCard>
+              ))}
+            </div>
+          </div>
+
+          {/* Market Bias */}
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted mb-2">Market Bias</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { symbol: "BTC", bias: "BULLISH", strength: 78, icon: TrendingUp, color: "text-lumora-green" },
+                { symbol: "ETH", bias: "BULLISH", strength: 65, icon: TrendingUp, color: "text-lumora-green" },
+                { symbol: "SOL", bias: "BEARISH", strength: 61, icon: TrendingDown, color: "text-lumora-red" },
+                { symbol: "BNB", bias: "NEUTRAL", strength: 50, icon: Minus, color: "text-lumora-muted" },
+              ].map(({ symbol, bias, strength, icon: Icon, color }) => (
+                <GlassCard key={symbol} className="p-3 flex items-center gap-3">
+                  <Icon className={clsx("h-4 w-4 shrink-0", color)} />
+                  <div className="flex-1 min-w-0">
+                    <p className="num text-sm font-semibold text-lumora-text">{symbol}</p>
+                    <p className={clsx("text-[11px] font-medium", color)}>{bias}</p>
+                  </div>
+                  <div className="shrink-0 w-10">
+                    <div className="h-1 rounded-full bg-lumora-border overflow-hidden">
+                      <div className="h-full rounded-full bg-lumora-purple" style={{ width: `${strength}%` }} />
+                    </div>
+                    <p className="num text-[10px] text-lumora-muted text-right mt-0.5">{strength}%</p>
+                  </div>
+                </GlassCard>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Right column */}
+        {/* Right panel — fixed height, internally scrollable sections */}
         <div className="space-y-4">
-          {/* Whale Alerts Panel */}
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2 mb-3">
-              <Zap className="h-3.5 w-3.5 text-lumora-cyan" /> Whale Alerts
-            </h2>
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          {/* Whale Alerts — scrollable */}
+          <GlassCard className="overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-lumora-border flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-1.5">
+                <Zap className="h-3 w-3 text-lumora-cyan" /> Whale Alerts
+              </span>
+              <Badge variant="cyan">{mockWhaleAlerts.length}</Badge>
+            </div>
+            <div className="overflow-y-auto max-h-56 divide-y divide-lumora-border/40">
               {mockWhaleAlerts.map((a) => (
-                <GlassCard key={a.id} className="p-3 flex items-center gap-3">
-                  <div className="shrink-0">
-                    <Badge variant={a.side === "BUY" ? "green" : "red"}>{a.side}</Badge>
-                  </div>
+                <div key={a.id} className="px-3 py-2.5 flex items-center gap-2.5 hover:bg-lumora-surface/30 transition-colors">
+                  <Badge variant={a.side === "BUY" ? "green" : "red"} className="shrink-0 w-10 justify-center">
+                    {a.side}
+                  </Badge>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-lumora-text">{a.symbol} · {a.type}</p>
-                    <p className="num text-xs text-lumora-muted">{a.exchange} · {a.time}</p>
+                    <p className="text-xs font-medium text-lumora-text leading-tight">
+                      {a.symbol}
+                      <span className="text-lumora-muted font-normal"> · {a.type}</span>
+                    </p>
+                    <p className="num text-[11px] text-lumora-muted">{a.exchange} · {a.time}</p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="num text-sm font-semibold text-lumora-text">{a.size}</p>
-                    <Badge variant={a.risk === "HIGH" ? "red" : a.risk === "MEDIUM" ? "yellow" : "muted"} className="mt-0.5">
+                    <p className="num text-xs font-semibold text-lumora-text">{a.size}</p>
+                    <Badge
+                      variant={a.risk === "HIGH" ? "red" : a.risk === "MEDIUM" ? "yellow" : "muted"}
+                      className="mt-0.5"
+                    >
                       {a.risk}
                     </Badge>
                   </div>
-                </GlassCard>
+                </div>
               ))}
             </div>
-          </div>
+          </GlassCard>
 
-          {/* Liquidity Highlights */}
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2 mb-3">
-              <Activity className="h-3.5 w-3.5 text-lumora-purple" /> Liquidity Walls
-            </h2>
-            <div className="space-y-2">
+          {/* Liquidity Walls */}
+          <GlassCard className="overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-lumora-border flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-1.5">
+                <Activity className="h-3 w-3 text-lumora-purple" /> Liquidity Walls
+              </span>
+              <Badge variant="purple">BTC</Badge>
+            </div>
+            <div className="divide-y divide-lumora-border/40">
               {mockLiquidityZones.map((z) => (
-                <GlassCard key={z.price} className="p-3 flex items-center gap-3">
-                  <div className="shrink-0 w-2 h-8 rounded-full" style={{
-                    background: z.intensity > 80
-                      ? "linear-gradient(180deg, #c084fc, #8b5cf6)"
-                      : "linear-gradient(180deg, #22d3ee, #0891b2)"
-                  }} />
-                  <div className="flex-1">
-                    <p className="num text-sm font-medium text-lumora-text">${z.price.toLocaleString()}</p>
-                    <p className="text-xs text-lumora-muted">{z.label}</p>
+                <div key={z.price} className="px-3 py-2.5 flex items-center gap-2.5 hover:bg-lumora-surface/30 transition-colors">
+                  <div
+                    className="shrink-0 w-1.5 h-7 rounded-full"
+                    style={{
+                      background:
+                        z.intensity > 80
+                          ? "linear-gradient(180deg,#c084fc,#8b5cf6)"
+                          : "linear-gradient(180deg,#22d3ee,#0891b2)",
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="num text-xs font-medium text-lumora-text">${z.price.toLocaleString()}</p>
+                    <p className="text-[11px] text-lumora-muted">{z.label}</p>
                   </div>
-                  <div className="text-right">
+                  <div className="shrink-0 text-right space-y-0.5">
                     <Badge variant={z.side === "ASK" ? "red" : "green"}>{z.side}</Badge>
-                    <p className="num text-xs text-lumora-text-dim mt-1">{z.intensity}% intensity</p>
+                    <p className="num text-[10px] text-lumora-text-dim">{z.intensity}%</p>
                   </div>
-                </GlassCard>
+                </div>
               ))}
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Market Bias Cards */}
-      <div>
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-lumora-muted mb-3">Market Bias Overview</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { symbol: "BTC", bias: "BULLISH", strength: 78, icon: TrendingUp, color: "text-lumora-green" },
-            { symbol: "ETH", bias: "BULLISH", strength: 65, icon: TrendingUp, color: "text-lumora-green" },
-            { symbol: "SOL", bias: "BEARISH", strength: 61, icon: TrendingDown, color: "text-lumora-red" },
-            { symbol: "BNB", bias: "NEUTRAL", strength: 50, icon: Minus, color: "text-lumora-muted" },
-          ].map(({ symbol, bias, strength, icon: Icon, color }) => (
-            <GlassCard key={symbol} className="p-4 text-center">
-              <Icon className={clsx("h-5 w-5 mx-auto mb-2", color)} />
-              <p className="num text-lg font-semibold text-lumora-text">{symbol}</p>
-              <p className={clsx("text-xs font-medium mt-0.5", color)}>{bias}</p>
-              <div className="mt-2 h-1 rounded-full bg-lumora-border overflow-hidden">
-                <div className="h-full rounded-full bg-lumora-purple" style={{ width: `${strength}%` }} />
-              </div>
-              <p className="num text-xs text-lumora-muted mt-1">{strength}%</p>
-            </GlassCard>
-          ))}
+          </GlassCard>
         </div>
       </div>
     </div>
