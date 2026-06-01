@@ -42,11 +42,20 @@ function mockIntensity(price: number, tIdx: number, side: "bid" | "ask"): number
   return Math.min(100, Math.round(base));
 }
 
+// Markets that are planned in the UI but have no real exchange source wired
+// yet. Their payloads are clearly flagged so the front-end never presents them
+// as live Binance Spot depth.
+const UNSUPPORTED_SOURCES: Record<string, string> = {
+  XMRUSDT: "XMR source planned. Binance Spot depth unavailable for Monero.",
+};
+
 export function buildMockHeatmapPayload(
   symbol: string,
   exchange: string,
   timeframe: string,
 ): HeatmapApiPayload {
+  const sourceNote = UNSUPPORTED_SOURCES[symbol.toUpperCase()] ?? null;
+  const sourceAvailable = sourceNote === null;
   const now     = new Date().toISOString();
   const offsets = [0, 5, 10]; // 3 time buckets
   const timeBuckets = offsets.map(o => isoOffset(now, -o).replace(/\.\d+Z$/, "Z")).reverse();
@@ -119,6 +128,8 @@ export function buildMockHeatmapPayload(
       cellCount:     cells.length,
       wallCount:     walls.length,
       isDemo:        true,
+      sourceAvailable,
+      sourceNote,
     },
   };
 }

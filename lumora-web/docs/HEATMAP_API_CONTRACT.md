@@ -169,6 +169,20 @@ the UI Demo badge will be hidden automatically.
 
 ---
 
+### `meta.sourceAvailable` / `meta.sourceNote`
+
+`sourceAvailable` is `false` for markets that exist in the UI selector but have
+no real exchange source wired yet (currently `XMRUSDT` — Monero is not offered
+on Binance Spot). For those symbols the endpoint still returns a valid demo
+payload (so the renderer never crashes), `isDemo` stays `true`, and
+`sourceNote` carries a human-readable explanation the UI surfaces as a small
+banner, e.g. `"XMR source planned. Binance Spot depth unavailable for Monero."`
+
+For all supported markets `sourceAvailable` is `true` and `sourceNote` is
+`null`.
+
+---
+
 ## TypeScript types
 
 All types are defined in [`lib/heatmap-types.ts`](../lib/heatmap-types.ts):

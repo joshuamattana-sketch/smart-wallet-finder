@@ -48,6 +48,14 @@ export interface HeatmapMeta {
   cellCount: number;
   wallCount: number;
   isDemo: boolean;        // true while real exchange data is not yet wired
+  /**
+   * Whether real exchange depth is available for this symbol/exchange combo.
+   * false for planned-but-unwired markets (e.g. XMR on Binance Spot). When
+   * false the payload still carries demo cells so the UI does not crash.
+   */
+  sourceAvailable?: boolean;
+  /** Human-readable reason shown when sourceAvailable is false. */
+  sourceNote?: string | null;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */

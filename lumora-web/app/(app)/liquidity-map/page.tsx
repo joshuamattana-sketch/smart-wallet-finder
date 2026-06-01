@@ -15,7 +15,7 @@ const MAX_PRICE = 69_500;
 const PRICE_RNG = MAX_PRICE - MIN_PRICE;
 const CURRENT_PRICE = 67_420;
 
-const SYMBOLS    = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT"];
+const SYMBOLS    = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT", "XMRUSDT"];
 const EXCHANGES  = ["Binance Spot", "Bybit Spot", "OKX Spot"];
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 
@@ -270,6 +270,14 @@ export default function LiquidityMapPage() {
   const maxBidI = summaryData ? `${Math.round(summaryData.max_bid_intensity)}% bid` : "+0.42 imbal";
   const maxAskI = summaryData ? `${Math.round(summaryData.max_ask_intensity)}% ask max` : "Break → flush to $66,500";
 
+  // Unsupported-source note — driven by the payload when present, with a
+  // symbol-based fallback so the hint appears immediately on selection.
+  const sourceNote =
+    payload?.meta.sourceNote ??
+    (symbol === "XMRUSDT"
+      ? "XMR source planned. Binance Spot depth unavailable for Monero."
+      : null);
+
   // Key zones — use payload walls if available, otherwise static fallback
   const apiWalls = payload?.walls ?? [];
   const showApiWalls = apiWalls.length > 0;
@@ -343,6 +351,14 @@ export default function LiquidityMapPage() {
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-xs">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           <span>{apiError}</span>
+        </div>
+      )}
+
+      {/* Unsupported-source note (e.g. XMR planned, no Binance Spot depth) */}
+      {sourceNote && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-yellow-300 text-xs">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span>{sourceNote}</span>
         </div>
       )}
 
