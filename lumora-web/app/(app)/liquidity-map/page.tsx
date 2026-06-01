@@ -57,20 +57,31 @@ const PRICE_PATH: number[] = [
 // ─── Color & intensity helpers ────────────────────────────────────────────────
 
 /**
- * Bookmap-inspired heat gradient:
- * near-black → deep indigo → dark teal → green → gold (critical wall)
- * All within Lumora's dark aesthetic.
+ * Professional liquidity heatmap palette — Bookmap/CoinGlass inspired,
+ * tuned to Lumora's dark background:
+ *
+ *  0–4  %  empty          near-black / deep purple bg
+ *  5–14 %  low            dark navy blue
+ * 15–27 %  low-med        medium blue
+ * 28–41 %  medium         bright blue → cyan
+ * 42–54 %  med-high       teal / cyan
+ * 55–67 %  high           green
+ * 68–79 %  strong         lime green
+ * 80–89 %  very strong    yellow-green / yellow
+ * 90–94 %  near-critical  orange
+ * 95+  %  critical wall   bright red-orange / near-white edge
  */
 function heatBg(v: number): string {
-  if (v < 5)  return "rgba(10,8,20,0.55)";
-  if (v < 15) return "rgba(14,10,36,0.75)";
-  if (v < 28) return "rgba(8,18,62,0.82)";
-  if (v < 42) return "rgba(4,38,82,0.87)";
-  if (v < 55) return "rgba(0,76,96,0.89)";
-  if (v < 68) return "rgba(0,122,106,0.91)";
-  if (v < 80) return "rgba(28,156,60,0.93)";
-  if (v < 90) return "rgba(148,176,20,0.95)";
-  return "rgba(214,154,10,0.97)"; // gold — critical wall
+  if (v <  5) return "rgba(10,8,22,0.60)";           // empty — near-black
+  if (v < 15) return "rgba(14,24,72,0.78)";           // low — dark navy
+  if (v < 28) return "rgba(18,56,140,0.84)";          // low-med — medium blue
+  if (v < 42) return "rgba(10,100,190,0.87)";         // medium — bright blue
+  if (v < 55) return "rgba(0,150,180,0.89)";          // med-high — cyan
+  if (v < 68) return "rgba(0,170,100,0.91)";          // high — teal-green
+  if (v < 80) return "rgba(50,190,40,0.93)";          // strong — green
+  if (v < 90) return "rgba(200,200,0,0.95)";          // very strong — yellow
+  if (v < 95) return "rgba(240,120,0,0.96)";          // near-critical — orange
+  return      "rgba(255,60,30,0.98)";                 // critical wall — red-orange
 }
 
 /** Per-cell intensity: walls are persistent; background has noise + spill */
@@ -147,20 +158,33 @@ function DepthProfile() {
 
 // ─── Legend gradient ──────────────────────────────────────────────────────────
 
+const LEGEND_STEPS = [
+  { v:  2, label: "Empty"    },
+  { v: 10, label: "Low"      },
+  { v: 22, label: ""         },
+  { v: 35, label: "Medium"   },
+  { v: 48, label: ""         },
+  { v: 62, label: "High"     },
+  { v: 75, label: ""         },
+  { v: 85, label: "Strong"   },
+  { v: 92, label: "Critical" },
+  { v: 97, label: "Wall"     },
+];
+
 function HeatLegend() {
-  const steps = [0, 14, 28, 42, 56, 70, 84, 100];
   return (
-    <div className="hidden md:flex items-center gap-1">
-      <span className="text-[10px] text-lumora-muted mr-0.5">Low</span>
-      {steps.map((v) => (
-        <div
-          key={v}
-          className="h-3 w-4 rounded-sm"
-          style={{ background: heatBg(v) }}
-          title={`${v}%`}
-        />
+    <div className="hidden md:flex items-center gap-0.5">
+      {LEGEND_STEPS.map(({ v, label }) => (
+        <div key={v} className="flex flex-col items-center gap-0.5" title={`~${v}% intensity`}>
+          <div
+            className="h-3 w-5 rounded-sm"
+            style={{ background: heatBg(v) }}
+          />
+          {label && (
+            <span className="text-[8px] text-lumora-muted leading-none">{label}</span>
+          )}
+        </div>
       ))}
-      <span className="text-[10px] text-lumora-muted ml-0.5">Wall</span>
     </div>
   );
 }
