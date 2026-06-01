@@ -156,14 +156,8 @@ _CSS = """<style>
 }
 </style>"""
 
-_css_injected = False
-
-
 def _inject_css() -> None:
-    global _css_injected
-    if not _css_injected:
-        st.markdown(_CSS, unsafe_allow_html=True)
-        _css_injected = True
+    st.markdown(_CSS, unsafe_allow_html=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
