@@ -109,14 +109,8 @@ _HEATMAP_CSS = """<style>
 }
 </style>"""
 
-_heatmap_css_done = False
-
-
 def _inject_heatmap_css() -> None:
-    global _heatmap_css_done
-    if not _heatmap_css_done:
-        st.markdown(_HEATMAP_CSS, unsafe_allow_html=True)
-        _heatmap_css_done = True
+    st.markdown(_HEATMAP_CSS, unsafe_allow_html=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
