@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, Zap, Layers, Bell, BookOpen, Monitor, ArrowRight, Github, MessageCircle } from "lucide-react";
+import { Activity, Zap, Layers, Bell, BookOpen, Monitor, ArrowRight, MessageCircle } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { roadmapItems } from "@/lib/mock-data";
@@ -21,7 +21,7 @@ const features = [
   {
     icon: Zap,
     title: "Whale Alert Engine",
-    desc: "Detect large spot and derivatives orders across Binance, Bybit, OKX and Coinbase in real time.",
+    desc: "Track large spot and derivatives whale activity across Binance, Bybit, OKX and Coinbase in real time.",
     badge: "Live",
   },
   {
@@ -77,25 +77,31 @@ export default function LandingPage() {
             Now in Private Beta — Limited Access
           </Badge>
           <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-lumora-text leading-tight">
-            Market Intelligence
+            Market Intelligence for
             <br />
-            <span className="text-neon-purple">for Serious Traders</span>
+            <span className="text-neon-purple">Serious Crypto Traders</span>
           </h1>
           <p className="mt-6 text-lg text-lumora-text-dim max-w-2xl mx-auto leading-relaxed">
-            Lumora gives you orderbook depth, whale order detection, and liquidity mapping in one terminal —
-            so you see what's happening before it moves price.
+            See liquidity walls, whale activity and orderbook pressure before they become obvious on the chart.
+          </p>
+          <p className="mt-3 text-sm text-lumora-muted max-w-xl mx-auto">
+            Lumora combines orderbook depth, liquidity mapping, whale alerts and market setup context in one premium trading terminal.
           </p>
           <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
             <Link
               href="/dashboard"
               className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-lumora-purple text-white font-semibold hover:bg-purple-500 transition-colors shadow-neon-purple"
             >
-              Try the App <ArrowRight className="h-4 w-4" />
+              Open App <ArrowRight className="h-4 w-4" />
             </Link>
-            <button className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-lumora-border text-lumora-text font-medium hover:border-lumora-purple/50 hover:bg-lumora-surface transition-all">
+            {/* TODO: replace with Lumora Discord invite */}
+            <a
+              href="#"
+              className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-lumora-border text-lumora-text font-medium hover:border-lumora-purple/50 hover:bg-lumora-surface transition-all"
+            >
               <MessageCircle className="h-4 w-4 text-lumora-cyan" />
               Join Discord
-            </button>
+            </a>
           </div>
         </div>
       </section>
@@ -139,10 +145,14 @@ export default function LandingPage() {
               <button className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-lumora-purple text-white font-semibold hover:bg-purple-500 transition-colors">
                 Request Beta Access
               </button>
-              <button className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-lumora-border text-lumora-text font-medium hover:border-lumora-cyan/50 transition-all">
+              {/* TODO: replace with Lumora Discord invite */}
+              <a
+                href="#"
+                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-lumora-border text-lumora-text font-medium hover:border-lumora-cyan/50 transition-all"
+              >
                 <MessageCircle className="h-4 w-4 text-lumora-cyan" />
-                Discord Community
-              </button>
+                Join Discord
+              </a>
             </div>
           </GlassCard>
         </div>
