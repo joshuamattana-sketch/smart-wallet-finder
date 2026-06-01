@@ -637,6 +637,72 @@ export default function LiquidityMapPage() {
         ))}
       </div>
 
+      {/* API Status Panel */}
+      <GlassCard className="p-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {/* Title + status dot */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">
+              API Status
+            </span>
+            <span
+              className={clsx(
+                "inline-block w-1.5 h-1.5 rounded-full",
+                loading   ? "bg-yellow-400 animate-pulse" :
+                apiError  ? "bg-red-400" :
+                payload   ? "bg-emerald-400" :
+                            "bg-lumora-muted"
+              )}
+            />
+            <span
+              className={clsx(
+                "text-[10px] font-medium",
+                loading   ? "text-yellow-400" :
+                apiError  ? "text-red-400" :
+                payload   ? "text-emerald-400" :
+                            "text-lumora-muted"
+              )}
+            >
+              {loading ? "Loading" : apiError ? "Error" : payload ? "Connected" : "—"}
+            </span>
+          </div>
+
+          <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+
+          {/* Key/value pairs */}
+          {[
+            { k: "Symbol",      v: payload?.symbol      ?? symbol },
+            { k: "Exchange",    v: payload?.exchange     ?? exchangeToApiSlug(exchange) },
+            { k: "Timeframe",   v: payload?.timeframe    ?? timeframe },
+            { k: "Cells",       v: payload ? String(payload.meta.cellCount)  : "—" },
+            { k: "Walls",       v: payload ? String(payload.meta.wallCount)  : "—" },
+            {
+              k: "Generated",
+              v: payload
+                ? new Date(payload.meta.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                : "—",
+            },
+            { k: "Demo",        v: payload ? (payload.meta.isDemo ? "Yes" : "No") : "—" },
+          ].map(({ k, v }) => (
+            <div key={k} className="flex items-center gap-1">
+              <span className="text-[9px] uppercase tracking-wide text-lumora-muted">{k}</span>
+              <span className="num text-[10px] text-lumora-text font-medium">{v}</span>
+            </div>
+          ))}
+
+          {/* Error detail */}
+          {apiError && (
+            <>
+              <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+              <span className="flex items-center gap-1 text-[10px] text-red-400">
+                <AlertCircle className="h-3 w-3 shrink-0" />
+                {apiError}
+              </span>
+            </>
+          )}
+        </div>
+      </GlassCard>
+
     </div>
   );
 }
