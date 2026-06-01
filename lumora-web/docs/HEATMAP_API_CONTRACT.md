@@ -171,6 +171,27 @@ single highest-liquidity bucket in the snapshot window.
 | `"ask"`   | Bucket contains only ask liquidity.              |
 | `"mixed"` | Bucket straddles the spread — both sides present.|
 
+---
+
+### `pricePath` (optional)
+
+Live/history exporters may include a `pricePath` array — one point per time
+bucket — so the UI can draw a mid-price line over the heatmap:
+
+```json
+"pricePath": [
+  { "t": "2026-06-01T12:00:00+00:00", "price": 67495.0, "bestBid": 67490.0, "bestAsk": 67500.0 }
+]
+```
+
+- `t` matches an entry in `timeBuckets`.
+- `price` is the mid price `(bestBid + bestAsk) / 2`.
+- When present, the latest mid is also mirrored to `summary.currentPrice` and
+  `meta.currentPrice`.
+
+The key is **optional**: the mock endpoint and older fixtures omit it, and the
+Canvas renderer simply draws no line when it is absent — nothing crashes.
+
 ### `walls[].label`
 
 | Label              | Side    |

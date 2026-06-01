@@ -30,14 +30,23 @@ def build_heatmap_api_payload(
     matrix: dict,
     timeframe: str = "5m",
     exchange: str = "binance_spot",
+    price_path: list | None = None,
+    current_price: float | None = None,
 ) -> dict:
     """
     Convert a built heatmap matrix into a frontend-ready API payload.
 
     Args:
-        matrix:    Result of build_heatmap_matrix().
-        timeframe: Candle timeframe label. Must be one of VALID_TIMEFRAMES.
-        exchange:  Exchange identifier string.
+        matrix:        Result of build_heatmap_matrix().
+        timeframe:     Candle timeframe label. Must be one of VALID_TIMEFRAMES.
+        exchange:      Exchange identifier string.
+        price_path:    Optional list of price points (one per time bucket), each
+                       a dict like {"t": iso, "price": mid, "bestBid": ...,
+                       "bestAsk": ...}. When provided it is included as
+                       payload["pricePath"]; otherwise the key is omitted and
+                       older consumers keep working unchanged.
+        current_price: Optional latest mid price. When provided it is stamped
+                       into summary.currentPrice and meta.currentPrice.
 
     Returns:
         Dict suitable for JSON serialisation and canvas rendering.
@@ -58,7 +67,7 @@ def build_heatmap_api_payload(
     cells      = compressed.get("cells", [])
     walls      = compressed.get("walls", [])
 
-    return {
+    payload = {
         "symbol":      matrix.get("symbol") or "UNKNOWN",
         "exchange":    exchange,
         "timeframe":   timeframe,
@@ -77,6 +86,16 @@ def build_heatmap_api_payload(
             "isDemo":        False,
         },
     }
+
+    # Optional price-path overlay — only added when provided so existing
+    # payloads/consumers stay unchanged.
+    if price_path is not None:
+        payload["pricePath"] = price_path
+    if current_price is not None:
+        payload["summary"]["currentPrice"] = current_price
+        payload["meta"]["currentPrice"] = current_price
+
+    return payload
 
 
 # ── build_demo_heatmap_api_payload ────────────────────────────────────────────

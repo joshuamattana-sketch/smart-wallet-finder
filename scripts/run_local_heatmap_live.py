@@ -60,6 +60,28 @@ def _next_timestamp(prev: datetime | None) -> datetime:
     return now
 
 
+def _price_point(snapshot: dict, t_iso: str) -> dict | None:
+    """
+    Build a single price-path point from a depth snapshot.
+
+    Returns {t, price (mid), bestBid, bestAsk} or None when either side of the
+    book is empty (so the caller can simply skip it without crashing).
+    """
+    bids = snapshot.get("bids") or []
+    asks = snapshot.get("asks") or []
+    if not bids or not asks:
+        return None
+    best_bid = max(lv["price"] for lv in bids)
+    best_ask = min(lv["price"] for lv in asks)
+    mid = (best_bid + best_ask) / 2.0
+    return {
+        "t": t_iso,
+        "price": round(mid, 2),
+        "bestBid": best_bid,
+        "bestAsk": best_ask,
+    }
+
+
 def write_payload_atomic(payload: dict, output: Path) -> None:
     """
     Write payload to `output` atomically: write a temp file in the same dir,
@@ -83,10 +105,18 @@ def build_live_payload(
     interval: float,
     max_frames: int,
     sample_count: int,
+    price_path: list[dict] | None = None,
 ) -> dict:
     """Build the API payload for the current rolling frame window + live meta."""
     matrix = build_heatmap_matrix(frames)
-    payload = build_heatmap_api_payload(matrix, timeframe=timeframe, exchange=EXCHANGE)
+    current_price = price_path[-1]["price"] if price_path else None
+    payload = build_heatmap_api_payload(
+        matrix,
+        timeframe=timeframe,
+        exchange=EXCHANGE,
+        price_path=price_path if price_path is not None else [],
+        current_price=current_price,
+    )
 
     meta = payload["meta"]
     meta["isDemo"] = False
@@ -126,6 +156,7 @@ def run_live(
         raise ValueError(f"max-frames must be > 0, got {max_frames}")
 
     frames: list[dict] = []
+    price_path: list[dict] = []
     last_ts: datetime | None = None
     success = 0
 
@@ -135,7 +166,8 @@ def run_live(
                 snapshot = fetch_depth_snapshot(symbol, limit)
                 ts = _next_timestamp(last_ts)
                 last_ts = ts
-                snapshot["captured_at"] = ts.isoformat()
+                ts_iso = ts.isoformat()
+                snapshot["captured_at"] = ts_iso
 
                 frame = build_heatmap_cells(
                     snapshot,
@@ -143,13 +175,22 @@ def run_live(
                     wall_threshold_usd=wall_threshold_usd,
                 )
                 frames.append(frame)
-                # Keep only the most recent max_frames.
+
+                # Track the mid-price point in lock-step with the frame so the
+                # path stays aligned to the heatmap's time buckets.
+                point = _price_point(snapshot, ts_iso)
+                if point is not None:
+                    price_path.append(point)
+
+                # Keep only the most recent max_frames on both lists.
                 if len(frames) > max_frames:
                     frames = frames[-max_frames:]
+                if len(price_path) > max_frames:
+                    price_path = price_path[-max_frames:]
 
                 success += 1
                 payload = build_live_payload(
-                    frames, timeframe, interval, max_frames, success,
+                    frames, timeframe, interval, max_frames, success, price_path,
                 )
                 write_payload_atomic(payload, output)
 

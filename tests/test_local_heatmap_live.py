@@ -147,3 +147,36 @@ class TestLocalHeatmapLive:
         assert fetch.call_count == 2
         for call in fetch.call_args_list:
             assert call.args == ("BTCUSDT", 500)
+
+    # ── price path ──────────────────────────────────────────────────────────
+
+    def test_output_contains_price_path(self, tmp_path):
+        _, out, _, _ = _run(tmp_path, ["--samples", "3", "--interval", "2"])
+        payload = _payload(out)
+        assert isinstance(payload["pricePath"], list)
+        assert len(payload["pricePath"]) > 0
+        pt = payload["pricePath"][0]
+        assert {"t", "price", "bestBid", "bestAsk"} <= set(pt.keys())
+
+    def test_price_path_length_matches_time_buckets(self, tmp_path):
+        _, out, _, _ = _run(tmp_path, ["--samples", "4", "--interval", "2"])
+        payload = _payload(out)
+        assert len(payload["pricePath"]) == len(payload["timeBuckets"])
+
+    def test_price_path_capped_by_max_frames(self, tmp_path):
+        _, out, _, _ = _run(tmp_path, ["--samples", "5", "--interval", "2",
+                                       "--max-frames", "2"])
+        payload = _payload(out)
+        assert len(payload["pricePath"]) == 2
+        assert len(payload["pricePath"]) == len(payload["timeBuckets"])
+
+    def test_mid_price_computed_from_best_bid_ask(self, tmp_path):
+        # mock best bid = 67490, best ask = 67500 → mid = 67495.0
+        _, out, _, _ = _run(tmp_path, ["--samples", "2", "--interval", "2"])
+        payload = _payload(out)
+        pt = payload["pricePath"][-1]
+        assert pt["bestBid"] == 67490.0
+        assert pt["bestAsk"] == 67500.0
+        assert pt["price"] == 67495.0
+        assert payload["meta"]["currentPrice"] == 67495.0
+        assert payload["summary"]["currentPrice"] == 67495.0

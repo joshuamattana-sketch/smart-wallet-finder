@@ -164,3 +164,45 @@ class TestRealHeatmapHistoryExport:
         assert mock_fetch.call_count == 2
         for call in mock_fetch.call_args_list:
             assert call.args == ("BTCUSDT", 500)
+
+    # ── price path ──────────────────────────────────────────────────────────
+
+    def test_price_path_present_and_matches_buckets(self, tmp_path):
+        out = tmp_path / "h.json"
+        with patch.object(exporter, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(exporter.time, "sleep"):
+            exporter.main(["--samples", "4", "--interval", "0", "--output", str(out)])
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert isinstance(payload["pricePath"], list)
+        assert len(payload["pricePath"]) == len(payload["timeBuckets"]) == 4
+
+    def test_mid_price_computed(self, tmp_path):
+        out = tmp_path / "h.json"
+        with patch.object(exporter, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(exporter.time, "sleep"):
+            exporter.main(["--samples", "2", "--interval", "0", "--output", str(out)])
+        pt = json.loads(out.read_text(encoding="utf-8"))["pricePath"][-1]
+        assert pt["bestBid"] == 67490.0
+        assert pt["bestAsk"] == 67500.0
+        assert pt["price"] == 67495.0
+
+    def test_payload_without_price_path_stays_valid(self):
+        # build_heatmap_api_payload without price_path must omit the key and
+        # still validate — older consumers keep working.
+        from services.orderbook_depth_bucketer import build_heatmap_cells
+        from services.heatmap_matrix_builder import build_heatmap_matrix
+        from services.heatmap_api_payload import (
+            build_heatmap_api_payload,
+            validate_heatmap_api_payload,
+        )
+
+        snap = dict(_mock_snapshot())
+        snap["captured_at"] = "2026-06-01T12:00:00+00:00"
+        frame = build_heatmap_cells(snap, price_step=10.0, wall_threshold_usd=500_000.0)
+        matrix = build_heatmap_matrix([frame])
+        payload = build_heatmap_api_payload(matrix, timeframe="5m")
+
+        assert "pricePath" not in payload
+        assert validate_heatmap_api_payload(payload) is True

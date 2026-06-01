@@ -39,6 +39,19 @@ export interface HeatmapSummary {
   max_ask_intensity: number;
   max_total_intensity: number;
   wall_count: number;
+  /** Latest mid price, when a price path is available. */
+  currentPrice?: number;
+}
+
+/**
+ * One point on the price path overlay (one per time bucket).
+ * `t` matches an entry in the payload's timeBuckets array.
+ */
+export interface HeatmapPricePoint {
+  t: string;          // ISO 8601 timestamp
+  price: number;      // mid price = (bestBid + bestAsk) / 2
+  bestBid?: number;
+  bestAsk?: number;
 }
 
 /** Metadata envelope included with every response. */
@@ -76,6 +89,8 @@ export interface HeatmapMeta {
   intervalSeconds?: number;
   /** Rolling frame cap used by the local live writer. */
   maxFrames?: number;
+  /** Latest mid price, mirrored from summary.currentPrice when available. */
+  currentPrice?: number;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */
@@ -91,6 +106,8 @@ export interface HeatmapApiPayload {
   walls: HeatmapWall[];
   summary: HeatmapSummary;
   meta: HeatmapMeta;
+  /** Optional mid-price path overlay, one point per time bucket. */
+  pricePath?: HeatmapPricePoint[];
 }
 
 /** Error body returned by GET /api/heatmap on 4xx. */

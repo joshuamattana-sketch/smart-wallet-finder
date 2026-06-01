@@ -272,6 +272,68 @@ export function HeatmapCanvas({
         ctx.fillRect(PAD_LEFT + plotW - 3, y - 2, 3, 4);
       }
 
+      // ── Layer 4.5: live price path overlay (over the heatmap + walls) ───────
+      // Drawn only when payload.pricePath is present; missing/empty → no line,
+      // no crash.
+      const pricePath = payload.pricePath;
+      if (Array.isArray(pricePath) && pricePath.length > 0) {
+        const colW = plotW / buckets;
+        const timeIndex = new Map<string, number>();
+        payload.timeBuckets.forEach((t, i) => timeIndex.set(t, i));
+
+        const pts: Array<{ x: number; y: number; price: number }> = [];
+        for (let i = 0; i < pricePath.length; i++) {
+          const pp = pricePath[i];
+          if (!pp || typeof pp.price !== "number" || !Number.isFinite(pp.price)) continue;
+          const idx = timeIndex.has(pp.t) ? (timeIndex.get(pp.t) as number) : i;
+          const x = PAD_LEFT + (idx + 0.5) * colW;
+          const yRaw = priceToY(pp.price);
+          const y = Math.max(PAD_TOP, Math.min(PAD_TOP + plotH, yRaw));
+          pts.push({ x, y, price: pp.price });
+        }
+
+        if (pts.length > 0) {
+          // Bright line with a soft glow so it stays visible over hot cells.
+          ctx.save();
+          ctx.beginPath();
+          pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          ctx.lineWidth = 2;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          ctx.shadowColor = "rgba(255,255,255,0.45)";
+          ctx.shadowBlur = 4;
+          ctx.stroke();
+          ctx.restore();
+
+          // Per-sample dots — only when sparse enough to stay readable.
+          if (pts.length <= 80) {
+            ctx.fillStyle = "rgba(255,255,255,0.8)";
+            for (const p of pts) {
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, 1.4, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+
+          // Current price: marker dot + dezent label at the latest point.
+          const last = pts[pts.length - 1];
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.arc(last.x, last.y, 2.6, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "rgba(255,255,255,0.95)";
+          ctx.font = "bold 10px sans-serif";
+          ctx.textAlign = "right";
+          ctx.fillText(
+            last.price.toLocaleString(undefined, { maximumFractionDigits: 1 }),
+            PAD_LEFT + plotW - 6,
+            Math.max(PAD_TOP + 9, last.y - 5),
+          );
+        }
+      }
+
       // ── Layer 5: current price line (if in range) ───────────────────────────
       if (
         typeof currentPrice === "number" &&

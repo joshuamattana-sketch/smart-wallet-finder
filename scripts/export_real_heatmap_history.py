@@ -70,6 +70,18 @@ def _next_timestamp(prev: datetime | None) -> datetime:
     return now
 
 
+def _price_point(snapshot: dict, t_iso: str) -> dict | None:
+    """Mid-price point {t, price, bestBid, bestAsk} or None if a side is empty."""
+    bids = snapshot.get("bids") or []
+    asks = snapshot.get("asks") or []
+    if not bids or not asks:
+        return None
+    best_bid = max(lv["price"] for lv in bids)
+    best_ask = min(lv["price"] for lv in asks)
+    mid = (best_bid + best_ask) / 2.0
+    return {"t": t_iso, "price": round(mid, 2), "bestBid": best_bid, "bestAsk": best_ask}
+
+
 # ── Core ──────────────────────────────────────────────────────────────────────
 
 def build_history_payload(
@@ -102,6 +114,7 @@ def build_history_payload(
         raise ValueError(f"interval must be >= 0, got {interval}")
 
     frames: list[dict] = []
+    price_path: list[dict] = []
     last_ts: datetime | None = None
 
     for i in range(samples):
@@ -111,7 +124,8 @@ def build_history_payload(
         # own time bucket in the matrix.
         ts = _next_timestamp(last_ts)
         last_ts = ts
-        snapshot["captured_at"] = ts.isoformat()
+        ts_iso = ts.isoformat()
+        snapshot["captured_at"] = ts_iso
 
         frame = build_heatmap_cells(
             snapshot,
@@ -119,6 +133,10 @@ def build_history_payload(
             wall_threshold_usd=wall_threshold_usd,
         )
         frames.append(frame)
+
+        point = _price_point(snapshot, ts_iso)
+        if point is not None:
+            price_path.append(point)
 
         if progress is not None:
             progress(
@@ -132,7 +150,14 @@ def build_history_payload(
             time.sleep(interval)
 
     matrix = build_heatmap_matrix(frames)
-    payload = build_heatmap_api_payload(matrix, timeframe=timeframe, exchange=EXCHANGE)
+    current_price = price_path[-1]["price"] if price_path else None
+    payload = build_heatmap_api_payload(
+        matrix,
+        timeframe=timeframe,
+        exchange=EXCHANGE,
+        price_path=price_path,
+        current_price=current_price,
+    )
 
     meta = payload["meta"]
     meta["isDemo"] = False
