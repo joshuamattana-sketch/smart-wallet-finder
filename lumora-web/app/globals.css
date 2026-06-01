@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0a0812;
+  --surface: #110d1f;
+  --card: #16102a;
+  --border: #2a1f4a;
+  --purple: #8b5cf6;
+  --cyan: #22d3ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg);
+  color: #e2e8f0;
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a1f4a;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #8b5cf6;
+}
+
+/* Glass card utility */
+.glass {
+  background: linear-gradient(135deg, rgba(22,16,42,0.9) 0%, rgba(17,13,31,0.95) 100%);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(42,31,74,0.8);
+}
+
+.glass-hover {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.glass-hover:hover {
+  border-color: rgba(139,92,246,0.4);
+  box-shadow: 0 4px 24px rgba(139,92,246,0.12);
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  background: linear-gradient(90deg, #16102a 25%, #1e1540 50%, #16102a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Neon glow text */
+.text-neon-purple {
+  color: #c084fc;
+  text-shadow: 0 0 20px rgba(192,132,252,0.5);
+}
+.text-neon-cyan {
+  color: #22d3ee;
+  text-shadow: 0 0 20px rgba(34,211,238,0.5);
+}
+
+/* Number mono */
+.num {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
