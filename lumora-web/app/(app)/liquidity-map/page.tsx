@@ -216,6 +216,7 @@ export default function LiquidityMapPage() {
   const [symbol,    setSymbol]    = useState("BTCUSDT");
   const [exchange,  setExchange]  = useState("Binance Spot");
   const [timeframe, setTimeframe] = useState<string>("15m");
+  const [dataSource, setDataSource] = useState<"mock" | "fixture">("mock");
 
   const [payload,  setPayload]  = useState<HeatmapApiPayload | null>(null);
   const [loading,  setLoading]  = useState(false);
@@ -227,9 +228,11 @@ export default function LiquidityMapPage() {
     try {
       const tf  = timeframe.toLowerCase();
       const exSlug = exchangeToApiSlug(exchange);
-      const res = await fetch(
-        `/api/heatmap?symbol=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exSlug)}&timeframe=${encodeURIComponent(tf)}`
-      );
+      const params = new URLSearchParams({ symbol, exchange: exSlug, timeframe: tf });
+      // Fixture mode opts into locally exported payloads; the API falls back to
+      // mock automatically when no fixture file exists.
+      if (dataSource === "fixture") params.set("source", "fixture");
+      const res = await fetch(`/api/heatmap?${params.toString()}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
@@ -242,7 +245,7 @@ export default function LiquidityMapPage() {
     } finally {
       setLoading(false);
     }
-  }, [symbol, exchange, timeframe]);
+  }, [symbol, exchange, timeframe, dataSource]);
 
   useEffect(() => { fetchPayload(); }, [fetchPayload]);
 
@@ -337,6 +340,19 @@ export default function LiquidityMapPage() {
                   ? "bg-lumora-purple text-white"
                   : "text-lumora-muted hover:text-lumora-text bg-lumora-card")}>
               {tf}
+            </button>
+          ))}
+        </div>
+        <div className="h-4 w-px bg-lumora-border hidden sm:block" />
+        {/* Data source toggle — Mock vs locally exported Fixture */}
+        <div className="flex rounded-md border border-lumora-border overflow-hidden" title="Heatmap data source">
+          {(["mock", "fixture"] as const).map(src => (
+            <button key={src} onClick={() => setDataSource(src)}
+              className={clsx("px-2.5 py-1.5 text-xs font-medium capitalize transition-colors",
+                dataSource === src
+                  ? "bg-lumora-purple text-white"
+                  : "text-lumora-muted hover:text-lumora-text bg-lumora-card")}>
+              {src}
             </button>
           ))}
         </div>
@@ -752,6 +768,10 @@ export default function LiquidityMapPage() {
                 : "—",
             },
             { k: "Demo",        v: payload ? (payload.meta.isDemo ? "Yes" : "No") : "—" },
+            // Requested data source (toggle) and what meta actually reports —
+            // reveals a fixture→mock fallback when no fixture file exists.
+            { k: "Source",      v: dataSource },
+            { k: "Meta Src",    v: payload?.meta.source ?? payload?.meta.dataSource ?? "—" },
           ].map(({ k, v }) => (
             <div key={k} className="flex items-center gap-1">
               <span className="text-[9px] uppercase tracking-wide text-lumora-muted">{k}</span>
