@@ -7,6 +7,12 @@ import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
+import {
+  MARKET_SOURCES,
+  getMarketSource,
+  getMarketStatusLabel,
+  getMarketSourceNote,
+} from "@/lib/market-sources";
 
 // ── Layout constants ───────────────────────────────────────────────────────────
 const CHART_H   = 560;
@@ -15,7 +21,7 @@ const MAX_PRICE = 69_500;
 const PRICE_RNG = MAX_PRICE - MIN_PRICE;
 const CURRENT_PRICE = 67_420;
 
-const SYMBOLS    = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT", "XMRUSDT"];
+const SYMBOLS    = MARKET_SOURCES.map(m => m.symbol);
 const EXCHANGES  = ["Binance Spot", "Bybit Spot", "OKX Spot"];
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 
@@ -270,13 +276,13 @@ export default function LiquidityMapPage() {
   const maxBidI = summaryData ? `${Math.round(summaryData.max_bid_intensity)}% bid` : "+0.42 imbal";
   const maxAskI = summaryData ? `${Math.round(summaryData.max_ask_intensity)}% ask max` : "Break → flush to $66,500";
 
-  // Unsupported-source note — driven by the payload when present, with a
-  // symbol-based fallback so the hint appears immediately on selection.
-  const sourceNote =
-    payload?.meta.sourceNote ??
-    (symbol === "XMRUSDT"
-      ? "XMR source planned. Binance Spot depth unavailable for Monero."
-      : null);
+  // Market source metadata — driven by the registry so it shows immediately on
+  // selection, with the payload's note preferred once loaded.
+  const sourceNote   = payload?.meta.sourceNote ?? getMarketSourceNote(symbol);
+  const statusLabel  = getMarketStatusLabel(symbol);
+  const marketStatus = payload?.meta.marketStatus ?? getMarketSource(symbol)?.status ?? "unsupported";
+  const statusVariant: "green" | "yellow" | "purple" =
+    marketStatus === "supported" ? "green" : marketStatus === "demo" ? "purple" : "yellow";
 
   // Key zones — use payload walls if available, otherwise static fallback
   const apiWalls = payload?.walls ?? [];
@@ -293,7 +299,10 @@ export default function LiquidityMapPage() {
             Spot orderbook depth over time{isDemo ? " — demo data" : ""}
           </p>
         </div>
-        {isDemo && <Badge variant="yellow">Demo Data</Badge>}
+        <div className="flex items-center gap-2">
+          <Badge variant={statusVariant}>{statusLabel}</Badge>
+          {isDemo && <Badge variant="yellow">Demo Data</Badge>}
+        </div>
       </div>
 
       {/* Controls */}
@@ -302,7 +311,11 @@ export default function LiquidityMapPage() {
         <div className="relative">
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
             className="appearance-none bg-lumora-bg border border-lumora-border text-lumora-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple num cursor-pointer">
-            {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
+            {SYMBOLS.map(s => (
+              <option key={s} value={s}>
+                {getMarketSource(s)?.displayName ?? s}
+              </option>
+            ))}
           </select>
           <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lumora-muted pointer-events-none" />
         </div>
@@ -354,9 +367,17 @@ export default function LiquidityMapPage() {
         </div>
       )}
 
-      {/* Unsupported-source note (e.g. XMR planned, no Binance Spot depth) */}
+      {/* Market source hint — muted for supported markets, highlighted for
+          demo/planned (e.g. XMR has no Binance Spot depth). */}
       {sourceNote && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-yellow-300 text-xs">
+        <div
+          className={clsx(
+            "flex items-center gap-2 px-3 py-2 rounded-lg text-xs",
+            marketStatus === "supported"
+              ? "border border-lumora-border bg-lumora-card text-lumora-muted"
+              : "border border-yellow-500/30 bg-yellow-500/10 text-yellow-300"
+          )}
+        >
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           <span>{sourceNote}</span>
         </div>

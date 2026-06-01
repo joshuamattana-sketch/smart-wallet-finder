@@ -56,6 +56,10 @@ export interface HeatmapMeta {
   sourceAvailable?: boolean;
   /** Human-readable reason shown when sourceAvailable is false. */
   sourceNote?: string | null;
+  /** Market lifecycle status from the market-sources registry. */
+  marketStatus?: "supported" | "demo" | "planned" | "unsupported";
+  /** Resolved data source slug for this market (e.g. "binance_spot"). */
+  dataSource?: string;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */
