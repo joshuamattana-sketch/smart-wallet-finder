@@ -333,6 +333,9 @@ if "section_override" not in st.session_state:
 if "sw_detail_wallet" not in st.session_state:
     st.session_state.sw_detail_wallet = ""
 
+if "pro_selected_symbol" not in st.session_state:
+    st.session_state.pro_selected_symbol = ""
+
 if "last_auto_token_review" not in st.session_state:
     st.session_state.last_auto_token_review = pd.DataFrame()
 
@@ -6143,8 +6146,8 @@ _NAV_ITEMS = [
     ("Wallet Journal", "", "track"),
     ("Watchlist",      "", "track"),
     ("Paper Trading",  "", "track"),
-    ("Pro Terminal",   "", "pro"),
     ("Pro Dashboard",  "", "pro"),
+    ("Pro Terminal",   "", "pro"),
     ("Settings",       "", "system"),
 ]
 
@@ -13348,13 +13351,13 @@ No active trades yet.<br><span style="font-size:12px">Go to "Place trade" tab to
                 st.markdown('<div class="journal-mode-note"><b>Evidence timeline:</b> this shows why the opinion changed over time.</div>', unsafe_allow_html=True)
                 render_wallet_documentation_timeline(limit=100)
 
-    elif section == "Pro Terminal":
-        with safe_section("Pro Terminal"):
-            _render_pro_terminal()
-
     elif section == "Pro Dashboard":
         with safe_section("Pro Dashboard"):
             _render_pro_dashboard()
+
+    elif section == "Pro Terminal":
+        with safe_section("Pro Terminal"):
+            _render_pro_terminal()
 
     elif section == "Settings":
         st.title("Settings")

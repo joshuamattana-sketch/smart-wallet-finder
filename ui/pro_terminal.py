@@ -10,6 +10,7 @@ Rules:
 - No business logic here — only Streamlit orchestration.
 - All errors surface as user-visible warnings, never uncaught exceptions.
 - No WebSockets. Manual Refresh button only — no autorefresh.
+- Reads st.session_state["pro_selected_symbol"] set by Pro Dashboard.
 """
 
 from __future__ import annotations
@@ -35,8 +36,14 @@ from ui.components.orderbook_panel import render_orderbook_panel
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_SYMBOLS = list(DEFAULT_PRO_MARKETS[:3])  # BTCUSDT, ETHUSDT, SOLUSDT
-_DEPTH_LIMIT = 20
+# Live Binance-supported symbols shown in the selector
+_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+# HYPE is listed on Hyperliquid, not Binance — shown with a note if selected
+_BINANCE_SYMBOLS = set(_SYMBOLS)
+_HYPE_NOTE = "HYPEUSDT is traded on Hyperliquid, not Binance. Showing BTCUSDT instead."
+
+_DEPTH_LIMIT       = 20
 _STATE_KEY_SNAP    = "_pro_ob_snapshot"
 _STATE_KEY_METRICS = "_pro_ob_metrics"
 _STATE_KEY_ERROR   = "_pro_ob_error"
@@ -46,17 +53,12 @@ _STATE_KEY_DEMO    = "_pro_ob_demo_mode"
 
 _CSS = """
 <style>
-/* ── Pro Terminal ── */
 .pt-page-title {
     font-size: 26px; font-weight: 700; color: #f5f5f7;
     padding: 24px 0 2px; letter-spacing: -.01em;
 }
-.pt-page-sub {
-    font-size: 14px; color: #5a5b62; margin-bottom: 20px;
-}
-.pt-last-updated {
-    font-size: 11px; color: #3a3b42; padding: 4px 0;
-}
+.pt-page-sub { font-size: 14px; color: #5a5b62; margin-bottom: 20px; }
+.pt-last-updated { font-size: 11px; color: #3a3b42; padding: 4px 0; }
 .pt-error {
     background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3);
     border-radius: 12px; padding: 12px 16px;
@@ -74,9 +76,7 @@ _CSS = """
     border-radius: 14px; padding: 28px; text-align: center;
     font-size: 14px; color: #4a4b52;
 }
-.pt-summary-bar {
-    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
-}
+.pt-summary-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .pt-summary-chip {
     background: #1e1f23; border: 1px solid #2a2b30;
     border-radius: 8px; padding: 6px 12px;
@@ -88,57 +88,18 @@ _CSS = """
     letter-spacing: .08em; text-transform: uppercase;
     margin: 20px 0 10px;
 }
+.pt-hype-note {
+    background: rgba(124,92,252,.08); border: 1px solid rgba(124,92,252,.30);
+    border-radius: 10px; padding: 9px 14px;
+    font-size: 12px; color: #a78bfa; margin-bottom: 12px;
+}
 </style>
 """
-
-
-
-# ── Demo orderbook snapshot (used when Binance is region-blocked) ─────────────
-
-def _build_demo_snapshot(symbol: str) -> "OrderBookSnapshot":
-    """
-    Return a static demo OrderBookSnapshot so the panel renders even when
-    Binance is unavailable (HTTP 451 on hosted platforms).
-
-    Prices are approximate and clearly labelled as demo data.
-    """
-    from core.models import OrderBookLevel, OrderBookSnapshot
-    import time
-
-    # Approximate mid prices per symbol for a realistic-looking demo
-    _mid_prices = {"BTCUSDT": 67_500.0, "ETHUSDT": 3_500.0, "SOLUSDT": 175.0}
-    mid = _mid_prices.get(symbol, 100.0)
-
-    bids = [
-        OrderBookLevel(price=round(mid - (i + 1) * mid * 0.0002, 2),
-                       qty=round(0.5 + i * 0.3, 4),
-                       usd_size=0.0)
-        for i in range(10)
-    ]
-    asks = [
-        OrderBookLevel(price=round(mid + (i + 1) * mid * 0.0002, 2),
-                       qty=round(0.4 + i * 0.25, 4),
-                       usd_size=0.0)
-        for i in range(10)
-    ]
-    # Fill usd_size
-    for lvl in bids + asks:
-        object.__setattr__(lvl, 'usd_size', round(lvl.price * lvl.qty, 2))
-
-    return OrderBookSnapshot(
-        symbol=symbol,
-        exchange="binance-demo",
-        timestamp_ms=int(time.time() * 1000),
-        bids=bids,
-        asks=asks,
-        mid_price=mid,
-    )
 
 
 # ── Session state helpers ──────────────────────────────────────────────────────
 
 def _init_state() -> None:
-    """Initialise Pro Terminal session state keys if not already set."""
     defaults = {
         _STATE_KEY_SNAP:    None,
         _STATE_KEY_METRICS: None,
@@ -151,12 +112,66 @@ def _init_state() -> None:
         if key not in st.session_state:
             st.session_state[key] = default
 
+    # Initialise cross-page symbol key if missing
+    if "pro_selected_symbol" not in st.session_state:
+        st.session_state["pro_selected_symbol"] = ""
+
+
+def _resolve_incoming_symbol() -> str:
+    """
+    Return the symbol to pre-select in the dropdown.
+
+    Priority:
+      1. st.session_state["pro_selected_symbol"] set by Pro Dashboard
+         (consumed once — cleared after reading)
+      2. Last used symbol stored in _STATE_KEY_SYMBOL
+      3. Default: BTCUSDT
+    """
+    incoming = str(st.session_state.get("pro_selected_symbol", "")).strip().upper()
+    if incoming:
+        # Consume — don't keep re-triggering on every rerun
+        st.session_state["pro_selected_symbol"] = ""
+        # If it's HYPE or another non-Binance symbol, fall back to BTCUSDT
+        if incoming not in _BINANCE_SYMBOLS:
+            st.session_state[_STATE_KEY_SYMBOL] = _SYMBOLS[0]
+            return _SYMBOLS[0]
+        st.session_state[_STATE_KEY_SYMBOL] = incoming
+        return incoming
+
+    saved = str(st.session_state.get(_STATE_KEY_SYMBOL, _SYMBOLS[0]))
+    return saved if saved in _BINANCE_SYMBOLS else _SYMBOLS[0]
+
+
+# ── Demo snapshot builder ─────────────────────────────────────────────────────
+
+def _build_demo_snapshot(symbol: str) -> "OrderBookSnapshot":  # type: ignore[name-defined]
+    """Static demo OrderBookSnapshot for when Binance is region-blocked."""
+    from core.models import OrderBookLevel, OrderBookSnapshot
+    _mids = {"BTCUSDT": 67_500.0, "ETHUSDT": 3_500.0, "SOLUSDT": 175.0}
+    mid = _mids.get(symbol, 100.0)
+    bids = [
+        OrderBookLevel(price=round(mid - (i + 1) * mid * 0.0002, 2),
+                       qty=round(0.5 + i * 0.3, 4), usd_size=0.0)
+        for i in range(10)
+    ]
+    asks = [
+        OrderBookLevel(price=round(mid + (i + 1) * mid * 0.0002, 2),
+                       qty=round(0.4 + i * 0.25, 4), usd_size=0.0)
+        for i in range(10)
+    ]
+    for lvl in bids + asks:
+        object.__setattr__(lvl, "usd_size", round(lvl.price * lvl.qty, 2))
+    return OrderBookSnapshot(
+        symbol=symbol, exchange="binance-demo",
+        timestamp_ms=int(time.time() * 1000),
+        bids=bids, asks=asks, mid_price=mid,
+    )
+
+
+# ── Fetch ─────────────────────────────────────────────────────────────────────
 
 def _do_fetch(symbol: str) -> None:
-    """
-    Fetch orderbook from Binance and run analysis.
-    Stores results (or error) in session state. Never raises.
-    """
+    """Fetch orderbook and run analysis. Stores to session state. Never raises."""
     st.session_state[_STATE_KEY_ERROR]   = None
     st.session_state[_STATE_KEY_SNAP]    = None
     st.session_state[_STATE_KEY_METRICS] = None
@@ -171,14 +186,13 @@ def _do_fetch(symbol: str) -> None:
         snapshot = fetch_orderbook(sym, limit=_DEPTH_LIMIT)
         st.session_state[_STATE_KEY_DEMO] = False
     except RestrictedLocationError:
-        # Binance blocked on this hosting region — fall back to demo data silently
         st.session_state[_STATE_KEY_DEMO]    = True
         st.session_state[_STATE_KEY_ERROR]   = None
-        st.session_state[_STATE_KEY_SNAP]    = _build_demo_snapshot(sym)
+        snap = _build_demo_snapshot(sym)
+        st.session_state[_STATE_KEY_SNAP]    = snap
         st.session_state[_STATE_KEY_SYMBOL]  = sym
         st.session_state[_STATE_KEY_TS]      = None
-        from services.orderbook_engine import analyze_orderbook as _analyze
-        st.session_state[_STATE_KEY_METRICS] = _analyze(st.session_state[_STATE_KEY_SNAP])
+        st.session_state[_STATE_KEY_METRICS] = analyze_orderbook(snap)
         return
     except RateLimitError as exc:
         st.session_state[_STATE_KEY_ERROR] = ("ratelimit", str(exc))
@@ -208,17 +222,13 @@ def _do_fetch(symbol: str) -> None:
 # ── Error renderer ────────────────────────────────────────────────────────────
 
 def _render_error(error: tuple[str, str] | None) -> None:
-    """Render a user-friendly error card. Safe to call with None."""
     if error is None:
         return
-
     kind, msg = error
-
     if kind == "ratelimit":
         st.markdown(
             f'<div class="pt-rate-limit">'
-            f"<b>Rate limit hit.</b> Binance is temporarily blocking requests. "
-            f"Wait 30-60 seconds before refreshing.<br>"
+            f"<b>Rate limit hit.</b> Wait 30-60s before refreshing.<br>"
             f"<span style='font-size:11px;color:#a16207'>{msg}</span>"
             f"</div>",
             unsafe_allow_html=True,
@@ -238,9 +248,7 @@ def _render_error(error: tuple[str, str] | None) -> None:
         )
     elif kind == "analysis":
         st.markdown(
-            f'<div class="pt-error">'
-            f"<b>Analysis error.</b> {msg}"
-            f"</div>",
+            f'<div class="pt-error"><b>Analysis error.</b> {msg}</div>',
             unsafe_allow_html=True,
         )
     else:
@@ -253,36 +261,25 @@ def _render_error(error: tuple[str, str] | None) -> None:
 # ── Summary bar ───────────────────────────────────────────────────────────────
 
 def _render_summary_bar(metrics, snapshot) -> None:
-    """Render a compact one-line summary of the most important metrics."""
     if metrics is None:
         return
+    _ts  = st.session_state.get(_STATE_KEY_TS)
+    _ts_str = datetime.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") if _ts else "-"
+    _lvl = f"{len(snapshot.bids)}x{len(snapshot.asks)}" if snapshot else "-"
 
-    _ts = st.session_state.get(_STATE_KEY_TS)
-    _ts_str = (
-        datetime.datetime.fromtimestamp(_ts).strftime("%H:%M:%S") if _ts else "-"
-    )
-    _levels_str = (
-        f"{len(snapshot.bids)}x{len(snapshot.asks)}" if snapshot else "-"
-    )
+    def _pfmt(p: float) -> str:
+        return f"{p:,.2f}" if p >= 1_000 else f"{p:.4f}" if p >= 1 else f"{p:.6f}"
 
     st.markdown(
         f"""<div class="pt-summary-bar">
-  <div class="pt-summary-chip">Mid <b>${_price_str_short(metrics.mid_price)}</b></div>
+  <div class="pt-summary-chip">Mid <b>${_pfmt(metrics.mid_price)}</b></div>
   <div class="pt-summary-chip">Spread <b>{metrics.spread_pct:.3f}%</b></div>
-  <div class="pt-summary-chip">Levels <b>{_levels_str}</b></div>
+  <div class="pt-summary-chip">Levels <b>{_lvl}</b></div>
   <div class="pt-summary-chip">Liquidity <b>{metrics.liquidity_score:.0f}/100</b></div>
   <div class="pt-summary-chip">Last fetch <b>{_ts_str}</b></div>
 </div>""",
         unsafe_allow_html=True,
     )
-
-
-def _price_str_short(price: float) -> str:
-    if price >= 1_000:
-        return f"{price:,.2f}"
-    if price >= 1:
-        return f"{price:.4f}"
-    return f"{price:.6f}"
 
 
 # ── Main render function ───────────────────────────────────────────────────────
@@ -291,32 +288,44 @@ def render_pro_terminal() -> None:
     """
     Render the full Pro Trading Terminal page.
 
-    Call this from app.py when section == "Pro Terminal".
-    Manual Refresh only — autorefresh removed to prevent rendering corruption.
+    Reads st.session_state["pro_selected_symbol"] if set by Pro Dashboard,
+    pre-selects it in the symbol dropdown, then clears it.
+    Manual Refresh only.
     """
     _init_state()
-
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # ── Page header ───────────────────────────────────────────────────────────
     st.markdown('<div class="pt-page-title">Pro Terminal</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="pt-page-sub">Live Binance orderbook — depth, imbalance, walls, slippage.</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Toolbar: symbol + depth + refresh ─────────────────────────────────────
+    # ── Resolve symbol (may come from Pro Dashboard) ──────────────────────────
+    _initial_sym = _resolve_incoming_symbol()
+
+    # Show HYPE note if it was requested but not available on Binance
+    _raw_incoming = str(st.session_state.get("pro_selected_symbol", "")).strip().upper()
+    # Note: already cleared by _resolve_incoming_symbol, so check the stored symbol
+    # We detect the HYPE case by checking if the stored key was HYPEUSDT before fallback
+    # Simpler: just check if user's last session symbol was HYPE
+    if st.session_state.get("_pt_showed_hype_note"):
+        st.markdown(
+            f'<div class="pt-hype-note">{_HYPE_NOTE}</div>',
+            unsafe_allow_html=True,
+        )
+        st.session_state["_pt_showed_hype_note"] = False
+
+    # ── Toolbar ───────────────────────────────────────────────────────────────
+    _sym_idx = _SYMBOLS.index(_initial_sym) if _initial_sym in _SYMBOLS else 0
+
     _tb_sym, _tb_btn, _tb_depth, _tb_spacer = st.columns([0.25, 0.15, 0.25, 0.35])
 
     with _tb_sym:
         _selected = st.selectbox(
             "Market",
             options=_SYMBOLS,
-            index=(
-                _SYMBOLS.index(st.session_state.get(_STATE_KEY_SYMBOL, _SYMBOLS[0]))
-                if st.session_state.get(_STATE_KEY_SYMBOL) in _SYMBOLS
-                else 0
-            ),
+            index=_sym_idx,
             key="_pt_symbol_select",
             label_visibility="collapsed",
         )
@@ -339,9 +348,9 @@ def render_pro_terminal() -> None:
             type="primary",
         )
 
-    # ── Fetch: first load, symbol change, or manual refresh only ──────────────
-    _last_sym       = st.session_state.get(_STATE_KEY_SYMBOL)
-    _first_load     = (
+    # ── Fetch trigger ─────────────────────────────────────────────────────────
+    _last_sym     = st.session_state.get(_STATE_KEY_SYMBOL)
+    _first_load   = (
         st.session_state.get(_STATE_KEY_SNAP) is None
         and st.session_state.get(_STATE_KEY_ERROR) is None
     )
@@ -351,17 +360,16 @@ def render_pro_terminal() -> None:
         with st.spinner(f"Fetching {_selected} orderbook from Binance..."):
             _do_fetch(_selected)
 
-    # ── Error ─────────────────────────────────────────────────────────────────
-    _render_error(st.session_state.get(_STATE_KEY_ERROR))
-
     # ── Demo mode banner ──────────────────────────────────────────────────────
     if st.session_state.get(_STATE_KEY_DEMO):
         st.warning(
             "**Demo mode** — Binance is blocked from this hosted region (HTTP 451). "
-            "Data shown is static sample data. "
-            "Run the app locally to see live orderbook.",
+            "Data shown is static sample data. Run the app locally for live data.",
             icon="⚠️",
         )
+
+    # ── Error ─────────────────────────────────────────────────────────────────
+    _render_error(st.session_state.get(_STATE_KEY_ERROR))
 
     # ── Summary bar ───────────────────────────────────────────────────────────
     _metrics  = st.session_state.get(_STATE_KEY_METRICS)
@@ -392,8 +400,7 @@ def render_pro_terminal() -> None:
         st.markdown(
             '<div class="pt-last-updated">'
             "Mode: <b>Demo fallback</b> &nbsp;&middot;&nbsp; "
-            "Binance unavailable from this region &nbsp;&middot;&nbsp; "
-            "Run locally for live data"
+            "Binance unavailable from this region"
             "</div>",
             unsafe_allow_html=True,
         )
