@@ -60,6 +60,14 @@ export interface HeatmapMeta {
   marketStatus?: "supported" | "demo" | "planned" | "unsupported";
   /** Resolved data source slug for this market (e.g. "binance_spot"). */
   dataSource?: string;
+  /**
+   * Origin of this payload's body for the current request:
+   *  - "mock"    — synthetic generator (default)
+   *  - "fixture" — loaded from a local exported JSON fixture
+   * When a real exported fixture carries its own producer tag (e.g.
+   * "binance_spot_rest_snapshot"), the route moves it to `dataSource`.
+   */
+  source?: string;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */

@@ -13,12 +13,35 @@
 | `symbol`   | string | `BTCUSDT`       | Normalised to uppercase. E.g. `ETHUSDT`.      |
 | `exchange` | string | `binance_spot`  | Snake-case slug. E.g. `bybit_spot`.           |
 | `timeframe`| string | `5m`            | Must be one of the allowed values (see below).|
+| `source`   | string | _(unset)_       | `fixture` opts into local exported fixtures. Any other value / unset = mock. |
 
 ### Allowed timeframes
 
 `5m` · `15m` · `1h` · `4h` · `1d`
 
 Any other value returns HTTP 400.
+
+### `source=fixture` — local exported fixtures
+
+When `source=fixture` is passed, the endpoint tries to load a locally exported
+payload from:
+
+```
+lumora-web/fixtures/heatmap/{SYMBOL}_{timeframe}.json
+```
+
+(e.g. `fixtures/heatmap/BTCUSDT_5m.json`, produced by
+`scripts/export_real_heatmap_payload.py`).
+
+- **Fixture found & valid** → returned as-is with `meta.source = "fixture"`. Any
+  producer tag the file carried (e.g. `"binance_spot_rest_snapshot"`) is moved
+  to `meta.dataSource`.
+- **Fixture missing or invalid** → falls back to the synthetic mock payload with
+  `meta.source = "mock"`. The app never crashes on a bad/missing fixture.
+- **`source` unset** → unchanged legacy behaviour (mock payload).
+
+Symbol/timeframe validation (and the unsupported-symbol / invalid-timeframe
+400s) still apply before any fixture lookup.
 
 ---
 
@@ -180,6 +203,35 @@ banner, e.g. `"XMR source planned. Binance Spot depth unavailable for Monero."`
 
 For all supported markets `sourceAvailable` is `true` and `sourceNote` is
 `null`.
+
+---
+
+### `meta.marketStatus` / `meta.dataSource`
+
+Resolved from the central market registry in
+[`lib/market-sources.ts`](../lib/market-sources.ts):
+
+- `marketStatus` — one of `"supported" | "demo" | "planned" | "unsupported"`.
+  BTC/ETH/SOL are `"supported"`, HYPE is `"demo"`, XMR is `"planned"`.
+- `dataSource` — the resolved exchange slug backing the market (e.g.
+  `"binance_spot"`, `"hyperliquid"`). Falls back to the requested `exchange`
+  when the market has no wired default.
+
+The UI uses `marketStatus` for the Supported / Demo / Planned status badge and
+`sourceNote` for the small source hint under the controls.
+
+---
+
+### Unsupported symbol error — HTTP 400
+
+A symbol not present in the market registry is rejected:
+
+```json
+{
+  "error": "Unsupported symbol",
+  "message": "'DOGEUSDT' is not a known market. Supported symbols: BTCUSDT, ETHUSDT, SOLUSDT, HYPEUSDT, XMRUSDT."
+}
+```
 
 ---
 
