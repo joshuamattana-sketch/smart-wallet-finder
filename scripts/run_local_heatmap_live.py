@@ -4,21 +4,25 @@ scripts/run_local_heatmap_live.py
 Local dev "live" mode for the Lumora Liquidity Map.
 
 Repeatedly collects real Binance Spot depth snapshots and continuously rewrites
-a web fixture file. Paired with the Liquidity Map UI's fixture auto-refresh,
-this makes the map feel live — entirely locally, with no Supabase, no
-production worker, and no WebSocket.
+one or more web fixture files. Paired with the Liquidity Map UI's fixture
+auto-refresh, this makes the map feel live — entirely locally, with no Supabase,
+no production worker, and no WebSocket.
 
-It keeps a rolling window of the most recent frames (--max-frames) so the
-fixture stays a fixed size while always reflecting the latest book.
+It keeps a rolling window of the most recent frames (--max-frames) per symbol so
+each fixture stays a fixed size while always reflecting the latest book.
 
-Usage:
-    python scripts/run_local_heatmap_live.py
+Single symbol / timeframe (backward compatible):
     python scripts/run_local_heatmap_live.py \
-        --symbol BTCUSDT --limit 1000 --price-step 10 --timeframe 5m \
-        --samples 120 --interval 2 --max-frames 60 \
+        --symbol BTCUSDT --timeframe 5m \
         --output lumora-web/fixtures/heatmap/BTCUSDT_5m.json
 
-Stop early any time with Ctrl+C — the last written fixture stays in place.
+Multi symbol / multi timeframe:
+    python scripts/run_local_heatmap_live.py \
+        --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+        --samples 120 --interval 2 --max-frames 60
+    # writes lumora-web/fixtures/heatmap/{SYMBOL}_{timeframe}.json for every pair
+
+Stop early any time with Ctrl+C — the last written fixtures stay in place.
 """
 
 from __future__ import annotations
@@ -42,12 +46,24 @@ from services.connectors.binance_depth_collector import (  # noqa: E402
 )
 from services.orderbook_depth_bucketer import build_heatmap_cells  # noqa: E402
 from services.heatmap_matrix_builder import build_heatmap_matrix  # noqa: E402
-from services.heatmap_api_payload import build_heatmap_api_payload  # noqa: E402
+from services.heatmap_api_payload import (  # noqa: E402
+    VALID_TIMEFRAMES,
+    build_heatmap_api_payload,
+)
 
 SOURCE_TAG = "local_live_fixture"
 EXCHANGE = "binance_spot"
 DEFAULT_WALL_THRESHOLD_USD = 1_000_000.0
-DEFAULT_OUTPUT = "lumora-web/fixtures/heatmap/BTCUSDT_5m.json"
+DEFAULT_OUTPUT_DIR = "lumora-web/fixtures/heatmap"
+
+# Sensible per-symbol price-bucket widths (USD). Used when --price-step is not
+# given. Falls back to FALLBACK_PRICE_STEP for unknown symbols.
+DEFAULT_PRICE_STEPS = {
+    "BTCUSDT": 10.0,
+    "ETHUSDT": 5.0,
+    "SOLUSDT": 0.5,
+}
+FALLBACK_PRICE_STEP = 1.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -82,6 +98,52 @@ def _price_point(snapshot: dict, t_iso: str) -> dict | None:
     }
 
 
+def _split_list(raw: str) -> list[str]:
+    """Split a comma-separated CLI value into trimmed, non-empty parts."""
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def parse_price_steps(raw: str | None) -> dict[str, float]:
+    """
+    Parse `--price-steps SYMBOL:step,SYMBOL:step` into a {SYMBOL: float} map.
+
+    Raises ValueError on a malformed entry.
+    """
+    if not raw:
+        return {}
+    out: dict[str, float] = {}
+    for part in _split_list(raw):
+        if ":" not in part:
+            raise ValueError(
+                f"invalid --price-steps entry {part!r}, expected SYMBOL:step"
+            )
+        sym, val = part.split(":", 1)
+        try:
+            out[sym.strip().upper()] = float(val.strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid price step in {part!r}: {exc}") from exc
+    return out
+
+
+def resolve_price_step(
+    symbol: str,
+    global_step: float | None,
+    steps_map: dict[str, float],
+) -> float:
+    """
+    Resolve the price step for a symbol.
+
+    Precedence: explicit per-symbol map > global --price-step > per-symbol
+    default > FALLBACK_PRICE_STEP.
+    """
+    sym = symbol.upper()
+    if sym in steps_map:
+        return steps_map[sym]
+    if global_step is not None:
+        return global_step
+    return DEFAULT_PRICE_STEPS.get(sym, FALLBACK_PRICE_STEP)
+
+
 def write_payload_atomic(payload: dict, output: Path) -> None:
     """
     Write payload to `output` atomically: write a temp file in the same dir,
@@ -106,6 +168,7 @@ def build_live_payload(
     max_frames: int,
     sample_count: int,
     price_path: list[dict] | None = None,
+    symbol: str | None = None,
 ) -> dict:
     """Build the API payload for the current rolling frame window + live meta."""
     matrix = build_heatmap_matrix(frames)
@@ -118,15 +181,140 @@ def build_live_payload(
         current_price=current_price,
     )
 
+    if symbol:
+        payload["symbol"] = symbol
+
     meta = payload["meta"]
     meta["isDemo"] = False
     meta["source"] = SOURCE_TAG
     meta["dataSource"] = SOURCE_TAG
+    meta["symbol"] = symbol or payload.get("symbol")
+    meta["timeframe"] = timeframe
     meta["sampleCount"] = sample_count
     meta["intervalSeconds"] = interval
     meta["maxFrames"] = max_frames
     meta["liveUpdatedAt"] = datetime.now(timezone.utc).isoformat()
     return payload
+
+
+def run_live_multi(
+    symbols: list[str],
+    timeframes: list[str],
+    price_steps: dict[str, float],
+    limit: int,
+    samples: int,
+    interval: float,
+    max_frames: int,
+    output_for,
+    wall_threshold_usd: float = DEFAULT_WALL_THRESHOLD_USD,
+    progress=None,
+) -> dict:
+    """
+    Run the multi-symbol / multi-timeframe live collection loop.
+
+    Per tick, each symbol is fetched once; its rolling frame window feeds a
+    fixture file for every requested timeframe (same frames, per-timeframe
+    metadata). `output_for(symbol, timeframe) -> Path` decides the target file.
+
+    Returns {"total": int, "per_symbol": {sym: int}} of successful samples.
+
+    Raises ValueError for invalid CLI arguments. Per-symbol fetch failures are
+    caught so other symbols keep running; if every symbol fails in a tick that
+    tick simply writes nothing and the loop continues.
+    """
+    if not symbols:
+        raise ValueError("at least one symbol is required")
+    if not timeframes:
+        raise ValueError("at least one timeframe is required")
+    if samples <= 0:
+        raise ValueError(f"samples must be > 0, got {samples}")
+    if interval <= 0:
+        raise ValueError(f"interval must be > 0, got {interval}")
+    if max_frames <= 0:
+        raise ValueError(f"max-frames must be > 0, got {max_frames}")
+    for tf in timeframes:
+        if tf not in VALID_TIMEFRAMES:
+            raise ValueError(
+                f"invalid timeframe {tf!r}. Allowed: {', '.join(sorted(VALID_TIMEFRAMES))}"
+            )
+
+    # Per-symbol rolling state.
+    state: dict[str, dict] = {
+        sym: {"frames": [], "price_path": [], "last_ts": None, "success": 0}
+        for sym in symbols
+    }
+    total_success = 0
+
+    try:
+        for i in range(samples):
+            tick_success = 0
+            for sym in symbols:
+                step = resolve_price_step(sym, None, price_steps)
+                try:
+                    snapshot = fetch_depth_snapshot(sym, limit)
+                    st = state[sym]
+                    ts = _next_timestamp(st["last_ts"])
+                    st["last_ts"] = ts
+                    ts_iso = ts.isoformat()
+                    snapshot["captured_at"] = ts_iso
+
+                    frame = build_heatmap_cells(
+                        snapshot,
+                        price_step=step,
+                        wall_threshold_usd=wall_threshold_usd,
+                    )
+                    st["frames"].append(frame)
+
+                    point = _price_point(snapshot, ts_iso)
+                    if point is not None:
+                        st["price_path"].append(point)
+
+                    # Keep only the most recent max_frames on both lists.
+                    if len(st["frames"]) > max_frames:
+                        st["frames"] = st["frames"][-max_frames:]
+                    if len(st["price_path"]) > max_frames:
+                        st["price_path"] = st["price_path"][-max_frames:]
+
+                    st["success"] += 1
+                    total_success += 1
+                    tick_success += 1
+
+                    # One fixture file per timeframe (shared frames).
+                    for tf in timeframes:
+                        payload = build_live_payload(
+                            st["frames"], tf, interval, max_frames,
+                            st["success"], st["price_path"], symbol=sym,
+                        )
+                        out = output_for(sym, tf)
+                        write_payload_atomic(payload, out)
+                        if progress is not None:
+                            meta = payload["meta"]
+                            progress(
+                                f"sample {i + 1}/{samples} · {sym} {tf} · "
+                                f"frames={len(st['frames'])} · "
+                                f"cells={meta.get('cellCount', 0)} · "
+                                f"walls={meta.get('wallCount', 0)} · "
+                                f"-> {out}"
+                            )
+                except (DepthCollectorError, ValueError) as exc:
+                    if progress is not None:
+                        progress(f"sample {i + 1}/{samples} · {sym} failed: {exc}")
+                    # Other symbols keep going.
+
+            if tick_success == 0 and progress is not None:
+                progress(f"sample {i + 1}/{samples} · all symbols failed this tick")
+
+            # Wait before the next tick (not after the last sample).
+            if i < samples - 1:
+                time.sleep(interval)
+    except KeyboardInterrupt:
+        if progress is not None:
+            progress("interrupted — stopping, last fixtures kept")
+
+    return {
+        "total": total_success,
+        "per_symbol": {sym: state[sym]["success"] for sym in symbols},
+    }
 
 
 def run_live(
@@ -142,80 +330,25 @@ def run_live(
     progress=None,
 ) -> int:
     """
-    Run the live collection loop.
+    Backward-compatible single symbol / timeframe entry point.
 
-    Returns the number of successful samples collected. Validation errors raise
-    ValueError; per-tick Binance failures are caught and reported so the loop
-    keeps trying the next tick.
+    Delegates to run_live_multi for one pair, writing to `output`. Returns the
+    number of successful samples collected.
     """
-    if samples <= 0:
-        raise ValueError(f"samples must be > 0, got {samples}")
-    if interval <= 0:
-        raise ValueError(f"interval must be > 0, got {interval}")
-    if max_frames <= 0:
-        raise ValueError(f"max-frames must be > 0, got {max_frames}")
-
-    frames: list[dict] = []
-    price_path: list[dict] = []
-    last_ts: datetime | None = None
-    success = 0
-
-    try:
-        for i in range(samples):
-            try:
-                snapshot = fetch_depth_snapshot(symbol, limit)
-                ts = _next_timestamp(last_ts)
-                last_ts = ts
-                ts_iso = ts.isoformat()
-                snapshot["captured_at"] = ts_iso
-
-                frame = build_heatmap_cells(
-                    snapshot,
-                    price_step=price_step,
-                    wall_threshold_usd=wall_threshold_usd,
-                )
-                frames.append(frame)
-
-                # Track the mid-price point in lock-step with the frame so the
-                # path stays aligned to the heatmap's time buckets.
-                point = _price_point(snapshot, ts_iso)
-                if point is not None:
-                    price_path.append(point)
-
-                # Keep only the most recent max_frames on both lists.
-                if len(frames) > max_frames:
-                    frames = frames[-max_frames:]
-                if len(price_path) > max_frames:
-                    price_path = price_path[-max_frames:]
-
-                success += 1
-                payload = build_live_payload(
-                    frames, timeframe, interval, max_frames, success, price_path,
-                )
-                write_payload_atomic(payload, output)
-
-                if progress is not None:
-                    meta = payload["meta"]
-                    progress(
-                        f"sample {i + 1}/{samples} · frames={len(frames)} · "
-                        f"cells={meta.get('cellCount', 0)} · "
-                        f"walls={meta.get('wallCount', 0)} · "
-                        f"liveUpdatedAt={meta.get('liveUpdatedAt')} · "
-                        f"-> {output}"
-                    )
-            except DepthCollectorError as exc:
-                if progress is not None:
-                    progress(f"sample {i + 1}/{samples} · fetch failed: {exc}")
-                # fall through to the wait and try the next tick
-
-            # Wait before the next tick (not after the last sample).
-            if i < samples - 1:
-                time.sleep(interval)
-    except KeyboardInterrupt:
-        if progress is not None:
-            progress("interrupted — stopping, last fixture kept")
-
-    return success
+    sym = symbol.upper()
+    result = run_live_multi(
+        symbols=[sym],
+        timeframes=[timeframe],
+        price_steps={sym: price_step},
+        limit=limit,
+        samples=samples,
+        interval=interval,
+        max_frames=max_frames,
+        output_for=lambda _s, _t: Path(output),
+        wall_threshold_usd=wall_threshold_usd,
+        progress=progress,
+    )
+    return result["total"]
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -223,36 +356,74 @@ def run_live(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="run_local_heatmap_live",
-        description="Local live mode: continuously rewrite a heatmap web fixture from real Binance depth.",
+        description="Local live mode: continuously rewrite heatmap web fixtures from real Binance depth.",
     )
-    parser.add_argument("--symbol", default="BTCUSDT")
+    parser.add_argument("--symbol", default="BTCUSDT",
+                        help="Single symbol (default: BTCUSDT). Ignored when --symbols is set.")
+    parser.add_argument("--symbols", default=None,
+                        help="Comma-separated symbols, e.g. BTCUSDT,ETHUSDT,SOLUSDT.")
     parser.add_argument("--limit", type=int, default=1000)
-    parser.add_argument("--price-step", type=float, default=10.0, dest="price_step")
-    parser.add_argument("--timeframe", default="5m")
+    parser.add_argument("--price-step", type=float, default=None, dest="price_step",
+                        help="Global price step override applied to all symbols.")
+    parser.add_argument("--price-steps", default=None, dest="price_steps",
+                        help="Per-symbol override, e.g. BTCUSDT:10,ETHUSDT:5,SOLUSDT:0.5.")
+    parser.add_argument("--timeframe", default="5m",
+                        help="Single timeframe (default: 5m). Ignored when --timeframes is set.")
+    parser.add_argument("--timeframes", default=None,
+                        help="Comma-separated timeframes, e.g. 5m,15m,1h.")
     parser.add_argument("--samples", type=int, default=120)
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--max-frames", type=int, default=60, dest="max_frames")
     parser.add_argument("--wall-threshold", type=float,
                         default=DEFAULT_WALL_THRESHOLD_USD, dest="wall_threshold")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", default=None,
+                        help="Single output file (only valid for one symbol + one timeframe).")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, dest="output_dir",
+                        help="Directory for {SYMBOL}_{timeframe}.json files (multi mode).")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns process exit code (0 ok, 1 on handled error)."""
     args = parse_args(argv)
-    symbol = args.symbol.upper()
 
     try:
-        success = run_live(
-            symbol=symbol,
+        symbols = (
+            [s.upper() for s in _split_list(args.symbols)]
+            if args.symbols else [args.symbol.upper()]
+        )
+        timeframes = (
+            [t.lower() for t in _split_list(args.timeframes)]
+            if args.timeframes else [args.timeframe.lower()]
+        )
+        steps_map = parse_price_steps(args.price_steps)
+        resolved_steps = {
+            sym: resolve_price_step(sym, args.price_step, steps_map)
+            for sym in symbols
+        }
+    except ValueError as exc:
+        print(f"error: invalid argument — {exc}", file=sys.stderr)
+        return 1
+
+    output_dir = Path(args.output_dir)
+    single_pair = len(symbols) == 1 and len(timeframes) == 1
+    use_explicit_output = single_pair and args.output is not None
+
+    def output_for(sym: str, tf: str) -> Path:
+        if use_explicit_output:
+            return Path(args.output)
+        return output_dir / f"{sym}_{tf}.json"
+
+    try:
+        result = run_live_multi(
+            symbols=symbols,
+            timeframes=timeframes,
+            price_steps=resolved_steps,
             limit=args.limit,
-            price_step=args.price_step,
-            timeframe=args.timeframe,
             samples=args.samples,
             interval=args.interval,
             max_frames=args.max_frames,
-            output=Path(args.output),
+            output_for=output_for,
             wall_threshold_usd=args.wall_threshold,
             progress=lambda msg: print(f"  {msg}"),
         )
@@ -260,11 +431,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
         return 1
 
-    if success == 0:
+    if result["total"] == 0:
         print("error: no snapshots were collected successfully", file=sys.stderr)
         return 1
 
-    print(f"Done. {success} live update(s) written to {args.output}")
+    files = len(symbols) * len(timeframes)
+    print(
+        f"Done. {result['total']} successful sample(s) across "
+        f"{len(symbols)} symbol(s) × {len(timeframes)} timeframe(s) "
+        f"({files} fixture file(s))."
+    )
     return 0
 
 

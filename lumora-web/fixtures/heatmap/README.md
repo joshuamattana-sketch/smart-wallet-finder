@@ -32,6 +32,26 @@ fixtures/heatmap/BTCUSDT_5m.json
 fixtures/heatmap/ETHUSDT_1h.json
 ```
 
+## Local live mode (multi-symbol / multi-timeframe)
+
+`scripts/run_local_heatmap_live.py` continuously rewrites these fixtures from
+real Binance depth. It supports several symbols and timeframes at once and
+writes one file per pair using the naming convention above:
+
+```bash
+# from the repo root — writes BTCUSDT/ETHUSDT/SOLUSDT × 5m/15m/1h fixtures
+python scripts/run_local_heatmap_live.py \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+  --samples 120 --interval 2 --max-frames 60
+```
+
+- Single-symbol form (`--symbol` / `--timeframe` / `--output`) still works.
+- Price step defaults per symbol: BTCUSDT `10`, ETHUSDT `5`, SOLUSDT `0.5`,
+  otherwise `1`. Override globally with `--price-step`, or per symbol with
+  `--price-steps BTCUSDT:10,ETHUSDT:5,SOLUSDT:0.5`.
+- Files default to `--output-dir` (this directory). The UI can then load the
+  matching fixture as the symbol/timeframe selection changes.
+
 ## How it is used
 
 Request the heatmap API with `source=fixture`:

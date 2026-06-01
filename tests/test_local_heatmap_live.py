@@ -47,6 +47,17 @@ def _payload(out):
     return json.loads(out.read_text(encoding="utf-8"))
 
 
+def _run_multi(tmp_path, args, side_effect=None):
+    """Run main() in multi mode against a temp --output-dir."""
+    outdir = tmp_path / "fix"
+    full = ["--output-dir", str(outdir)] + args
+    se = side_effect or (lambda *a, **k: _mock_snapshot())
+    with patch.object(live, "fetch_depth_snapshot", side_effect=se) as mf, \
+         patch.object(live.time, "sleep") as ms:
+        code = live.main(full)
+    return code, outdir, mf, ms
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 class TestLocalHeatmapLive:
@@ -180,3 +191,121 @@ class TestLocalHeatmapLive:
         assert pt["price"] == 67495.0
         assert payload["meta"]["currentPrice"] == 67495.0
         assert payload["summary"]["currentPrice"] == 67495.0
+
+    # ── multi-symbol / multi-timeframe ────────────────────────────────────────
+
+    def test_symbols_creates_multiple_files(self, tmp_path):
+        code, outdir, fetch, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT,SOLUSDT", "--samples", "2", "--interval", "2"],
+        )
+        assert code == 0
+        for sym in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
+            assert (outdir / f"{sym}_5m.json").exists()
+        # one fetch per symbol per tick: 3 symbols × 2 samples
+        assert fetch.call_count == 6
+
+    def test_timeframes_creates_multiple_files(self, tmp_path):
+        code, outdir, fetch, _ = _run_multi(
+            tmp_path,
+            ["--symbol", "BTCUSDT", "--timeframes", "5m,15m,1h",
+             "--samples", "2", "--interval", "2"],
+        )
+        assert code == 0
+        for tf in ("5m", "15m", "1h"):
+            assert (outdir / f"BTCUSDT_{tf}.json").exists()
+        # one symbol fetched once per tick (timeframes share frames): 2 fetches
+        assert fetch.call_count == 2
+
+    def test_symbols_and_timeframes_matrix(self, tmp_path):
+        code, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT", "--timeframes", "5m,15m",
+             "--samples", "1", "--interval", "2"],
+        )
+        assert code == 0
+        for sym in ("BTCUSDT", "ETHUSDT"):
+            for tf in ("5m", "15m"):
+                assert (outdir / f"{sym}_{tf}.json").exists()
+
+    def test_backward_compat_single_symbol_timeframe(self, tmp_path):
+        # The original single-file flow still works and stamps symbol/timeframe.
+        _, out, _, _ = _run(tmp_path, ["--symbol", "BTCUSDT", "--timeframe", "5m",
+                                       "--samples", "2", "--interval", "2"])
+        meta = _payload(out)["meta"]
+        assert meta["symbol"] == "BTCUSDT"
+        assert meta["timeframe"] == "5m"
+
+    def test_default_price_steps_per_symbol(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT,SOLUSDT", "--samples", "1", "--interval", "2"],
+        )
+        assert _payload(outdir / "BTCUSDT_5m.json")["priceStep"] == 10.0
+        assert _payload(outdir / "ETHUSDT_5m.json")["priceStep"] == 5.0
+        assert _payload(outdir / "SOLUSDT_5m.json")["priceStep"] == 0.5
+
+    def test_global_price_step_override(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT", "--price-step", "2",
+             "--samples", "1", "--interval", "2"],
+        )
+        assert _payload(outdir / "BTCUSDT_5m.json")["priceStep"] == 2.0
+        assert _payload(outdir / "ETHUSDT_5m.json")["priceStep"] == 2.0
+
+    def test_price_steps_map_override(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT", "--price-steps", "BTCUSDT:7,ETHUSDT:3",
+             "--samples", "1", "--interval", "2"],
+        )
+        assert _payload(outdir / "BTCUSDT_5m.json")["priceStep"] == 7.0
+        assert _payload(outdir / "ETHUSDT_5m.json")["priceStep"] == 3.0
+
+    def test_meta_set_per_file_multi(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT", "--timeframes", "5m,15m",
+             "--samples", "1", "--interval", "2"],
+        )
+        meta = _payload(outdir / "ETHUSDT_15m.json")["meta"]
+        assert meta["symbol"] == "ETHUSDT"
+        assert meta["timeframe"] == "15m"
+        assert meta["source"] == "local_live_fixture"
+        assert meta["dataSource"] == "local_live_fixture"
+        assert meta.get("liveUpdatedAt")
+
+    def test_one_symbol_failure_does_not_stop_others(self, tmp_path):
+        def _side(symbol, *_a, **_k):
+            if symbol == "ETHUSDT":
+                raise DepthCollectorError("boom")
+            return _mock_snapshot()
+
+        code, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT,SOLUSDT", "--samples", "2", "--interval", "2"],
+            side_effect=_side,
+        )
+        assert code == 0
+        assert (outdir / "BTCUSDT_5m.json").exists()
+        assert (outdir / "SOLUSDT_5m.json").exists()
+        assert not (outdir / "ETHUSDT_5m.json").exists()
+
+    def test_invalid_timeframe_in_list_fails(self, tmp_path, capsys):
+        code, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT", "--timeframes", "5m,3m",
+             "--samples", "1", "--interval", "2"],
+        )
+        assert code == 1
+        assert "invalid argument" in capsys.readouterr().err
+
+    def test_invalid_price_steps_format_fails(self, tmp_path, capsys):
+        code, _, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT", "--price-steps", "BTCUSDT10",
+             "--samples", "1", "--interval", "2"],
+        )
+        assert code == 1
+        assert "invalid argument" in capsys.readouterr().err
