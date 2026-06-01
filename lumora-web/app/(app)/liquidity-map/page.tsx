@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { clsx } from "clsx";
-import { RefreshCw, ChevronDown } from "lucide-react";
+import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
+import type { HeatmapApiPayload } from "@/lib/mock-heatmap-api";
 
 // ── Layout constants ───────────────────────────────────────────────────────────
 const CHART_H   = 560;
@@ -19,10 +20,14 @@ const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function py(price: number) {
-  return ((MAX_PRICE - price) / PRICE_RNG) * 100; // % from top
+  return ((MAX_PRICE - price) / PRICE_RNG) * 100;
 }
 function pyPx(price: number) {
   return ((MAX_PRICE - price) / PRICE_RNG) * CHART_H;
+}
+
+function exchangeToApiSlug(ex: string): string {
+  return ex.toLowerCase().replace(/\s+/g, "_");
 }
 
 /** CoinGlass-style color ramp: navy → blue → cyan → green → yellow → red */
@@ -39,7 +44,7 @@ function iColor(v: number): string {
   return             "rgba(255,50,18,0.98)";
 }
 
-// ── Wall zones ─────────────────────────────────────────────────────────────────
+// ── Static wall zones (visual backdrop — unchanged) ────────────────────────────
 const ZONES = [
   { price: 68_000, side: "ASK" as const, intensity: 95, label: "Major Ask Wall", badge: "WALL", desc: "Large resting sell orders. Hard resistance, two rejections today." },
   { price: 67_800, side: "ASK" as const, intensity: 72, label: "Spot Sell Wall",  badge: "RES",  desc: "Multiple sellers clustered. Watch for rejection on retest." },
@@ -52,22 +57,19 @@ const ZONES = [
 ];
 
 // ── Band generation ────────────────────────────────────────────────────────────
-// Each band is a thin horizontal strip that STARTS at some point in time and
-// ENDS at the right edge (now) — just like CoinGlass liquidation walls.
 interface LiqBand {
-  topPct:   number;   // % from top (center of band)
-  leftPct:  number;   // % from left (when the wall appeared)
-  heightPx: number;   // visual thickness
+  topPct:   number;
+  leftPct:  number;
+  heightPx: number;
   color:    string;
   shadow?:  string;
 }
 
 function buildBands(): LiqBand[] {
   const out: LiqBand[] = [];
-  const STEP = 25; // price granularity per band row
+  const STEP = 25;
 
   for (let price = MIN_PRICE + STEP; price < MAX_PRICE; price += STEP) {
-    // Find nearest wall zone and compute spill intensity
     const near = ZONES.reduce((b, z) =>
       Math.abs(z.price - price) < Math.abs(b.price - price) ? z : b
     );
@@ -79,14 +81,11 @@ function buildBands(): LiqBand[] {
 
     if (base < 6) continue;
 
-    // Number of overlapping sub-bands: more at higher intensity
     const layers = base > 78 ? 5 : base > 55 ? 4 : base > 32 ? 3 : 2;
 
     for (let b = 0; b < layers; b++) {
       const s1 = Math.sin(price * 0.00413 + b * 2.31);
       const s2 = Math.cos(price * 0.00831 + b * 1.74);
-
-      // How far left the band starts (0 = old wall, 70 = just appeared)
       const leftPct  = Math.max(0, Math.min(72, Math.abs(s1) * 60 + b * 5));
       const bandI    = Math.min(100, base * (0.72 + Math.abs(s2) * 0.32));
       const heightPx = bandI > 84 ? 7 : bandI > 62 ? 5 : bandI > 38 ? 3 : 2;
@@ -111,7 +110,6 @@ function buildBands(): LiqBand[] {
 const BANDS = buildBands();
 
 // ── Price path ─────────────────────────────────────────────────────────────────
-// 28-point price path for a more realistic line
 const RAW_PATH = [
   67_180, 67_200, 67_175, 67_230, 67_270, 67_310, 67_340, 67_355,
   67_390, 67_370, 67_405, 67_380, 67_415, 67_400, 67_360, 67_385,
@@ -120,10 +118,8 @@ const RAW_PATH = [
 ];
 const N_PTS = RAW_PATH.length;
 
-// Y-axis price ticks
 const Y_TICKS = [69_000, 68_500, 68_000, 67_500, 67_000, 66_500, 66_000, 65_500];
 
-// Time axis labels (position %)
 const TIME_AXIS: Array<{ label: string; pct: number }> = [
   { label: "−60m", pct:  0 },
   { label: "−45m", pct: 25 },
@@ -214,12 +210,68 @@ export default function LiquidityMapPage() {
   const [exchange,  setExchange]  = useState("Binance Spot");
   const [timeframe, setTimeframe] = useState<string>("15m");
 
-  const curY = pyPx(CURRENT_PRICE);
+  const [payload,  setPayload]  = useState<HeatmapApiPayload | null>(null);
+  const [loading,  setLoading]  = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
-  // SVG polyline points — stretched across full container via preserveAspectRatio=none
-  const svgLine = RAW_PATH
-    .map((p, i) => `${i},${pyPx(p).toFixed(1)}`)
-    .join(" ");
+  const fetchPayload = useCallback(async () => {
+    setLoading(true);
+    setApiError(null);
+    try {
+      const tf  = timeframe.toLowerCase();
+      const exSlug = exchangeToApiSlug(exchange);
+      const res = await fetch(
+        `/api/heatmap?symbol=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exSlug)}&timeframe=${encodeURIComponent(tf)}`
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
+        return;
+      }
+      const data: HeatmapApiPayload = await res.json();
+      setPayload(data);
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol, exchange, timeframe]);
+
+  useEffect(() => { fetchPayload(); }, [fetchPayload]);
+
+  const curY   = pyPx(CURRENT_PRICE);
+  const svgLine = RAW_PATH.map((p, i) => `${i},${pyPx(p).toFixed(1)}`).join(" ");
+
+  // Derive display values — fall back to static defaults when payload not loaded yet
+  const isDemo        = payload?.meta.isDemo ?? true;
+  const summaryData   = payload?.summary;
+  const topBidWall    = payload?.walls.find(w => w.side === "bid");
+  const topAskWall    = payload?.walls.find(w => w.side === "ask");
+
+  const bidWallLabel  = topBidWall
+    ? `$${topBidWall.price_bucket.toLocaleString()}`
+    : "$67,350";
+  const askWallLabel  = topAskWall
+    ? `$${topAskWall.price_bucket.toLocaleString()}`
+    : "$68,000";
+  const bidWallSub    = topBidWall
+    ? `${Math.round(topBidWall.intensity)}% intensity · ${topBidWall.label}`
+    : "88% intensity · held 40m";
+  const askWallSub    = topAskWall
+    ? `${Math.round(topAskWall.intensity)}% intensity · ${topAskWall.label}`
+    : "95% intensity · major wall";
+  const priceRangeLabel = summaryData
+    ? `$${summaryData.price_min.toLocaleString()}–$${summaryData.price_max.toLocaleString()}`
+    : "$65,800";
+  const frameCountSub   = summaryData
+    ? `${summaryData.frame_count} frames · step $${payload?.priceStep ?? 10}`
+    : "Thin below $66,200";
+  const maxBidI = summaryData ? `${Math.round(summaryData.max_bid_intensity)}% bid` : "+0.42 imbal";
+  const maxAskI = summaryData ? `${Math.round(summaryData.max_ask_intensity)}% ask max` : "Break → flush to $66,500";
+
+  // Key zones — use payload walls if available, otherwise static fallback
+  const apiWalls = payload?.walls ?? [];
+  const showApiWalls = apiWalls.length > 0;
 
   return (
     <div className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
@@ -229,10 +281,10 @@ export default function LiquidityMapPage() {
         <div>
           <h1 className="text-xl font-semibold text-lumora-text">Liquidity Map</h1>
           <p className="text-sm text-lumora-muted mt-0.5">
-            Spot orderbook depth over time — demo data
+            Spot orderbook depth over time{isDemo ? " — demo data" : ""}
           </p>
         </div>
-        <Badge variant="yellow">Demo Data</Badge>
+        {isDemo && <Badge variant="yellow">Demo Data</Badge>}
       </div>
 
       {/* Controls */}
@@ -267,9 +319,10 @@ export default function LiquidityMapPage() {
           ))}
         </div>
         {/* Refresh */}
-        <button title="Refresh (demo)"
-          className="p-1.5 rounded-md border border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text transition-colors">
-          <RefreshCw className="h-3.5 w-3.5" />
+        <button onClick={fetchPayload} title="Refresh"
+          disabled={loading}
+          className="p-1.5 rounded-md border border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text transition-colors disabled:opacity-50">
+          <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
         </button>
         {/* Legend */}
         <div className="ml-auto flex items-center gap-3">
@@ -284,6 +337,14 @@ export default function LiquidityMapPage() {
         </div>
       </GlassCard>
 
+      {/* API error banner */}
+      {apiError && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-xs">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span>{apiError}</span>
+        </div>
+      )}
+
       {/* Main: chart + depth sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_160px] gap-3 items-start">
 
@@ -292,7 +353,7 @@ export default function LiquidityMapPage() {
           <div className="overflow-x-auto">
             <div style={{ minWidth: 560 }}>
 
-              {/* Y-axis + chart body row */}
+              {/* Y-axis + chart body */}
               <div className="flex">
 
                 {/* Y-axis */}
@@ -307,7 +368,6 @@ export default function LiquidityMapPage() {
                       {(p / 1000).toFixed(1)}k
                     </div>
                   ))}
-                  {/* Current price label */}
                   <div
                     className="absolute right-1 num text-[10px] text-lumora-cyan font-semibold select-none -translate-y-1/2 leading-none"
                     style={{ top: curY }}>
@@ -320,16 +380,23 @@ export default function LiquidityMapPage() {
                   className="relative flex-1 overflow-hidden"
                   style={{ height: CHART_H, background: "#05030f" }}
                 >
-                  {/* Subtle horizontal guide lines */}
+                  {/* Loading overlay — no layout jump */}
+                  {loading && (
+                    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-lumora-card/80 border border-lumora-border text-lumora-muted text-xs">
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        Loading…
+                      </div>
+                    </div>
+                  )}
+
                   {Y_TICKS.map(p => (
                     <div key={p} className="absolute left-0 right-0 h-px bg-white/[0.035] pointer-events-none"
                       style={{ top: pyPx(p) }} />
                   ))}
-
-                  {/* "Now" right-edge glow */}
                   <div className="absolute inset-y-0 right-0 w-px bg-lumora-cyan/25 pointer-events-none" />
 
-                  {/* ── Liquidity bands (the core visual) ── */}
+                  {/* Liquidity bands */}
                   {BANDS.map((band, idx) => (
                     <div
                       key={idx}
@@ -347,7 +414,7 @@ export default function LiquidityMapPage() {
                     />
                   ))}
 
-                  {/* ── SVG price line (on top of heatmap) ── */}
+                  {/* SVG price line */}
                   <svg
                     className="absolute inset-0 w-full pointer-events-none"
                     style={{ height: CHART_H, zIndex: 20 }}
@@ -360,7 +427,6 @@ export default function LiquidityMapPage() {
                         <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                       </filter>
                     </defs>
-                    {/* Price path */}
                     <polyline
                       points={svgLine}
                       fill="none"
@@ -370,7 +436,6 @@ export default function LiquidityMapPage() {
                       strokeLinecap="round"
                       filter="url(#priceglow)"
                     />
-                    {/* Red segments where price fell */}
                     {RAW_PATH.slice(0, -1).map((p, i) => {
                       if (RAW_PATH[i + 1] >= p) return null;
                       return (
@@ -387,37 +452,30 @@ export default function LiquidityMapPage() {
                   <div
                     className="absolute pointer-events-none"
                     style={{
-                      right:     2,
-                      top:       curY,
-                      width:     10,
-                      height:    10,
-                      borderRadius: "50%",
-                      transform: "translate(0, -50%)",
+                      right: 2, top: curY, width: 10, height: 10,
+                      borderRadius: "50%", transform: "translate(0, -50%)",
                       background: "#22d3ee",
                       boxShadow: "0 0 8px rgba(34,211,238,1), 0 0 20px rgba(34,211,238,0.55)",
-                      zIndex:    30,
+                      zIndex: 30,
                     }}
                   />
-
                   {/* Current price line */}
                   <div
                     className="absolute left-0 right-0 pointer-events-none"
                     style={{
-                      top:       curY,
-                      height:    1.5,
+                      top: curY, height: 1.5,
                       background: "rgba(34,211,238,0.85)",
                       boxShadow: "0 0 8px rgba(34,211,238,0.7), 0 0 24px rgba(34,211,238,0.25)",
-                      zIndex:    22,
+                      zIndex: 22,
                     }}
                   />
-                  {/* Current price label */}
                   <div
                     className="absolute right-3 num text-[10px] font-bold text-lumora-cyan pointer-events-none select-none -translate-y-full"
                     style={{ top: curY - 2, zIndex: 23 }}>
                     ▶ {CURRENT_PRICE.toLocaleString()}
                   </div>
 
-                  {/* ── Zone overlay badges ── */}
+                  {/* Zone overlay badges */}
                   {ZONES.map(z => {
                     const y      = pyPx(z.price);
                     const isAsk  = z.side === "ASK";
@@ -493,46 +551,83 @@ export default function LiquidityMapPage() {
 
       </div>
 
-      {/* Key zone cards */}
+      {/* Key zone cards — API walls when available, static fallback otherwise */}
       <div>
         <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted mb-2">Key Zones</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {ZONES.slice(0, 4).map(z => (
-            <GlassCard key={z.price} className="p-3 flex items-start gap-2.5">
-              <div
-                className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
-                style={{
-                  background: z.side === "ASK"
-                    ? "linear-gradient(180deg,#f87171,#ef4444)"
-                    : z.intensity > 80
-                    ? "linear-gradient(180deg,#c084fc,#8b5cf6)"
-                    : "linear-gradient(180deg,#22d3ee,#0891b2)",
-                }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                  <p className="num text-sm font-semibold text-lumora-text">${z.price.toLocaleString()}</p>
-                  <Badge variant={z.side === "ASK" ? "red" : "green"} className="text-[9px] px-1 py-0">
-                    {z.badge}
-                  </Badge>
-                  <span className="num text-[10px] text-lumora-muted ml-auto">{z.intensity}%</span>
-                </div>
-                <p className="text-xs font-medium text-lumora-text-dim">{z.label}</p>
-                <p className="text-[11px] text-lumora-muted mt-0.5 leading-snug">{z.desc}</p>
-              </div>
-            </GlassCard>
-          ))}
+          {showApiWalls
+            ? apiWalls.slice(0, 4).map(w => {
+                const isAsk = w.side === "ask";
+                const badge = w.intensity >= 85 ? "WALL" : isAsk ? "RES" : "SUP";
+                return (
+                  <GlassCard key={`${w.price_bucket}-${w.side}`} className="p-3 flex items-start gap-2.5">
+                    <div
+                      className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
+                      style={{
+                        background: isAsk
+                          ? "linear-gradient(180deg,#f87171,#ef4444)"
+                          : w.intensity > 80
+                          ? "linear-gradient(180deg,#c084fc,#8b5cf6)"
+                          : "linear-gradient(180deg,#22d3ee,#0891b2)",
+                      }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                        <p className="num text-sm font-semibold text-lumora-text">
+                          ${w.price_bucket.toLocaleString()}
+                        </p>
+                        <Badge variant={isAsk ? "red" : "green"} className="text-[9px] px-1 py-0">
+                          {badge}
+                        </Badge>
+                        <span className="num text-[10px] text-lumora-muted ml-auto">
+                          {Math.round(w.intensity)}%
+                        </span>
+                      </div>
+                      <p className="text-xs font-medium text-lumora-text-dim">{w.label}</p>
+                      <p className="text-[11px] text-lumora-muted mt-0.5 leading-snug">
+                        ${(w.total_usd / 1_000_000).toFixed(2)}M liquidity
+                      </p>
+                    </div>
+                  </GlassCard>
+                );
+              })
+            : ZONES.slice(0, 4).map(z => (
+                <GlassCard key={z.price} className="p-3 flex items-start gap-2.5">
+                  <div
+                    className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
+                    style={{
+                      background: z.side === "ASK"
+                        ? "linear-gradient(180deg,#f87171,#ef4444)"
+                        : z.intensity > 80
+                        ? "linear-gradient(180deg,#c084fc,#8b5cf6)"
+                        : "linear-gradient(180deg,#22d3ee,#0891b2)",
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                      <p className="num text-sm font-semibold text-lumora-text">${z.price.toLocaleString()}</p>
+                      <Badge variant={z.side === "ASK" ? "red" : "green"} className="text-[9px] px-1 py-0">
+                        {z.badge}
+                      </Badge>
+                      <span className="num text-[10px] text-lumora-muted ml-auto">{z.intensity}%</span>
+                    </div>
+                    <p className="text-xs font-medium text-lumora-text-dim">{z.label}</p>
+                    <p className="text-[11px] text-lumora-muted mt-0.5 leading-snug">{z.desc}</p>
+                  </div>
+                </GlassCard>
+              ))
+          }
         </div>
       </div>
 
-      {/* Summary stat cards */}
+      {/* Summary stat cards — values from API payload */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
-          { label: "Strongest Bid",    value: "$67,350",     sub: "88% intensity · held 40m",      color: "text-lumora-green"          },
-          { label: "Strongest Ask",    value: "$68,000",     sub: "95% intensity · major wall",    color: "text-lumora-red"            },
-          { label: "Liquidity Gap",    value: "$65,800",     sub: "Thin below $66,200",            color: "text-yellow-400"            },
-          { label: "Current Bias",     value: "BULLISH",     sub: "Bid dominant · +0.42 imbal",    color: "text-lumora-purple-bright"  },
-          { label: "Watch Action",     value: "Hold $67,350", sub: "Break → flush to $66,500",     color: "text-lumora-cyan"           },
+          { label: "Strongest Bid",  value: bidWallLabel,                   sub: bidWallSub,   color: "text-lumora-green"         },
+          { label: "Strongest Ask",  value: askWallLabel,                   sub: askWallSub,   color: "text-lumora-red"           },
+          { label: "Price Range",    value: priceRangeLabel,                sub: frameCountSub, color: "text-yellow-400"          },
+          { label: "Max Bid Intens", value: `${Math.round(summaryData?.max_bid_intensity ?? 88)}%`, sub: maxBidI, color: "text-lumora-purple-bright" },
+          { label: "Max Ask Intens", value: `${Math.round(summaryData?.max_ask_intensity ?? 95)}%`, sub: maxAskI, color: "text-lumora-cyan"           },
         ].map(({ label, value, sub, color }) => (
           <GlassCard key={label} className="p-3">
             <p className="text-[11px] text-lumora-muted uppercase tracking-wide mb-1.5">{label}</p>
