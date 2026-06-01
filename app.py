@@ -28,6 +28,14 @@ except ImportError:
     _PRO_DASHBOARD_AVAILABLE = False
     def _render_pro_dashboard():
         st.warning("Pro Dashboard not found. Make sure ui/dashboard_pro.py is deployed.")
+# ── Pro Heatmap UI (Patch R) ──────────────────────────────────────────────────
+try:
+    from ui.pro_heatmap import render_pro_heatmap as _render_pro_heatmap
+    _PRO_HEATMAP_AVAILABLE = True
+except ImportError:
+    _PRO_HEATMAP_AVAILABLE = False
+    def _render_pro_heatmap():
+        st.warning("Pro Heatmap not found. Make sure ui/pro_heatmap.py is deployed.")
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Smart Wallet Finder",
@@ -332,9 +340,6 @@ if "section_override" not in st.session_state:
 
 if "sw_detail_wallet" not in st.session_state:
     st.session_state.sw_detail_wallet = ""
-
-if "pro_selected_symbol" not in st.session_state:
-    st.session_state.pro_selected_symbol = ""
 
 if "last_auto_token_review" not in st.session_state:
     st.session_state.last_auto_token_review = pd.DataFrame()
@@ -6148,6 +6153,7 @@ _NAV_ITEMS = [
     ("Paper Trading",  "", "track"),
     ("Pro Dashboard",  "", "pro"),
     ("Pro Terminal",   "", "pro"),
+    ("Liquidity Heatmap", "", "pro"),
     ("Settings",       "", "system"),
 ]
 
@@ -13358,6 +13364,10 @@ No active trades yet.<br><span style="font-size:12px">Go to "Place trade" tab to
     elif section == "Pro Terminal":
         with safe_section("Pro Terminal"):
             _render_pro_terminal()
+
+    elif section == "Liquidity Heatmap":
+        with safe_section("Liquidity Heatmap"):
+            _render_pro_heatmap()
 
     elif section == "Settings":
         st.title("Settings")
