@@ -115,3 +115,61 @@ export interface HeatmapApiError {
   error: string;
   message: string;
 }
+
+// ── Derived helpers (pure, no DOM) ──────────────────────────────────────────────
+// Small read helpers shared by the Dashboard and Terminal pages so they don't
+// duplicate payload-reading logic. No dependencies, safe to import anywhere.
+
+/** Latest known price: summary → meta → last pricePath point, else null. */
+export function heatmapCurrentPrice(p: HeatmapApiPayload): number | null {
+  if (typeof p.summary?.currentPrice === "number") return p.summary.currentPrice;
+  if (typeof p.meta?.currentPrice === "number") return p.meta.currentPrice;
+  const last = heatmapLastPricePoint(p);
+  return last && typeof last.price === "number" ? last.price : null;
+}
+
+/** Last price-path point (best bid/ask/mid), or null when no path is present. */
+export function heatmapLastPricePoint(p: HeatmapApiPayload): HeatmapPricePoint | null {
+  const path = p.pricePath;
+  return path && path.length > 0 ? path[path.length - 1] : null;
+}
+
+/** Strongest wall by USD, optionally filtered to a side. Null when none. */
+export function heatmapStrongestWall(
+  p: HeatmapApiPayload,
+  side?: "bid" | "ask",
+): HeatmapWall | null {
+  const walls = (p.walls ?? []).filter((w) => !side || w.side === side);
+  if (walls.length === 0) return null;
+  return walls.reduce((best, w) => (w.total_usd > best.total_usd ? w : best));
+}
+
+/** Average bid/ask intensity across non-zero cells, plus a bid share %. */
+export function heatmapIntensitySummary(
+  p: HeatmapApiPayload,
+): { bid: number; ask: number; bidPct: number } {
+  let bidSum = 0, askSum = 0, bidN = 0, askN = 0;
+  for (const c of p.cells ?? []) {
+    if (c.bid > 0) { bidSum += c.bid; bidN++; }
+    if (c.ask > 0) { askSum += c.ask; askN++; }
+  }
+  const total = bidSum + askSum;
+  return {
+    bid: bidN ? Math.round(bidSum / bidN) : 0,
+    ask: askN ? Math.round(askSum / askN) : 0,
+    bidPct: total > 0 ? Math.round((bidSum / total) * 100) : 50,
+  };
+}
+
+/**
+ * Whether a live payload looks stale. Only meaningful when meta.liveUpdatedAt
+ * is set (local live mode); returns false otherwise so mock/fixture without a
+ * timestamp is never flagged.
+ */
+export function heatmapIsStale(p: HeatmapApiPayload, maxAgeMs = 15_000): boolean {
+  const t = p.meta?.liveUpdatedAt;
+  if (!t) return false;
+  const ts = new Date(t).getTime();
+  if (Number.isNaN(ts)) return false;
+  return Date.now() - ts > maxAgeMs;
+}

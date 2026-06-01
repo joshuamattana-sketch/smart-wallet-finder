@@ -1,11 +1,84 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { mockKpis, mockSetups, mockWhaleAlerts, mockLiquidityZones } from "@/lib/mock-data";
 import { clsx } from "clsx";
-import { TrendingUp, TrendingDown, Minus, Activity, Zap } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Activity, Zap, RefreshCw } from "lucide-react";
+import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import {
+  heatmapCurrentPrice,
+  heatmapStrongestWall,
+  heatmapIsStale,
+} from "@/lib/heatmap-types";
+
+const DASH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
+
+interface MarketState {
+  payload: HeatmapApiPayload | null;
+  error: string | null;
+}
+
+function marketStatus(
+  m: MarketState,
+): { label: string; variant: "green" | "yellow" | "red" | "muted" } {
+  if (m.error) return { label: "Error", variant: "red" };
+  if (!m.payload) return { label: "—", variant: "muted" };
+  if (heatmapIsStale(m.payload)) return { label: "Stale", variant: "yellow" };
+  const src = m.payload.meta.source ?? m.payload.meta.dataSource;
+  if (src === "fixture" || src === "local_live_fixture") {
+    return { label: "Live Fixture", variant: "green" };
+  }
+  return { label: "Mock", variant: "muted" };
+}
+
+function fmtTime(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
 export default function DashboardPage() {
+  const [markets, setMarkets] = useState<Record<string, MarketState>>({});
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
+
+  // Pull each market from the shared /api/heatmap fixture source (the route
+  // falls back to mock server-side when no fixture exists).
+  const fetchMarkets = useCallback(async () => {
+    const entries = await Promise.all(
+      DASH_SYMBOLS.map(async (sym) => {
+        try {
+          const res = await fetch(
+            `/api/heatmap?source=fixture&symbol=${sym}&timeframe=5m`,
+            { cache: "no-store" },
+          );
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            const message = (body as { message?: string }).message ?? `API error ${res.status}`;
+            return [sym, { payload: null, error: message }] as const;
+          }
+          const payload: HeatmapApiPayload = await res.json();
+          return [sym, { payload, error: null }] as const;
+        } catch (err) {
+          return [sym, { payload: null, error: err instanceof Error ? err.message : "Network error" }] as const;
+        }
+      }),
+    );
+    setMarkets(Object.fromEntries(entries));
+    setLastFetchedAt(new Date().toISOString());
+  }, []);
+
+  // Auto-refresh every 5s; interval cleaned up on unmount.
+  useEffect(() => {
+    fetchMarkets();
+    const id = setInterval(fetchMarkets, 5000);
+    return () => clearInterval(id);
+  }, [fetchMarkets]);
+
   return (
     <div className="space-y-5 animate-[fadeIn_0.4s_ease-out]">
       {/* Header */}
@@ -17,6 +90,84 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 text-xs text-lumora-green">
           <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse inline-block" />
           Demo Mode
+        </div>
+      </div>
+
+      {/* Live Markets — shared /api/heatmap fixture source, auto-refresh 5s */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2">
+            <Activity className="h-3.5 w-3.5 text-lumora-cyan" /> Live Markets
+          </h2>
+          <span className="flex items-center gap-1.5 text-[10px] text-lumora-muted">
+            <RefreshCw className="h-3 w-3" />
+            {lastFetchedAt ? `updated ${fmtTime(lastFetchedAt)}` : "loading…"}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {DASH_SYMBOLS.map((sym) => {
+            const m = markets[sym] ?? { payload: null, error: null };
+            const status = marketStatus(m);
+            const p = m.payload;
+            const price = p ? heatmapCurrentPrice(p) : null;
+            const bidWall = p ? heatmapStrongestWall(p, "bid") : null;
+            const askWall = p ? heatmapStrongestWall(p, "ask") : null;
+            return (
+              <GlassCard key={sym} className="p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="num text-sm font-semibold text-lumora-text">{sym}</span>
+                  <Badge variant={status.variant}>{status.label}</Badge>
+                </div>
+
+                {m.error ? (
+                  <p className="text-[11px] text-red-400">{m.error}</p>
+                ) : !p ? (
+                  <p className="text-[11px] text-lumora-muted">Loading…</p>
+                ) : (
+                  <>
+                    <p className="num text-lg font-bold text-neon-cyan leading-tight">
+                      {price !== null
+                        ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                        : "—"}
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-2 text-[11px]">
+                      <span className="text-lumora-muted">Cells</span>
+                      <span className="num text-right text-lumora-text">{p.meta.cellCount}</span>
+                      <span className="text-lumora-muted">Walls</span>
+                      <span className="num text-right text-lumora-text">{p.meta.wallCount}</span>
+                      <span className="text-lumora-muted">Source</span>
+                      <span className="num text-right text-lumora-text">
+                        {p.meta.source ?? p.meta.dataSource ?? "—"}
+                      </span>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {bidWall && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <Badge variant="green" className="text-[9px] px-1 py-0">BID</Badge>
+                          <span className="num text-lumora-text">${bidWall.price_bucket.toLocaleString()}</span>
+                          <span className="num text-lumora-muted ml-auto">
+                            ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
+                          </span>
+                        </div>
+                      )}
+                      {askWall && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <Badge variant="red" className="text-[9px] px-1 py-0">ASK</Badge>
+                          <span className="num text-lumora-text">${askWall.price_bucket.toLocaleString()}</span>
+                          <span className="num text-lumora-muted ml-auto">
+                            ${(askWall.total_usd / 1_000_000).toFixed(2)}M
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-lumora-muted mt-2">
+                      {p.meta.liveUpdatedAt ? `live ${fmtTime(p.meta.liveUpdatedAt)}` : "no live timestamp"}
+                    </p>
+                  </>
+                )}
+              </GlassCard>
+            );
+          })}
         </div>
       </div>
 

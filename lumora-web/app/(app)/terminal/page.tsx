@@ -1,20 +1,91 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { mockOrderbook } from "@/lib/mock-data";
 import { clsx } from "clsx";
-import { ChevronDown, Info } from "lucide-react";
+import { ChevronDown, Info, RefreshCw, AlertCircle } from "lucide-react";
+import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import {
+  heatmapCurrentPrice,
+  heatmapLastPricePoint,
+  heatmapStrongestWall,
+  heatmapIntensitySummary,
+  heatmapIsStale,
+} from "@/lib/heatmap-types";
 
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT"];
 const TIMEFRAMES = ["Now", "5m", "1h"] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
 
+/** Terminal timeframe label → /api/heatmap timeframe ("Now" maps to 5m). */
+function apiTimeframe(tf: Timeframe): string {
+  return tf === "Now" ? "5m" : tf;
+}
+
+function fmtTime(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export default function TerminalPage() {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState<Timeframe>("Now");
   const ob = mockOrderbook;
+
+  // ── Live heatmap snapshot (shared /api/heatmap fixture source) ──────────────
+  const [payload, setPayload] = useState<HeatmapApiPayload | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
+
+  const apiTf = apiTimeframe(timeframe);
+  const fetchLive = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/heatmap?source=fixture&symbol=${symbol}&timeframe=${apiTf}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
+        return;
+      }
+      const data: HeatmapApiPayload = await res.json();
+      setPayload(data);
+      setApiError(null);
+      setLastFetchedAt(new Date().toISOString());
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Network error");
+    }
+  }, [symbol, apiTf]);
+
+  // Auto-refresh every 2s; interval resets on symbol/timeframe change and is
+  // cleaned up on unmount (no leaked timers).
+  useEffect(() => {
+    fetchLive();
+    const id = setInterval(fetchLive, 2000);
+    return () => clearInterval(id);
+  }, [fetchLive]);
+
+  const livePrice = payload ? heatmapCurrentPrice(payload) : null;
+  const lastPoint = payload ? heatmapLastPricePoint(payload) : null;
+  const intensity = payload ? heatmapIntensitySummary(payload) : null;
+  const strongestWall = payload ? heatmapStrongestWall(payload) : null;
+  const liveSource = payload?.meta.source ?? payload?.meta.dataSource ?? null;
+  const liveStale = payload ? heatmapIsStale(payload) : false;
+  const liveStatus = apiError
+    ? { label: "Error", variant: "red" as const }
+    : !payload
+      ? { label: "—", variant: "muted" as const }
+      : liveStale
+        ? { label: "Stale", variant: "yellow" as const }
+        : liveSource === "fixture" || liveSource === "local_live_fixture"
+          ? { label: "Live Fixture", variant: "green" as const }
+          : { label: "Mock", variant: "muted" as const };
 
   const maxAskSize = Math.max(...ob.asks.map((a) => a.size));
   const maxBidSize = Math.max(...ob.bids.map((b) => b.size));
@@ -73,6 +144,79 @@ export default function TerminalPage() {
           <span className="text-lumora-cyan font-medium">{timeframe} context: </span>
           {pressureText}
         </p>
+      </GlassCard>
+
+      {/* Live heatmap snapshot — shared /api/heatmap fixture source, 2s refresh */}
+      <GlassCard className="overflow-hidden p-0">
+        <div className="px-4 py-2 border-b border-lumora-border flex items-center justify-between gap-3">
+          <span className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-1.5">
+            <RefreshCw className="h-3 w-3 text-lumora-cyan" /> Live Heatmap
+          </span>
+          <div className="flex items-center gap-2">
+            <Badge variant={liveStatus.variant}>{liveStatus.label}</Badge>
+            <span className="text-[10px] text-lumora-muted num">
+              {symbol} · {apiTf}
+            </span>
+          </div>
+        </div>
+
+        {apiError && !payload ? (
+          <div className="px-4 py-3 flex items-center gap-2 text-xs text-red-400">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span>{apiError}</span>
+          </div>
+        ) : !payload ? (
+          <div className="px-4 py-3 text-xs text-lumora-muted">Loading live data…</div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-2 px-4 py-3">
+            <div>
+              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Current</p>
+              <p className="num text-sm font-bold text-neon-cyan">
+                {livePrice !== null
+                  ? `$${livePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Best Bid</p>
+              <p className="num text-sm font-semibold text-lumora-green">
+                {lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Best Ask</p>
+              <p className="num text-sm font-semibold text-lumora-red">
+                {lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Bid/Ask Intens</p>
+              <p className="num text-sm font-semibold text-lumora-text">
+                {intensity ? `${intensity.bid}/${intensity.ask}` : "—"}
+                <span className="text-[10px] text-lumora-muted ml-1">
+                  {intensity ? `(${intensity.bidPct}% bid)` : ""}
+                </span>
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Walls</p>
+              <p className="num text-sm font-semibold text-lumora-text">
+                {payload.meta.wallCount}
+                {strongestWall && (
+                  <span className="text-[10px] text-lumora-muted ml-1">
+                    top ${strongestWall.price_bucket.toLocaleString()}
+                  </span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Live / Fetched</p>
+              <p className="num text-[11px] text-lumora-text-dim">
+                {fmtTime(payload.meta.liveUpdatedAt)} · {fmtTime(lastFetchedAt)}
+              </p>
+            </div>
+          </div>
+        )}
       </GlassCard>
 
       {/* Orderbook — asks | mid | bids */}
