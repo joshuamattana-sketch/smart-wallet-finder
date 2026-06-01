@@ -86,6 +86,7 @@ export default function LandingPage() {
           </p>
           <p className="mt-3 text-sm text-lumora-muted max-w-xl mx-auto">
             Lumora combines orderbook depth, liquidity mapping, whale alerts and market setup context in one premium trading terminal.
+            <span className="block mt-1.5 text-[12px] text-lumora-border">Demo data shown — live data integrations coming.</span>
           </p>
           <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
             <Link
@@ -106,8 +107,28 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Context not noise */}
+      <section className="py-8 px-4">
+        <div className="mx-auto max-w-4xl">
+          <GlassCard className="px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center gap-4" glow="none">
+            <div className="flex-1">
+              <p className="text-base font-semibold text-lumora-text">
+                Built for traders who need context, not noise.
+              </p>
+              <p className="text-sm text-lumora-muted mt-1">
+                Lumora surfaces the information behind the price move — bid/ask walls, whale flow and liquidity gaps — so
+                you can act on context rather than react to candles.
+              </p>
+            </div>
+            <div className="shrink-0">
+              <Badge variant="muted" className="text-[11px]">Demo data shown · Live integrations coming</Badge>
+            </div>
+          </GlassCard>
+        </div>
+      </section>
+
       {/* Feature cards */}
-      <section className="py-16 px-4">
+      <section className="py-12 px-4">
         <div className="mx-auto max-w-6xl">
           <div className="text-center mb-12">
             <h2 className="text-2xl font-bold text-lumora-text">Everything you need. Nothing you don't.</h2>

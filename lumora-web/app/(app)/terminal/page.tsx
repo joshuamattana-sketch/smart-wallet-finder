@@ -5,18 +5,11 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { mockOrderbook } from "@/lib/mock-data";
 import { clsx } from "clsx";
-import { ChevronDown, Activity } from "lucide-react";
+import { ChevronDown, Info } from "lucide-react";
 
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT"];
 const TIMEFRAMES = ["Now", "5m", "1h"] as const;
-
 type Timeframe = (typeof TIMEFRAMES)[number];
-
-const TF_LABEL: Record<Timeframe, string> = {
-  Now: "Real-time snapshot",
-  "5m": "5-minute depth",
-  "1h": "1-hour depth",
-};
 
 export default function TerminalPage() {
   const [symbol, setSymbol] = useState("BTCUSDT");
@@ -28,17 +21,17 @@ export default function TerminalPage() {
   const totalBidUsd = ob.bids.reduce((s, b) => s + b.usd, 0);
   const totalAskUsd = ob.asks.reduce((s, a) => s + a.usd, 0);
   const bidPct = Math.round((totalBidUsd / (totalBidUsd + totalAskUsd)) * 100);
+  const pressureText = ob.pressureSummary[timeframe];
 
   return (
     <div className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
-      {/* Header + controls row */}
+      {/* Header + controls */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="mr-2">
           <h1 className="text-xl font-semibold text-lumora-text">Pro Terminal</h1>
-          <p className="text-xs text-lumora-muted mt-0.5">{TF_LABEL[timeframe]}</p>
+          <p className="text-xs text-lumora-muted mt-0.5">Demo orderbook — live data coming soon</p>
         </div>
 
-        {/* Symbol selector */}
         <div className="relative">
           <select
             className="appearance-none bg-lumora-card border border-lumora-border text-lumora-text text-sm rounded-lg px-3 py-2 pr-8 focus:outline-none focus:border-lumora-purple num cursor-pointer"
@@ -50,7 +43,6 @@ export default function TerminalPage() {
           <ChevronDown className="absolute right-2 top-2.5 h-4 w-4 text-lumora-muted pointer-events-none" />
         </div>
 
-        {/* Timeframe toggle */}
         <div className="flex rounded-lg border border-lumora-border overflow-hidden">
           {TIMEFRAMES.map((tf) => (
             <button
@@ -69,19 +61,28 @@ export default function TerminalPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse inline-block" />
-          <span className="text-xs text-lumora-green">Live</span>
+          <span className="h-1.5 w-1.5 rounded-full bg-yellow-400 animate-pulse inline-block" />
+          <span className="text-xs text-yellow-400">Demo</span>
         </div>
       </div>
 
-      {/* Orderbook — 3-col: asks | mid | bids */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_160px_1fr] gap-3 items-start">
+      {/* Pressure context banner */}
+      <GlassCard className="px-4 py-2.5 flex items-start gap-2.5">
+        <Info className="h-3.5 w-3.5 text-lumora-cyan shrink-0 mt-0.5" />
+        <p className="text-xs text-lumora-text-dim leading-relaxed">
+          <span className="text-lumora-cyan font-medium">{timeframe} context: </span>
+          {pressureText}
+        </p>
+      </GlassCard>
+
+      {/* Orderbook — asks | mid | bids */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_156px_1fr] gap-3 items-start">
 
         {/* Asks */}
         <GlassCard className="overflow-hidden">
           <div className="px-4 py-2.5 border-b border-lumora-border flex items-center justify-between bg-red-500/5">
             <span className="text-sm font-semibold text-lumora-red">Asks</span>
-            <span className="num text-xs text-lumora-muted">${(totalAskUsd / 1000).toFixed(1)}K</span>
+            <span className="num text-xs text-lumora-muted">${(totalAskUsd / 1000).toFixed(1)}K depth</span>
           </div>
           <div className="text-xs num">
             <div className="grid grid-cols-3 px-4 py-1.5 text-lumora-muted text-[10px] uppercase tracking-wider border-b border-lumora-border/40">
@@ -91,10 +92,7 @@ export default function TerminalPage() {
             </div>
             <div className="overflow-y-auto max-h-64">
               {[...ob.asks].reverse().map((row, i) => (
-                <div
-                  key={i}
-                  className="relative px-4 py-1.5 grid grid-cols-3 hover:bg-lumora-surface/50 transition-colors"
-                >
+                <div key={i} className="relative px-4 py-1.5 grid grid-cols-3 hover:bg-lumora-surface/50 transition-colors">
                   <div
                     className="absolute inset-y-0 right-0 bg-red-500/10"
                     style={{ width: `${(row.size / maxAskSize) * 100}%` }}
@@ -108,16 +106,16 @@ export default function TerminalPage() {
           </div>
         </GlassCard>
 
-        {/* Mid — centered vertically */}
-        <div className="flex flex-col items-center gap-3 px-2 py-4 lg:py-8">
+        {/* Mid column */}
+        <div className="flex flex-col items-center gap-3 px-2 py-4 lg:py-6">
           <div className="text-center">
             <p className="text-[10px] text-lumora-muted uppercase tracking-widest mb-1">Mid Price</p>
             <p className="num text-xl font-bold text-neon-cyan">{ob.midPrice.toLocaleString()}</p>
-            <p className="text-xs text-lumora-green mt-0.5">+0.32%</p>
+            <p className="text-xs text-lumora-green mt-0.5">+0.32% (5m)</p>
           </div>
 
-          <div className="w-full">
-            <div className="flex justify-between text-[10px] text-lumora-muted mb-1">
+          <div className="w-full space-y-1">
+            <div className="flex justify-between text-[10px] text-lumora-muted">
               <span>Bids {bidPct}%</span>
               <span>{100 - bidPct}% Asks</span>
             </div>
@@ -131,9 +129,17 @@ export default function TerminalPage() {
             {bidPct >= 50 ? "Bid Dominant" : "Ask Dominant"}
           </Badge>
 
+          <div className="text-center space-y-1">
+            <p className="text-[10px] text-lumora-muted">Imbalance</p>
+            <p className="num text-xs text-lumora-purple-bright font-semibold">
+              {ob.imbalance > 0 ? "+" : ""}{ob.imbalance.toFixed(2)}
+            </p>
+          </div>
+
           <div className="text-center">
             <p className="text-[10px] text-lumora-muted">Spread</p>
-            <p className="num text-xs text-lumora-text mt-0.5">4 bps</p>
+            <p className="num text-xs text-lumora-text mt-0.5">{ob.spread} bps</p>
+            <p className="num text-[10px] text-lumora-muted">{ob.spreadBps}</p>
           </div>
         </div>
 
@@ -141,7 +147,7 @@ export default function TerminalPage() {
         <GlassCard className="overflow-hidden">
           <div className="px-4 py-2.5 border-b border-lumora-border flex items-center justify-between bg-green-500/5">
             <span className="text-sm font-semibold text-lumora-green">Bids</span>
-            <span className="num text-xs text-lumora-muted">${(totalBidUsd / 1000).toFixed(1)}K</span>
+            <span className="num text-xs text-lumora-muted">${(totalBidUsd / 1000).toFixed(1)}K depth</span>
           </div>
           <div className="text-xs num">
             <div className="grid grid-cols-3 px-4 py-1.5 text-lumora-muted text-[10px] uppercase tracking-wider border-b border-lumora-border/40">
@@ -151,10 +157,7 @@ export default function TerminalPage() {
             </div>
             <div className="overflow-y-auto max-h-64">
               {ob.bids.map((row, i) => (
-                <div
-                  key={i}
-                  className="relative px-4 py-1.5 grid grid-cols-3 hover:bg-lumora-surface/50 transition-colors"
-                >
+                <div key={i} className="relative px-4 py-1.5 grid grid-cols-3 hover:bg-lumora-surface/50 transition-colors">
                   <div
                     className="absolute inset-y-0 left-0 bg-green-500/10"
                     style={{ width: `${(row.size / maxBidSize) * 100}%` }}
@@ -172,10 +175,10 @@ export default function TerminalPage() {
       {/* Pressure Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Spread", value: "4 bps", sub: "0.006% of mid" },
-          { label: "Bid / Ask Ratio", value: `${bidPct} / ${100 - bidPct}`, sub: "Bid pressure dominant" },
-          { label: "Largest Ask Wall", value: "$215K", sub: "@ 67,440" },
-          { label: "Largest Bid Wall", value: "$276K", sub: "@ 67,400" },
+          { label: "Spread",           value: `${ob.spread} bps`,              sub: ob.spreadBps },
+          { label: "Imbalance",        value: `+${ob.imbalance}`,              sub: "Bid-side advantage" },
+          { label: "Largest Ask Wall", value: "$216K",                         sub: "@ 67,440" },
+          { label: "Largest Bid Wall", value: "$276K",                         sub: "@ 67,400 — held 40m" },
         ].map(({ label, value, sub }) => (
           <GlassCard key={label} className="p-3">
             <p className="text-[11px] text-lumora-muted uppercase tracking-wide mb-1">{label}</p>
