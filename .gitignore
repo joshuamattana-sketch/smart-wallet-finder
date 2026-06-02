@@ -4,3 +4,7 @@ data/
 __pycache__/
 *.pyc
 .DS_Store
+# Local generated heatmap/live payloads
+lumora-web/fixtures/heatmap/*.json
+lumora-web/fixtures/live/*.json
+lumora-web/fixtures/live/*.tmp
