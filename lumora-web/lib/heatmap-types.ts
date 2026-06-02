@@ -175,14 +175,48 @@ export function heatmapIntensitySummary(
 }
 
 /**
- * Whether a live payload looks stale. Only meaningful when meta.liveUpdatedAt
- * is set (local live mode); returns false otherwise so mock/fixture without a
- * timestamp is never flagged.
+ * Whether a live payload looks stale. Prefers the route's `meta.stale` flag
+ * (computed against the 30s freshness window); otherwise falls back to a local
+ * liveUpdatedAt check. Returns false when there is no timestamp at all so
+ * mock/fixture payloads without one are not flagged by the local check.
  */
 export function heatmapIsStale(p: HeatmapApiPayload, maxAgeMs = 15_000): boolean {
+  if (typeof p.meta?.stale === "boolean") return p.meta.stale;
   const t = p.meta?.liveUpdatedAt;
   if (!t) return false;
   const ts = new Date(t).getTime();
   if (Number.isNaN(ts)) return false;
   return Date.now() - ts > maxAgeMs;
+}
+
+/**
+ * Resolved source status for badges, derived from `meta.resolvedSource` (set by
+ * the API route after the live → fixture → mock fallback chain):
+ *   live    → "Live"
+ *   fixture → "Fixture Fallback"
+ *   mock    → "Demo Fallback"
+ * Also surfaces `isFallback` and `stale` so the UI can show extra hints.
+ */
+export function heatmapResolvedStatus(p: HeatmapApiPayload | null): {
+  label: string;
+  variant: "green" | "yellow" | "red" | "muted";
+  resolved: string | null;
+  isFallback: boolean;
+  stale: boolean;
+} {
+  if (!p) {
+    return { label: "—", variant: "muted", resolved: null, isFallback: false, stale: false };
+  }
+  const m = p.meta;
+  const resolved = m?.resolvedSource ?? m?.source ?? m?.dataSource ?? null;
+  const isFallback = m?.isFallback ?? false;
+  const stale = heatmapIsStale(p);
+
+  if (resolved === "live") {
+    return { label: "Live", variant: "green", resolved, isFallback, stale };
+  }
+  if (resolved === "fixture" || resolved === "local_live_fixture" || resolved === "local_live_writer") {
+    return { label: "Fixture Fallback", variant: "yellow", resolved, isFallback, stale };
+  }
+  return { label: "Demo Fallback", variant: "muted", resolved, isFallback, stale };
 }

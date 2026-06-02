@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import { heatmapResolvedStatus } from "@/lib/heatmap-types";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
 import {
   MARKET_SOURCES,
@@ -153,21 +154,15 @@ function isValidPayload(data: unknown): data is HeatmapApiPayload {
   );
 }
 
-/** Whether a payload actually came from a fixture / local live source. */
-function payloadIsFixture(p: HeatmapApiPayload): boolean {
-  const s = p.meta?.source;
-  const d = p.meta?.dataSource;
-  return s === "fixture" || s === "local_live_fixture" || d === "local_live_fixture";
-}
-
-const INITIAL_KEY = cacheKey("BTCUSDT", "15m", "mock");
+type DataSource = "mock" | "fixture" | "live";
+const INITIAL_KEY = cacheKey("BTCUSDT", "15m", "live");
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function LiquidityMapPage() {
   const [symbol,    setSymbol]    = useState("BTCUSDT");
   const [exchange,  setExchange]  = useState("Binance Spot");
   const [timeframe, setTimeframe] = useState<string>("15m");
-  const [dataSource, setDataSource] = useState<"mock" | "fixture">("mock");
+  const [dataSource, setDataSource] = useState<DataSource>("live");
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   // Initialise from the last-good cache so a remount (app tab switch) shows the
@@ -185,19 +180,18 @@ export default function LiquidityMapPage() {
   // in `finally`. Every fetch ends by setting either a payload or an error, so
   // the loading state (derived as `!payload && !apiError`) can never get stuck.
   const fetchPayload = useCallback(async () => {
-    const requestedFixture = dataSource === "fixture";
     const tf = timeframe.toLowerCase();
     const key = cacheKey(symbol, timeframe, dataSource);
     setRefreshing(true);
     try {
       const exSlug = exchangeToApiSlug(exchange);
       const params = new URLSearchParams({
-        symbol,                  // real symbol e.g. BTCUSDT — never a display label
+        symbol,                   // real symbol e.g. BTCUSDT — never a display label
         exchange: exSlug,
-        timeframe: tf,           // 5m / 15m / 1h / 4h / 1d
-        _ts: String(Date.now()), // cache buster so each poll is fresh
+        timeframe: tf,            // 5m / 15m / 1h / 4h / 1d
+        source: dataSource,       // mock | fixture | live — route does the fallback chain
+        _ts: String(Date.now()),  // cache buster so each poll is fresh
       });
-      if (requestedFixture) params.set("source", "fixture");
 
       const res = await fetch(`/api/heatmap?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
@@ -214,8 +208,9 @@ export default function LiquidityMapPage() {
       }
 
       // Accept the payload as-is (empty cells → empty state, never a perpetual
-      // spinner). Replace the last good payload and cache it for remounts.
-      setFixtureFallback(requestedFixture && !payloadIsFixture(data));
+      // spinner). Flag a fallback when the route served a different source than
+      // requested. Replace the last good payload and cache it for remounts.
+      setFixtureFallback(Boolean(data.meta?.isFallback));
       payloadCache.set(key, data);
       setPayload(data);
       setApiError(null);
@@ -249,7 +244,6 @@ export default function LiquidityMapPage() {
   }, [fetchPayload]);
 
   // Derive display values — fall back to static defaults when payload not loaded yet
-  const isDemo        = payload?.meta.isDemo ?? true;
   const summaryData   = payload?.summary;
   const topBidWall    = payload?.walls.find(w => w.side === "bid");
   const topAskWall    = payload?.walls.find(w => w.side === "ask");
@@ -295,8 +289,8 @@ export default function LiquidityMapPage() {
     payload.symbol === symbol &&
     String(payload.timeframe).toLowerCase() === tfLower;
   const selectionLoading = refreshing && payload != null && !payloadMatchesSelection;
-  // Whether the displayed payload is real fixture / local-live data.
-  const isLiveFixture = payload != null && payloadIsFixture(payload);
+  // Resolved source status (Live / Fixture Fallback / Demo Fallback) + stale.
+  const resolvedStatus = heatmapResolvedStatus(payload);
 
   // Status indicator — never implies "empty" while a payload is on screen.
   const statusInfo =
@@ -316,14 +310,15 @@ export default function LiquidityMapPage() {
         <div>
           <h1 className="text-xl font-semibold text-lumora-text">Liquidity Map</h1>
           <p className="text-sm text-lumora-muted mt-0.5">
-            Spot orderbook depth over time{isDemo ? " — demo data" : ""}
+            Spot orderbook depth over time{resolvedStatus.resolved === "mock" ? " — demo data" : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={statusVariant}>{statusLabel}</Badge>
-          {isLiveFixture
-            ? <Badge variant="green">Live Fixture</Badge>
-            : isDemo && <Badge variant="yellow">Demo Data</Badge>}
+          {payload && <Badge variant={resolvedStatus.variant}>{resolvedStatus.label}</Badge>}
+          {payload && resolvedStatus.stale && (
+            <Badge variant="yellow">Stale</Badge>
+          )}
         </div>
       </div>
 
@@ -363,9 +358,10 @@ export default function LiquidityMapPage() {
           ))}
         </div>
         <div className="h-4 w-px bg-lumora-border hidden sm:block" />
-        {/* Data source toggle — Mock vs locally exported Fixture */}
+        {/* Data source toggle — Live (default) → Fixture → Mock. The API falls
+            back live → fixture → mock server-side. */}
         <div className="flex rounded-md border border-lumora-border overflow-hidden" title="Heatmap data source">
-          {(["mock", "fixture"] as const).map(src => (
+          {(["live", "fixture", "mock"] as const).map(src => (
             <button key={src} onClick={() => setDataSource(src)}
               className={clsx("px-2.5 py-1.5 text-xs font-medium capitalize transition-colors",
                 dataSource === src
@@ -627,10 +623,11 @@ export default function LiquidityMapPage() {
                 : "—",
             },
             { k: "Demo",        v: payload ? (payload.meta.isDemo ? "Yes" : "No") : "—" },
-            // Requested data source (toggle) and what meta actually reports —
-            // reveals a fixture→mock fallback when no fixture file exists.
-            { k: "Source",      v: dataSource },
-            { k: "Meta Src",    v: payload?.meta.source ?? payload?.meta.dataSource ?? "—" },
+            // Requested source (toggle) vs what the route actually resolved to
+            // after the live → fixture → mock fallback chain.
+            { k: "Requested",   v: dataSource },
+            { k: "Resolved",    v: payload?.meta.resolvedSource ?? payload?.meta.source ?? payload?.meta.dataSource ?? "—" },
+            { k: "Stale",       v: payload ? (resolvedStatus.stale ? "Yes" : "No") : "—" },
             { k: "Auto",        v: autoRefresh ? "On (2s)" : "Off" },
             {
               k: "Live Upd",
@@ -651,14 +648,14 @@ export default function LiquidityMapPage() {
             </div>
           ))}
 
-          {/* Fixture fallback notice — requested fixture, got mock. Last good
-              fixture payload (if any) is kept on screen. */}
-          {fixtureFallback && (
+          {/* Fallback notice — requested source wasn't available, served a
+              lower-tier source. Last good payload (if any) stays on screen. */}
+          {fixtureFallback && payload && (
             <>
               <div className="h-3 w-px bg-lumora-border hidden sm:block" />
               <span className="flex items-center gap-1 text-[10px] text-amber-400">
                 <AlertCircle className="h-3 w-3 shrink-0" />
-                Fixture fallback (mock)
+                Fallback → {resolvedStatus.label}
               </span>
             </>
           )}

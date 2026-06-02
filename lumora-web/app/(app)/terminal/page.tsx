@@ -12,7 +12,7 @@ import {
   heatmapLastPricePoint,
   heatmapStrongestWall,
   heatmapIntensitySummary,
-  heatmapIsStale,
+  heatmapResolvedStatus,
 } from "@/lib/heatmap-types";
 
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT"];
@@ -37,7 +37,7 @@ export default function TerminalPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>("Now");
   const ob = mockOrderbook;
 
-  // ── Live heatmap snapshot (shared /api/heatmap fixture source) ──────────────
+  // ── Live heatmap snapshot (shared /api/heatmap live source) ─────────────────
   const [payload, setPayload] = useState<HeatmapApiPayload | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export default function TerminalPage() {
   const fetchLive = useCallback(async () => {
     try {
       const res = await fetch(
-        `/api/heatmap?source=fixture&symbol=${symbol}&timeframe=${apiTf}`,
+        `/api/heatmap?source=live&symbol=${symbol}&exchange=binance_spot&timeframe=${apiTf}&_ts=${Date.now()}`,
         { cache: "no-store" },
       );
       if (!res.ok) {
@@ -75,17 +75,14 @@ export default function TerminalPage() {
   const lastPoint = payload ? heatmapLastPricePoint(payload) : null;
   const intensity = payload ? heatmapIntensitySummary(payload) : null;
   const strongestWall = payload ? heatmapStrongestWall(payload) : null;
-  const liveSource = payload?.meta.source ?? payload?.meta.dataSource ?? null;
-  const liveStale = payload ? heatmapIsStale(payload) : false;
-  const liveStatus = apiError
-    ? { label: "Error", variant: "red" as const }
-    : !payload
-      ? { label: "—", variant: "muted" as const }
-      : liveStale
-        ? { label: "Stale", variant: "yellow" as const }
-        : liveSource === "fixture" || liveSource === "local_live_fixture"
-          ? { label: "Live Fixture", variant: "green" as const }
-          : { label: "Mock", variant: "muted" as const };
+  // Status from the route's resolvedSource (live → fixture → mock).
+  const resolvedStatus = heatmapResolvedStatus(payload);
+  const liveStatus =
+    apiError && !payload
+      ? { label: "Error", variant: "red" as const }
+      : !payload
+        ? { label: "—", variant: "muted" as const }
+        : { label: resolvedStatus.label, variant: resolvedStatus.variant };
 
   // Depth / dominance derived purely from the live payload (no mock numbers).
   const bidWall = payload ? heatmapStrongestWall(payload, "bid") : null;
@@ -103,7 +100,7 @@ export default function TerminalPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="mr-2">
           <h1 className="text-xl font-semibold text-lumora-text">Pro Terminal</h1>
-          <p className="text-xs text-lumora-muted mt-0.5">Live depth via local fixture · heatmap-derived</p>
+          <p className="text-xs text-lumora-muted mt-0.5">Live depth via /api/heatmap (live → fixture → mock) · heatmap-derived</p>
         </div>
 
         <div className="relative">
@@ -135,7 +132,13 @@ export default function TerminalPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {payload && resolvedStatus.isFallback && (
+            <span className="text-[10px] text-yellow-400">live unavailable</span>
+          )}
           <Badge variant={liveStatus.variant}>{liveStatus.label}</Badge>
+          {payload && resolvedStatus.stale && (
+            <Badge variant="yellow" className="text-[9px] px-1 py-0">Stale</Badge>
+          )}
         </div>
       </div>
 
@@ -148,7 +151,7 @@ export default function TerminalPage() {
         </p>
       </GlassCard>
 
-      {/* Live heatmap snapshot — shared /api/heatmap fixture source, 2s refresh */}
+      {/* Live heatmap snapshot — shared /api/heatmap live source, 2s refresh */}
       <GlassCard className="overflow-hidden p-0">
         <div className="px-4 py-2 border-b border-lumora-border flex items-center justify-between gap-3">
           <span className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-1.5">

@@ -3,13 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
+import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
 import { TrendingUp, Activity, Zap, RefreshCw } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
 import {
   heatmapCurrentPrice,
   heatmapStrongestWall,
-  heatmapIsStale,
+  heatmapResolvedStatus,
 } from "@/lib/heatmap-types";
 
 const DASH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
@@ -28,17 +29,14 @@ interface MarketState {
 
 const EMPTY_MARKET: MarketState = { payload: null, error: null, lastFetchedAt: null };
 
+// Status badge driven by the route's resolvedSource (live → fixture → mock).
 function marketStatus(
   m: MarketState,
-): { label: string; variant: "green" | "yellow" | "red" | "muted" } {
-  if (m.error) return { label: "Error", variant: "red" };
-  if (!m.payload) return { label: "—", variant: "muted" };
-  if (heatmapIsStale(m.payload)) return { label: "Stale", variant: "yellow" };
-  const src = m.payload.meta.source ?? m.payload.meta.dataSource;
-  if (src === "fixture" || src === "local_live_fixture") {
-    return { label: "Live Fixture", variant: "green" };
-  }
-  return { label: "Mock", variant: "muted" };
+): { label: string; variant: "green" | "yellow" | "red" | "muted"; isFallback: boolean; stale: boolean } {
+  if (m.error && !m.payload) return { label: "Error", variant: "red", isFallback: false, stale: false };
+  if (!m.payload) return { label: "—", variant: "muted", isFallback: false, stale: false };
+  const s = heatmapResolvedStatus(m.payload);
+  return { label: s.label, variant: s.variant, isFallback: s.isFallback, stale: s.stale };
 }
 
 function fmtTime(iso?: string | null): string {
@@ -53,13 +51,13 @@ export default function DashboardPage() {
   const [markets, setMarkets] = useState<Record<string, MarketState>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
-  // Fetch one market from the shared /api/heatmap fixture source (the route
-  // falls back to mock server-side when no fixture exists). On error the last
-  // good payload is kept (it is real fixture data, not a fake placeholder).
+  // Fetch one market from the shared /api/heatmap live source. The route falls
+  // back live → fixture → mock server-side and reports what it served via
+  // meta.resolvedSource. On error the last good payload is kept.
   const fetchSymbol = useCallback(async (sym: string) => {
     try {
       const res = await fetch(
-        `/api/heatmap?source=fixture&symbol=${sym}&timeframe=5m&_ts=${Date.now()}`,
+        `/api/heatmap?source=live&symbol=${sym}&exchange=binance_spot&timeframe=5m&_ts=${Date.now()}`,
         { cache: "no-store" },
       );
       if (!res.ok) {
@@ -104,17 +102,23 @@ export default function DashboardPage() {
     };
   }, [fetchSymbol]);
 
+  // Overall header status derived from the active (primary) market.
+  const headerStatus = heatmapResolvedStatus(markets[ACTIVE_SYMBOL]?.payload ?? null);
+  const headerDot =
+    headerStatus.resolved === "live" ? "bg-green-400" :
+    headerStatus.resolved == null ? "bg-lumora-muted" : "bg-yellow-400";
+
   return (
     <div className="space-y-5 animate-[fadeIn_0.4s_ease-out]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-lumora-text">Market Dashboard</h1>
-          <p className="text-sm text-lumora-muted mt-0.5">Live markets via local fixture · demo setups &amp; alerts below</p>
+          <p className="text-sm text-lumora-muted mt-0.5">Live markets via /api/heatmap (live → fixture → mock) · demo setups &amp; alerts below</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-lumora-green">
-          <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse inline-block" />
-          Demo Mode
+        <div className="flex items-center gap-2 text-xs text-lumora-text-dim">
+          <span className={clsx("h-1.5 w-1.5 rounded-full inline-block", headerDot, headerStatus.resolved === "live" && "animate-pulse")} />
+          {headerStatus.resolved ? headerStatus.label : "Connecting…"}
         </div>
       </div>
 
@@ -150,7 +154,7 @@ export default function DashboardPage() {
 
                 {!p ? (
                   <p className="text-[11px] text-lumora-muted">
-                    {m.error ? `Fixture fallback — ${m.error}` : "Waiting for live data…"}
+                    {m.error ? `Waiting (last error: ${m.error})` : "Waiting for live data…"}
                   </p>
                 ) : (
                   <>
@@ -159,6 +163,13 @@ export default function DashboardPage() {
                         ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                         : "—"}
                     </p>
+                    {(status.isFallback || status.stale) && (
+                      <p className="text-[10px] text-yellow-400 mt-1">
+                        {status.isFallback ? "Live unavailable — fallback" : ""}
+                        {status.isFallback && status.stale ? " · " : ""}
+                        {status.stale ? "Stale" : ""}
+                      </p>
+                    )}
                     <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-2 text-[11px]">
                       <span className="text-lumora-muted">Cells</span>
                       <span className="num text-right text-lumora-text">{p.meta.cellCount}</span>
@@ -166,7 +177,7 @@ export default function DashboardPage() {
                       <span className="num text-right text-lumora-text">{p.meta.wallCount}</span>
                       <span className="text-lumora-muted">Source</span>
                       <span className="num text-right text-lumora-text">
-                        {p.meta.source ?? p.meta.dataSource ?? "—"}
+                        {p.meta.resolvedSource ?? p.meta.source ?? p.meta.dataSource ?? "—"}
                       </span>
                     </div>
                     <div className="mt-2 space-y-1">
