@@ -13,7 +13,7 @@
 | `symbol`   | string | `BTCUSDT`       | Normalised to uppercase. E.g. `ETHUSDT`.      |
 | `exchange` | string | `binance_spot`  | Snake-case slug. E.g. `bybit_spot`.           |
 | `timeframe`| string | `5m`            | Must be one of the allowed values (see below).|
-| `source`   | string | _(unset)_       | `fixture` opts into local exported fixtures. Any other value / unset = mock. |
+| `source`   | string | `mock`          | One of `mock` \| `fixture` \| `live`. Any other value returns HTTP 400. Unset = `mock`. |
 
 ### Allowed timeframes
 
@@ -21,27 +21,56 @@
 
 Any other value returns HTTP 400.
 
-### `source=fixture` — local exported fixtures
+### Data sources & fallback chain
 
-When `source=fixture` is passed, the endpoint tries to load a locally exported
-payload from:
+The `source` parameter selects where the payload body comes from. Each source
+degrades gracefully down the chain, so a missing/not-yet-wired source never
+breaks the response:
 
-```
-lumora-web/fixtures/heatmap/{SYMBOL}_{timeframe}.json
-```
+| Requested  | Chain                       | Looks for |
+|------------|-----------------------------|-----------|
+| `mock`     | `mock`                      | — (synthetic generator) |
+| `fixture`  | `fixture` → `mock`          | `fixtures/heatmap/{SYMBOL}_{timeframe}.json` |
+| `live`     | `live` → `fixture` → `mock` | `fixtures/live/{SYMBOL}_{timeframe}.json`, then the fixture path |
 
-(e.g. `fixtures/heatmap/BTCUSDT_5m.json`, produced by
-`scripts/export_real_heatmap_payload.py`).
+- **`source=fixture`** loads a locally exported payload (produced by
+  `scripts/export_real_heatmap_payload.py` or the local live writer). Missing or
+  invalid → falls back to mock.
+- **`source=live`** is the production-live entry point. Today it is a **skeleton**
+  (`lib/heatmap-live-loader.ts`) that only reads an optional local file under
+  `fixtures/live/`; later it will read a real production live store (object
+  storage / Supabase / hosted worker — see `PRODUCTION_LIVE_HEATMAP_PLAN.md`).
+  No Supabase or external network call is made from Next.js. Missing → falls back
+  to fixture, then mock.
 
-- **Fixture found & valid** → returned as-is with `meta.source = "fixture"`. Any
-  producer tag the file carried (e.g. `"binance_spot_rest_snapshot"`) is moved
-  to `meta.dataSource`.
-- **Fixture missing or invalid** → falls back to the synthetic mock payload with
-  `meta.source = "mock"`. The app never crashes on a bad/missing fixture.
-- **`source` unset** → unchanged legacy behaviour (mock payload).
+Symbol/timeframe/source validation (and the corresponding 400s) run before any
+file lookup. Missing files never crash the route.
 
-Symbol/timeframe validation (and the unsupported-symbol / invalid-timeframe
-400s) still apply before any fixture lookup.
+### Source resolution & freshness meta
+
+Every 200 response stamps `meta` with what was actually served:
+
+| Field             | Meaning |
+|-------------------|---------|
+| `requestedSource` | What the caller asked for (`mock`/`fixture`/`live`). |
+| `resolvedSource`  | What was actually served after the fallback chain. |
+| `source`          | Mirror of `resolvedSource` (origin of the body). |
+| `dataSource`      | Preserved producer tag from the loaded file (e.g. `"local_live_fixture"`, `"binance_spot_rest_snapshot"`), else the resolved source. |
+| `isFallback`      | `true` when `resolvedSource !== requestedSource`. |
+| `stale`           | Freshness flag (see below). |
+| `staleReason`     | Present only when `stale` is `true`. |
+
+**Stale detection** uses the payload's freshest timestamp
+(`meta.liveUpdatedAt` ?? `meta.generatedAt`):
+
+- Timestamp older than **30 seconds** → `stale: true`,
+  `staleReason: "Payload older than 30 seconds"`.
+- No usable timestamp → `stale: true`, `staleReason: "Missing live timestamp"`.
+- Otherwise → `stale: false`.
+
+Mock payloads are generated on the fly (`generatedAt = now`) so they read as
+fresh, but are still clearly marked via `resolvedSource: "mock"` and
+`meta.isDemo`.
 
 ---
 

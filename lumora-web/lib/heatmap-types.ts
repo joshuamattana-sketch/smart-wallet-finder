@@ -91,6 +91,19 @@ export interface HeatmapMeta {
   maxFrames?: number;
   /** Latest mid price, mirrored from summary.currentPrice when available. */
   currentPrice?: number;
+  /**
+   * Source resolution metadata (set by the API route). `requestedSource` is
+   * what the caller asked for via ?source=; `resolvedSource` is what was
+   * actually served after the live → fixture → mock fallback chain.
+   */
+  requestedSource?: "mock" | "fixture" | "live";
+  resolvedSource?: "mock" | "fixture" | "live";
+  /** True when the served source differs from the requested source. */
+  isFallback?: boolean;
+  /** True when the payload's timestamp is older than the freshness window. */
+  stale?: boolean;
+  /** Human-readable reason set when stale is true. */
+  staleReason?: string;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */
