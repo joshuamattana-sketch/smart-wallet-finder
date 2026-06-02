@@ -3,8 +3,11 @@
 Last updated: update manually after each major milestone.
 
 ## Current Milestone
-LM39B in progress:
-Stabilize Supabase live updates end-to-end
+LM41A in progress:
+Prepare hosted heatmap worker mode
+(writer can run forever as a hosted process; PC no longer required).
+
+Previous: LM39B — Supabase live updates stabilized end-to-end
 (writer → Supabase → API → Dashboard/Terminal/Liquidity Map).
 
 ## Completed
@@ -60,10 +63,27 @@ Diagnosis = Cause B (API read/refresh layer).
   (shell / Vercel project env) — never in committed files.
 - Until rotated, treat the old key as compromised.
 
+## LM41A — Hosted Worker Mode (this patch)
+- Writer now supports `--forever`: runs indefinitely, ignores `--samples`,
+  exits cleanly on Ctrl+C / SIGINT.
+- Startup banner prints mode / target / symbols / timeframes / intervals /
+  supabase=configured|not (no secrets are printed).
+- In `--forever` mode, an empty initial collection does not exit 1 — the
+  worker is expected to be long-running.
+- Recommended hosted command:
+  `python scripts/run_local_heatmap_live.py --forever --target supabase \
+      --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+      --active-symbol BTCUSDT --active-interval 2 --background-interval 10`
+- Required env vars (shell / hosting platform only, never in files):
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+- Not deployed yet — code-ready only.
+
 ## Current Priority
-- Confirm LM39B live refresh works end-to-end in production after the
-  API no-store/dynamic hardening.
-- Rotate the exposed Supabase service-role key.
+- Pick a hosting target (Fly.io / Railway / Render / VPS) and deploy
+  the `--forever --target supabase` worker.
+- Rotate the exposed Supabase service-role key before deploying.
+- Confirm LM39B live refresh continues to work end-to-end with the
+  hosted worker driving Supabase.
 
 ## Do Not Commit
 - `.env`

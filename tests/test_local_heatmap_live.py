@@ -526,7 +526,11 @@ class TestLocalHeatmapLive:
             "?on_conflict=symbol,exchange,timeframe"
         )
 
-    def test_target_supabase_requires_env(self, tmp_path, capsys):
+    def test_target_supabase_requires_env(self, tmp_path, capsys, monkeypatch):
+        # Strip any developer-shell env so the test reflects a missing-env CI
+        # box rather than the developer's local Supabase credentials.
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
         code, _, _ = self._run_targets(
             tmp_path, ["--symbols", "BTCUSDT", "--target", "supabase",
                        "--samples", "1", "--interval", "2"],
@@ -631,6 +635,119 @@ class TestLocalHeatmapLive:
                               "--output-dir", str(fix_dir), "--live-dir", str(live_dir)])
         assert code == 0
         assert (live_dir / "BTCUSDT_5m.json").exists()
+
+    # ── forever / hosted worker mode ─────────────────────────────────────────
+
+    def test_forever_runs_until_keyboard_interrupt(self, tmp_path):
+        """--forever loops indefinitely; KeyboardInterrupt exits cleanly with rc 0."""
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+
+        sleep_calls = {"n": 0}
+        def _sleep_then_interrupt(_secs: float) -> None:
+            sleep_calls["n"] += 1
+            if sleep_calls["n"] >= 3:
+                raise KeyboardInterrupt
+
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep", side_effect=_sleep_then_interrupt):
+            code = live.main(["--symbols", "BTCUSDT", "--forever",
+                              "--interval", "2",
+                              "--output-dir", str(fix_dir),
+                              "--live-dir", str(live_dir)])
+        assert code == 0
+        # Forever mode sleeps every tick (no "last tick" skip), so the
+        # interrupt fires on the 3rd tick after 3 successful fetches.
+        assert sleep_calls["n"] == 3
+        assert (fix_dir / "BTCUSDT_5m.json").exists()
+
+    def test_forever_ignores_samples(self, tmp_path):
+        """--samples is ignored when --forever is set."""
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+
+        sleep_calls = {"n": 0}
+        def _sleep_then_interrupt(_secs: float) -> None:
+            sleep_calls["n"] += 1
+            if sleep_calls["n"] >= 5:
+                raise KeyboardInterrupt
+
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep", side_effect=_sleep_then_interrupt):
+            # --samples 1 would normally exit after one tick; --forever overrides.
+            code = live.main(["--symbols", "BTCUSDT", "--forever",
+                              "--samples", "1", "--interval", "2",
+                              "--output-dir", str(fix_dir),
+                              "--live-dir", str(live_dir)])
+        assert code == 0
+        assert sleep_calls["n"] == 5
+
+    def test_forever_zero_samples_does_not_raise_validation(self, tmp_path):
+        """--forever bypasses the samples > 0 validation check."""
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+
+        def _interrupt(_secs: float) -> None:
+            raise KeyboardInterrupt
+
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep", side_effect=_interrupt):
+            code = live.main(["--symbols", "BTCUSDT", "--forever",
+                              "--samples", "0", "--interval", "2",
+                              "--output-dir", str(fix_dir),
+                              "--live-dir", str(live_dir)])
+        assert code == 0
+
+    def test_forever_supabase_target_requires_env(self, tmp_path, capsys, monkeypatch):
+        """--forever --target supabase still validates Supabase env up front."""
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        code = live.main(["--symbols", "BTCUSDT", "--forever",
+                          "--target", "supabase",
+                          "--output-dir", str(tmp_path / "fix"),
+                          "--live-dir", str(tmp_path / "live")])
+        assert code == 1
+        assert "SUPABASE" in capsys.readouterr().err
+
+    def test_startup_banner_prints_mode_and_target_no_secrets(self, tmp_path, capsys, monkeypatch):
+        """Banner shows mode/target/symbols but never echoes service-role key."""
+        monkeypatch.setenv("SUPABASE_URL", "https://x.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "super-secret-key-xyz")
+
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"), \
+             patch.object(live, "upsert_supabase_payload"):
+            live.main(["--symbols", "BTCUSDT", "--target", "supabase",
+                       "--samples", "1", "--interval", "2",
+                       "--output-dir", str(tmp_path / "fix"),
+                       "--live-dir", str(tmp_path / "live")])
+        captured = capsys.readouterr()
+        out = captured.out + captured.err
+        assert "mode" in out
+        assert "samples=1" in out
+        assert "target             = supabase" in out
+        assert "BTCUSDT" in out
+        assert "supabase           = configured" in out
+        assert "super-secret-key-xyz" not in out
+
+    def test_startup_banner_forever_label(self, tmp_path, capsys):
+        """Banner says mode=forever when --forever is used."""
+        def _interrupt(_secs: float) -> None:
+            raise KeyboardInterrupt
+
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep", side_effect=_interrupt):
+            live.main(["--symbols", "BTCUSDT", "--forever",
+                       "--interval", "2",
+                       "--output-dir", str(tmp_path / "fix"),
+                       "--live-dir", str(tmp_path / "live")])
+        out = capsys.readouterr().out
+        assert "mode               = forever" in out
 
     def test_no_secret_values_printed(self, tmp_path, capsys):
         fix_dir = tmp_path / "fix"

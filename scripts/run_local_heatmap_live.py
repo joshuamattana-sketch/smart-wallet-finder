@@ -28,6 +28,7 @@ Stop early any time with Ctrl+C — the last written fixtures stay in place.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -348,6 +349,7 @@ def run_live_multi(
     background_interval: float | None = None,
     target: str = "fixture",
     supabase: SupabaseConfig | None = None,
+    forever: bool = False,
 ) -> dict:
     """
     Run the multi-symbol / multi-timeframe live collection loop.
@@ -377,7 +379,7 @@ def run_live_multi(
         raise ValueError("at least one symbol is required")
     if not timeframes:
         raise ValueError("at least one timeframe is required")
-    if samples <= 0:
+    if not forever and samples <= 0:
         raise ValueError(f"samples must be > 0, got {samples}")
     if interval <= 0:
         raise ValueError(f"interval must be > 0, got {interval}")
@@ -540,8 +542,12 @@ def run_live_multi(
                             f"frames={len(st['frames'])}"
                         )
 
+    # In forever mode, iterate without bound; otherwise honor --samples.
+    iterator = itertools.count() if forever else range(samples)
+    total_label = "forever" if forever else str(samples)
+
     try:
-        for i in range(samples):
+        for i in iterator:
             tick_start = time.monotonic()
 
             due = [sym for sym in symbols if _is_due(sym, i)]
@@ -562,7 +568,7 @@ def run_live_multi(
                             snapshots[sym] = fut.result()
                         except (DepthCollectorError, ValueError) as exc:
                             if progress is not None:
-                                progress(f"sample {i + 1}/{samples} · {sym} fetch failed: {exc}")
+                                progress(f"sample {i + 1}/{total_label} · {sym} fetch failed: {exc}")
 
             # Process results sequentially so per-symbol state stays single-threaded.
             updated: list[str] = []
@@ -575,22 +581,24 @@ def run_live_multi(
                     updated.append(sym)
                 except (ValueError, KeyError) as exc:
                     if progress is not None:
-                        progress(f"sample {i + 1}/{samples} · {sym} build failed: {exc}")
+                        progress(f"sample {i + 1}/{total_label} · {sym} build failed: {exc}")
 
             tick_dur = time.monotonic() - tick_start
             remaining = max(0.0, tick_interval - tick_dur)
             if progress is not None:
                 active_note = f"active {active}" if active else "no active symbol"
                 progress(
-                    f"tick {i + 1}/{samples} · {active_note} · "
+                    f"tick {i + 1}/{total_label} · {active_note} · "
                     f"updated [{', '.join(updated) or '-'}] · "
                     f"skipped [{', '.join(skipped) or '-'}] · "
                     f"dur {tick_dur:.2f}s · sleep {remaining:.2f}s"
                 )
 
             # Sleep only the remaining time; if a tick already ran past the tick
-            # interval, start the next one immediately.
-            if i < samples - 1 and remaining > 0:
+            # interval, start the next one immediately. In forever mode, always
+            # sleep between ticks (there is no "last" tick).
+            is_last = not forever and i >= samples - 1
+            if not is_last and remaining > 0:
                 time.sleep(remaining)
     except KeyboardInterrupt:
         if progress is not None:
@@ -657,6 +665,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeframes", default=None,
                         help="Comma-separated timeframes, e.g. 5m,15m,1h.")
     parser.add_argument("--samples", type=int, default=120)
+    parser.add_argument("--forever", action="store_true",
+                        help=("Run indefinitely (ignores --samples). Recommended "
+                              "for hosted/long-running worker mode. Stops cleanly "
+                              "on Ctrl+C / SIGINT."))
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--active-symbol", default=None, dest="active_symbol",
                         help="Symbol to update on the fast cadence; others go to background.")
@@ -734,6 +746,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: invalid argument — {exc}", file=sys.stderr)
             return 1
 
+    # Startup banner. Prints config — never secrets. Tells the operator at a
+    # glance whether the hosted/forever worker is wired correctly.
+    mode_label = "forever" if args.forever else f"samples={args.samples}"
+    print(
+        "run_local_heatmap_live startup:\n"
+        f"  mode               = {mode_label}\n"
+        f"  target             = {args.target}\n"
+        f"  symbols            = {', '.join(symbols)}\n"
+        f"  timeframes         = {', '.join(timeframes)}\n"
+        f"  active symbol      = {active_symbol or '-'}\n"
+        f"  active interval    = {args.active_interval}s\n"
+        f"  background interval= {args.background_interval}s\n"
+        f"  base interval      = {args.interval}s\n"
+        f"  supabase           = "
+        f"{'configured' if supabase_cfg is not None else 'not configured'}",
+        flush=True,
+    )
+
     try:
         result = run_live_multi(
             symbols=symbols,
@@ -745,18 +775,21 @@ def main(argv: list[str] | None = None) -> int:
             max_frames=args.max_frames,
             output_for=output_for,
             wall_threshold_usd=args.wall_threshold,
-            progress=lambda msg: print(f"  {msg}"),
+            progress=lambda msg: print(f"  {msg}", flush=True),
             active_symbol=active_symbol,
             active_interval=args.active_interval,
             background_interval=args.background_interval,
             target=args.target,
             supabase=supabase_cfg,
+            forever=args.forever,
         )
     except ValueError as exc:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
         return 1
 
-    if result["total"] == 0:
+    # In forever mode, a clean Ctrl+C return (even with zero collected so far)
+    # is not an error — the worker is expected to be long-running.
+    if not args.forever and result["total"] == 0:
         print("error: no snapshots were collected successfully", file=sys.stderr)
         return 1
 
