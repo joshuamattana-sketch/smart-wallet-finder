@@ -3,4 +3,4 @@ pandas
 requests
 openai
 streamlit-autorefresh
-supabase
+supabasewebsocket-client==1.9.0
