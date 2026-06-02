@@ -42,6 +42,12 @@ breaks the response:
   storage / Supabase / hosted worker — see `PRODUCTION_LIVE_HEATMAP_PLAN.md`).
   No Supabase or external network call is made from Next.js. Missing → falls back
   to fixture, then mock.
+  - Populate `fixtures/live/` locally with the live writer:
+    `python scripts/run_local_heatmap_live.py --target live` (or `--target both`
+    to also keep the fixture folder fresh). Live-written payloads carry
+    `meta.source = "local_live_writer"`, `meta.writerTarget`, and
+    `meta.stale = false`, so a running writer makes `source=live` resolve to
+    `resolvedSource: "live"`. See `fixtures/live/README.md`.
 
 Symbol/timeframe/source validation (and the corresponding 400s) run before any
 file lookup. Missing files never crash the route.

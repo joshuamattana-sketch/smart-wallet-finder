@@ -53,9 +53,19 @@ from services.heatmap_api_payload import (  # noqa: E402
 )
 
 SOURCE_TAG = "local_live_fixture"
+LIVE_SOURCE_TAG = "local_live_writer"   # stamped on payloads written to the live target
 EXCHANGE = "binance_spot"
 DEFAULT_WALL_THRESHOLD_USD = 1_000_000.0
 DEFAULT_OUTPUT_DIR = "lumora-web/fixtures/heatmap"
+DEFAULT_LIVE_DIR = "lumora-web/fixtures/live"
+VALID_TARGETS = ("fixture", "live", "both")
+
+
+def targets_for(target: str) -> list[str]:
+    """Expand a --target value into the concrete write targets."""
+    if target == "both":
+        return ["fixture", "live"]
+    return [target]
 
 # Sensible per-symbol price-bucket widths (USD). Used when --price-step is not
 # given. Falls back to FALLBACK_PRICE_STEP for unknown symbols.
@@ -224,13 +234,20 @@ def run_live_multi(
     active_symbol: str | None = None,
     active_interval: float | None = None,
     background_interval: float | None = None,
+    target: str = "fixture",
 ) -> dict:
     """
     Run the multi-symbol / multi-timeframe live collection loop.
 
     Per tick, each due symbol is fetched once; its rolling frame window feeds a
-    fixture file for every requested timeframe (same frames, per-timeframe
-    metadata). `output_for(symbol, timeframe) -> Path` decides the target file.
+    file for every requested timeframe (same frames, per-timeframe metadata),
+    written to each configured write target. `output_for(symbol, timeframe,
+    kind) -> Path` decides the path, where `kind` is "fixture" or "live".
+
+    `target` selects where payloads are written: "fixture" (heatmap dir),
+    "live" (live dir), or "both". Live-written payloads are stamped with
+    live-writer metadata (source/dataSource = "local_live_writer",
+    resolvedSource = "live", writerTarget, stale = false).
 
     Active-market fast mode: when `active_symbol` is set, the loop ticks at
     `active_interval`; the active symbol is updated every tick while background
@@ -253,11 +270,17 @@ def run_live_multi(
         raise ValueError(f"interval must be > 0, got {interval}")
     if max_frames <= 0:
         raise ValueError(f"max-frames must be > 0, got {max_frames}")
+    if target not in VALID_TARGETS:
+        raise ValueError(
+            f"invalid target {target!r}. Allowed: {', '.join(VALID_TARGETS)}"
+        )
     for tf in timeframes:
         if tf not in VALID_TIMEFRAMES:
             raise ValueError(
                 f"invalid timeframe {tf!r}. Allowed: {', '.join(sorted(VALID_TIMEFRAMES))}"
             )
+
+    write_targets = targets_for(target)
 
     # ── Resolve update schedule ─────────────────────────────────────────────
     active = active_symbol.upper() if active_symbol else None
@@ -324,9 +347,10 @@ def run_live_multi(
         is_active = active is not None and sym == active
         update_mode = "active_fast" if is_active else "standard"
 
-        # One fixture file per timeframe — all built from the same snapshot/frame.
+        # One payload per timeframe — built once from the snapshot/frame, then
+        # written to each configured target (with target-specific meta).
         for tf in timeframes:
-            payload = build_live_payload(
+            base = build_live_payload(
                 st["frames"], tf, tick_interval, max_frames,
                 st["success"], st["price_path"], symbol=sym,
                 active_symbol=active,
@@ -334,7 +358,34 @@ def run_live_multi(
                 effective_interval=eff_interval[sym],
                 is_active=is_active,
             )
-            write_payload_atomic(payload, output_for(sym, tf))
+            for kind in write_targets:
+                if kind == "live":
+                    # Stamp live-writer metadata so source=live resolves to live.
+                    payload = {
+                        **base,
+                        "meta": {
+                            **base["meta"],
+                            "source": LIVE_SOURCE_TAG,
+                            "dataSource": LIVE_SOURCE_TAG,
+                            "resolvedSource": "live",
+                            "writerTarget": target,
+                            "isDemo": False,
+                            "stale": False,
+                        },
+                    }
+                else:
+                    # Fixture target keeps the existing local_live_fixture meta.
+                    payload = base
+                out = output_for(sym, tf, kind)
+                write_payload_atomic(payload, out)
+                if progress is not None:
+                    meta = payload["meta"]
+                    progress(
+                        f"write {kind} · {sym} {tf} · -> {out} · "
+                        f"liveUpdatedAt={meta.get('liveUpdatedAt')} · "
+                        f"cells={meta.get('cellCount', 0)} · "
+                        f"frames={len(st['frames'])}"
+                    )
 
     try:
         for i in range(samples):
@@ -425,7 +476,7 @@ def run_live(
         samples=samples,
         interval=interval,
         max_frames=max_frames,
-        output_for=lambda _s, _t: Path(output),
+        output_for=lambda _s, _t, _kind: Path(output),
         wall_threshold_usd=wall_threshold_usd,
         progress=progress,
     )
@@ -464,9 +515,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--wall-threshold", type=float,
                         default=DEFAULT_WALL_THRESHOLD_USD, dest="wall_threshold")
     parser.add_argument("--output", default=None,
-                        help="Single output file (only valid for one symbol + one timeframe).")
+                        help="Single output file (only valid for one symbol + one timeframe, fixture target).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, dest="output_dir",
-                        help="Directory for {SYMBOL}_{timeframe}.json files (multi mode).")
+                        help="Directory for fixture {SYMBOL}_{timeframe}.json files.")
+    parser.add_argument("--live-dir", default=DEFAULT_LIVE_DIR, dest="live_dir",
+                        help="Directory for live {SYMBOL}_{timeframe}.json files.")
+    parser.add_argument("--target", default="fixture", choices=VALID_TARGETS,
+                        help="Where to write payloads: fixture | live | both (default: fixture).")
     return parser.parse_args(argv)
 
 
@@ -492,11 +547,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
         return 1
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir)   # fixture target
+    live_dir = Path(args.live_dir)       # live target
     single_pair = len(symbols) == 1 and len(timeframes) == 1
-    use_explicit_output = single_pair and args.output is not None
+    # An explicit single file only applies to the fixture target single pair.
+    use_explicit_output = single_pair and args.output is not None and args.target == "fixture"
 
-    def output_for(sym: str, tf: str) -> Path:
+    def output_for(sym: str, tf: str, kind: str) -> Path:
+        if kind == "live":
+            return live_dir / f"{sym}_{tf}.json"
         if use_explicit_output:
             return Path(args.output)
         return output_dir / f"{sym}_{tf}.json"
@@ -518,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
             active_symbol=active_symbol,
             active_interval=args.active_interval,
             background_interval=args.background_interval,
+            target=args.target,
         )
     except ValueError as exc:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
@@ -527,11 +587,11 @@ def main(argv: list[str] | None = None) -> int:
         print("error: no snapshots were collected successfully", file=sys.stderr)
         return 1
 
-    files = len(symbols) * len(timeframes)
+    files = len(symbols) * len(timeframes) * len(targets_for(args.target))
     print(
         f"Done. {result['total']} successful sample(s) across "
         f"{len(symbols)} symbol(s) × {len(timeframes)} timeframe(s) "
-        f"({files} fixture file(s))."
+        f"→ target '{args.target}' ({files} file(s))."
     )
     return 0
 

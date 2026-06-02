@@ -412,3 +412,95 @@ class TestLocalHeatmapLive:
                               "--interval", "2", "--output-dir", str(out.parent)])
         assert code == 0
         mock_sleep.assert_not_called()
+
+    # ── write targets (fixture / live / both) ─────────────────────────────────
+
+    def _run_targets(self, tmp_path, args, side_effect=None):
+        """Run main() with separate fixture (--output-dir) and live (--live-dir) dirs."""
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+        full = ["--output-dir", str(fix_dir), "--live-dir", str(live_dir)] + args
+        se = side_effect or (lambda *a, **k: _mock_snapshot())
+        with patch.object(live, "fetch_depth_snapshot", side_effect=se), \
+             patch.object(live.time, "sleep"):
+            code = live.main(full)
+        return code, fix_dir, live_dir
+
+    def test_target_fixture_writes_heatmap_file(self, tmp_path):
+        code, fix_dir, live_dir = self._run_targets(
+            tmp_path, ["--symbols", "BTCUSDT", "--target", "fixture",
+                       "--samples", "1", "--interval", "2"],
+        )
+        assert code == 0
+        assert (fix_dir / "BTCUSDT_5m.json").exists()
+        assert not (live_dir / "BTCUSDT_5m.json").exists()
+
+    def test_target_live_writes_live_file(self, tmp_path):
+        code, fix_dir, live_dir = self._run_targets(
+            tmp_path, ["--symbols", "BTCUSDT", "--target", "live",
+                       "--samples", "1", "--interval", "2"],
+        )
+        assert code == 0
+        assert (live_dir / "BTCUSDT_5m.json").exists()
+        assert not (fix_dir / "BTCUSDT_5m.json").exists()
+        meta = _payload(live_dir / "BTCUSDT_5m.json")["meta"]
+        assert meta["source"] == "local_live_writer"
+        assert meta["dataSource"] == "local_live_writer"
+        assert meta["resolvedSource"] == "live"
+        assert meta["writerTarget"] == "live"
+        assert meta["isDemo"] is False
+        assert meta["stale"] is False
+        assert meta.get("liveUpdatedAt")
+
+    def test_target_both_writes_both_files(self, tmp_path):
+        code, fix_dir, live_dir = self._run_targets(
+            tmp_path, ["--symbols", "BTCUSDT", "--target", "both",
+                       "--samples", "1", "--interval", "2"],
+        )
+        assert code == 0
+        assert (fix_dir / "BTCUSDT_5m.json").exists()
+        assert (live_dir / "BTCUSDT_5m.json").exists()
+        # Live file → live-writer meta; fixture file → existing local_live_fixture meta.
+        assert _payload(live_dir / "BTCUSDT_5m.json")["meta"]["source"] == "local_live_writer"
+        assert _payload(live_dir / "BTCUSDT_5m.json")["meta"]["writerTarget"] == "both"
+        assert _payload(fix_dir / "BTCUSDT_5m.json")["meta"]["source"] == "local_live_fixture"
+
+    def test_default_target_is_fixture(self, tmp_path):
+        code, fix_dir, live_dir = self._run_targets(
+            tmp_path, ["--symbols", "BTCUSDT", "--samples", "1", "--interval", "2"],
+        )
+        assert code == 0
+        assert (fix_dir / "BTCUSDT_5m.json").exists()
+        assert not (live_dir / "BTCUSDT_5m.json").exists()
+        # No writerTarget on the default fixture write.
+        assert "writerTarget" not in _payload(fix_dir / "BTCUSDT_5m.json")["meta"]
+
+    def test_invalid_target_fails(self, tmp_path):
+        # argparse rejects values outside choices → SystemExit(non-zero).
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"):
+            with pytest.raises(SystemExit) as exc:
+                live.main(["--symbols", "BTCUSDT", "--target", "bogus",
+                           "--samples", "1", "--interval", "2",
+                           "--output-dir", str(tmp_path / "fix")])
+        assert exc.value.code != 0
+
+    def test_active_fast_mode_with_both_targets(self, tmp_path):
+        # Active fast mode stays compatible while writing to both targets.
+        code, fix_dir, live_dir = self._run_targets(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT,SOLUSDT", "--active-symbol", "BTCUSDT",
+             "--active-interval", "2", "--background-interval", "10",
+             "--target", "both", "--samples", "6", "--interval", "2"],
+        )
+        assert code == 0
+        # Active symbol updated every tick (6); background symbols on ticks 0,5 (2).
+        assert _payload(fix_dir / "BTCUSDT_5m.json")["meta"]["sampleCount"] == 6
+        assert _payload(live_dir / "BTCUSDT_5m.json")["meta"]["sampleCount"] == 6
+        assert _payload(fix_dir / "ETHUSDT_5m.json")["meta"]["sampleCount"] == 2
+        assert _payload(live_dir / "ETHUSDT_5m.json")["meta"]["sampleCount"] == 2
+        # Live files carry live-writer meta; active flag preserved.
+        btc_live = _payload(live_dir / "BTCUSDT_5m.json")["meta"]
+        assert btc_live["source"] == "local_live_writer"
+        assert btc_live["isActiveSymbol"] is True
