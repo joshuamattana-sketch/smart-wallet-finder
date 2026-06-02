@@ -52,6 +52,26 @@ python scripts/run_local_heatmap_live.py \
 - Files default to `--output-dir` (this directory). The UI can then load the
   matching fixture as the symbol/timeframe selection changes.
 
+### Active market fast mode
+
+Update the symbol you're actively analysing on a fast cadence while the others
+refresh slowly in the background (fewer REST requests, livelier active chart):
+
+```bash
+python scripts/run_local_heatmap_live.py \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT \
+  --timeframes 5m,15m,1h \
+  --active-interval 2 --background-interval 10 \
+  --samples 999999 --max-frames 900
+```
+
+- The active symbol updates every `--active-interval` seconds; background
+  symbols every `--background-interval` seconds.
+- Each payload's `meta` carries `activeSymbol`, `updateMode`
+  (`active_fast` / `standard`), `effectiveIntervalSeconds`, and `isActiveSymbol`.
+- Without `--active-symbol` the writer behaves exactly as before (every symbol
+  every `--interval`).
+
 ## How it is used
 
 Request the heatmap API with `source=fixture`:

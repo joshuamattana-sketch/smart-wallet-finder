@@ -309,3 +309,106 @@ class TestLocalHeatmapLive:
         )
         assert code == 1
         assert "invalid argument" in capsys.readouterr().err
+
+    def test_multiple_symbols_fetched_in_parallel_per_tick(self, tmp_path):
+        # Three symbols, two ticks → six fetches; all files written.
+        code, outdir, fetch, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT,SOLUSDT", "--timeframes", "5m,15m",
+             "--samples", "2", "--interval", "2"],
+        )
+        assert code == 0
+        assert fetch.call_count == 6  # symbols × samples (not × timeframes)
+        for sym in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
+            for tf in ("5m", "15m"):
+                assert (outdir / f"{sym}_{tf}.json").exists()
+
+    # ── active market fast mode ───────────────────────────────────────────────
+
+    def test_active_symbol_updates_more_often(self, tmp_path):
+        # active 2s, background 10s → bg_every = 5 ticks. 6 ticks (0..5):
+        # active every tick (6), background on ticks 0 and 5 (2).
+        code, outdir, fetch, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT,SOLUSDT", "--active-symbol", "BTCUSDT",
+             "--active-interval", "2", "--background-interval", "10",
+             "--samples", "6", "--interval", "2"],
+        )
+        assert code == 0
+        btc_calls = [c for c in fetch.call_args_list if c.args[0] == "BTCUSDT"]
+        eth_calls = [c for c in fetch.call_args_list if c.args[0] == "ETHUSDT"]
+        sol_calls = [c for c in fetch.call_args_list if c.args[0] == "SOLUSDT"]
+        assert len(btc_calls) == 6
+        assert len(eth_calls) == 2
+        assert len(sol_calls) == 2
+        # Cumulative sampleCount in fixtures reflects the faster active cadence.
+        assert _payload(outdir / "BTCUSDT_5m.json")["meta"]["sampleCount"] == 6
+        assert _payload(outdir / "ETHUSDT_5m.json")["meta"]["sampleCount"] == 2
+
+    def test_active_mode_meta_fields(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT", "--active-symbol", "BTCUSDT",
+             "--active-interval", "2", "--background-interval", "10",
+             "--samples", "1", "--interval", "2"],
+        )
+        btc = _payload(outdir / "BTCUSDT_5m.json")["meta"]
+        eth = _payload(outdir / "ETHUSDT_5m.json")["meta"]
+        assert btc["activeSymbol"] == "BTCUSDT"
+        assert btc["updateMode"] == "active_fast"
+        assert btc["isActiveSymbol"] is True
+        assert btc["effectiveIntervalSeconds"] == 2
+        assert eth["updateMode"] == "standard"
+        assert eth["isActiveSymbol"] is False
+        assert eth["effectiveIntervalSeconds"] == 10
+        assert eth["activeSymbol"] == "BTCUSDT"
+
+    def test_active_symbol_not_in_symbols_fails(self, tmp_path, capsys):
+        code, _, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "ETHUSDT,SOLUSDT", "--active-symbol", "BTCUSDT",
+             "--samples", "1", "--interval", "2"],
+        )
+        assert code == 1
+        assert "invalid argument" in capsys.readouterr().err
+
+    def test_invalid_active_interval_fails(self, tmp_path, capsys):
+        code, _, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT", "--active-symbol", "BTCUSDT",
+             "--active-interval", "0", "--samples", "1", "--interval", "2"],
+        )
+        assert code == 1
+        assert "invalid argument" in capsys.readouterr().err
+
+    def test_invalid_background_interval_fails(self, tmp_path, capsys):
+        code, _, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT,ETHUSDT", "--active-symbol", "BTCUSDT",
+             "--background-interval", "0", "--samples", "1", "--interval", "2"],
+        )
+        assert code == 1
+        assert "invalid argument" in capsys.readouterr().err
+
+    def test_standard_mode_meta_without_active(self, tmp_path):
+        # Backward compatible: no --active-symbol → standard mode metadata.
+        _, out, _, _ = _run(tmp_path, ["--samples", "1", "--interval", "2"])
+        meta = _payload(out)["meta"]
+        assert meta["activeSymbol"] is None
+        assert meta["updateMode"] == "standard"
+        assert meta["isActiveSymbol"] is False
+
+    def test_tick_longer_than_interval_skips_extra_sleep(self, tmp_path):
+        # Force each tick to appear to take longer than the interval; the writer
+        # should then not sleep at all between ticks.
+        out = tmp_path / "fix" / "BTCUSDT_5m.json"
+        # monotonic is called twice per tick (start, end); make end-start = 5s.
+        times = iter([0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0])
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep") as mock_sleep, \
+             patch.object(live.time, "monotonic", side_effect=lambda: next(times)):
+            code = live.main(["--symbols", "BTCUSDT", "--samples", "3",
+                              "--interval", "2", "--output-dir", str(out.parent)])
+        assert code == 0
+        mock_sleep.assert_not_called()

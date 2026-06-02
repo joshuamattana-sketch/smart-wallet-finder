@@ -32,6 +32,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -169,6 +170,11 @@ def build_live_payload(
     sample_count: int,
     price_path: list[dict] | None = None,
     symbol: str | None = None,
+    *,
+    active_symbol: str | None = None,
+    update_mode: str = "standard",
+    effective_interval: float | None = None,
+    is_active: bool = False,
 ) -> dict:
     """Build the API payload for the current rolling frame window + live meta."""
     matrix = build_heatmap_matrix(frames)
@@ -194,6 +200,13 @@ def build_live_payload(
     meta["intervalSeconds"] = interval
     meta["maxFrames"] = max_frames
     meta["liveUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+    # Active-market fast mode metadata.
+    meta["activeSymbol"] = active_symbol
+    meta["updateMode"] = update_mode
+    meta["effectiveIntervalSeconds"] = (
+        effective_interval if effective_interval is not None else interval
+    )
+    meta["isActiveSymbol"] = is_active
     return payload
 
 
@@ -208,19 +221,27 @@ def run_live_multi(
     output_for,
     wall_threshold_usd: float = DEFAULT_WALL_THRESHOLD_USD,
     progress=None,
+    active_symbol: str | None = None,
+    active_interval: float | None = None,
+    background_interval: float | None = None,
 ) -> dict:
     """
     Run the multi-symbol / multi-timeframe live collection loop.
 
-    Per tick, each symbol is fetched once; its rolling frame window feeds a
+    Per tick, each due symbol is fetched once; its rolling frame window feeds a
     fixture file for every requested timeframe (same frames, per-timeframe
     metadata). `output_for(symbol, timeframe) -> Path` decides the target file.
 
+    Active-market fast mode: when `active_symbol` is set, the loop ticks at
+    `active_interval`; the active symbol is updated every tick while background
+    symbols are updated only every `background_interval` (rounded to whole
+    ticks). Without `active_symbol`, every symbol updates every `interval`
+    (legacy behaviour).
+
     Returns {"total": int, "per_symbol": {sym: int}} of successful samples.
 
-    Raises ValueError for invalid CLI arguments. Per-symbol fetch failures are
-    caught so other symbols keep running; if every symbol fails in a tick that
-    tick simply writes nothing and the loop continues.
+    Raises ValueError for invalid arguments. Per-symbol fetch failures are
+    caught so other symbols keep running.
     """
     if not symbols:
         raise ValueError("at least one symbol is required")
@@ -238,6 +259,34 @@ def run_live_multi(
                 f"invalid timeframe {tf!r}. Allowed: {', '.join(sorted(VALID_TIMEFRAMES))}"
             )
 
+    # ── Resolve update schedule ─────────────────────────────────────────────
+    active = active_symbol.upper() if active_symbol else None
+    if active is not None:
+        if active not in symbols:
+            raise ValueError(
+                f"active-symbol {active!r} is not in symbols {symbols}"
+            )
+        if active_interval is None or active_interval <= 0:
+            raise ValueError(f"active-interval must be > 0, got {active_interval}")
+        if background_interval is None or background_interval <= 0:
+            raise ValueError(f"background-interval must be > 0, got {background_interval}")
+        tick_interval = active_interval
+        # How many fast ticks pass between background updates.
+        bg_every = max(1, round(background_interval / active_interval))
+        eff_interval = {
+            sym: (active_interval if sym == active else background_interval)
+            for sym in symbols
+        }
+    else:
+        tick_interval = interval
+        bg_every = 1
+        eff_interval = {sym: interval for sym in symbols}
+
+    def _is_due(sym: str, tick: int) -> bool:
+        if active is None or sym == active:
+            return True               # legacy mode, or the active symbol → every tick
+        return tick % bg_every == 0   # background symbol → every bg_every ticks
+
     # Per-symbol rolling state.
     state: dict[str, dict] = {
         sym: {"frames": [], "price_path": [], "last_ts": None, "success": 0}
@@ -245,68 +294,100 @@ def run_live_multi(
     }
     total_success = 0
 
+    def _process_symbol(sym: str, snapshot: dict) -> None:
+        """Update a symbol's rolling state and write one fixture per timeframe."""
+        nonlocal total_success
+        st = state[sym]
+        ts = _next_timestamp(st["last_ts"])
+        st["last_ts"] = ts
+        ts_iso = ts.isoformat()
+        snapshot["captured_at"] = ts_iso
+
+        step = resolve_price_step(sym, None, price_steps)
+        frame = build_heatmap_cells(
+            snapshot, price_step=step, wall_threshold_usd=wall_threshold_usd,
+        )
+        st["frames"].append(frame)
+
+        point = _price_point(snapshot, ts_iso)
+        if point is not None:
+            st["price_path"].append(point)
+
+        if len(st["frames"]) > max_frames:
+            st["frames"] = st["frames"][-max_frames:]
+        if len(st["price_path"]) > max_frames:
+            st["price_path"] = st["price_path"][-max_frames:]
+
+        st["success"] += 1
+        total_success += 1
+
+        is_active = active is not None and sym == active
+        update_mode = "active_fast" if is_active else "standard"
+
+        # One fixture file per timeframe — all built from the same snapshot/frame.
+        for tf in timeframes:
+            payload = build_live_payload(
+                st["frames"], tf, tick_interval, max_frames,
+                st["success"], st["price_path"], symbol=sym,
+                active_symbol=active,
+                update_mode=update_mode,
+                effective_interval=eff_interval[sym],
+                is_active=is_active,
+            )
+            write_payload_atomic(payload, output_for(sym, tf))
+
     try:
         for i in range(samples):
-            tick_success = 0
-            for sym in symbols:
-                step = resolve_price_step(sym, None, price_steps)
+            tick_start = time.monotonic()
+
+            due = [sym for sym in symbols if _is_due(sym, i)]
+            skipped = [sym for sym in symbols if sym not in due]
+
+            # Fetch only the due symbols in parallel. Each symbol's failure is
+            # captured independently so the others still proceed.
+            snapshots: dict[str, dict] = {}
+            if due:
+                with ThreadPoolExecutor(max_workers=max(1, len(due))) as pool:
+                    futures = {
+                        pool.submit(fetch_depth_snapshot, sym, limit): sym
+                        for sym in due
+                    }
+                    for fut in as_completed(futures):
+                        sym = futures[fut]
+                        try:
+                            snapshots[sym] = fut.result()
+                        except (DepthCollectorError, ValueError) as exc:
+                            if progress is not None:
+                                progress(f"sample {i + 1}/{samples} · {sym} fetch failed: {exc}")
+
+            # Process results sequentially so per-symbol state stays single-threaded.
+            updated: list[str] = []
+            for sym in due:
+                snapshot = snapshots.get(sym)
+                if snapshot is None:
+                    continue
                 try:
-                    snapshot = fetch_depth_snapshot(sym, limit)
-                    st = state[sym]
-                    ts = _next_timestamp(st["last_ts"])
-                    st["last_ts"] = ts
-                    ts_iso = ts.isoformat()
-                    snapshot["captured_at"] = ts_iso
-
-                    frame = build_heatmap_cells(
-                        snapshot,
-                        price_step=step,
-                        wall_threshold_usd=wall_threshold_usd,
-                    )
-                    st["frames"].append(frame)
-
-                    point = _price_point(snapshot, ts_iso)
-                    if point is not None:
-                        st["price_path"].append(point)
-
-                    # Keep only the most recent max_frames on both lists.
-                    if len(st["frames"]) > max_frames:
-                        st["frames"] = st["frames"][-max_frames:]
-                    if len(st["price_path"]) > max_frames:
-                        st["price_path"] = st["price_path"][-max_frames:]
-
-                    st["success"] += 1
-                    total_success += 1
-                    tick_success += 1
-
-                    # One fixture file per timeframe (shared frames).
-                    for tf in timeframes:
-                        payload = build_live_payload(
-                            st["frames"], tf, interval, max_frames,
-                            st["success"], st["price_path"], symbol=sym,
-                        )
-                        out = output_for(sym, tf)
-                        write_payload_atomic(payload, out)
-                        if progress is not None:
-                            meta = payload["meta"]
-                            progress(
-                                f"sample {i + 1}/{samples} · {sym} {tf} · "
-                                f"frames={len(st['frames'])} · "
-                                f"cells={meta.get('cellCount', 0)} · "
-                                f"walls={meta.get('wallCount', 0)} · "
-                                f"-> {out}"
-                            )
-                except (DepthCollectorError, ValueError) as exc:
+                    _process_symbol(sym, snapshot)
+                    updated.append(sym)
+                except (ValueError, KeyError) as exc:
                     if progress is not None:
-                        progress(f"sample {i + 1}/{samples} · {sym} failed: {exc}")
-                    # Other symbols keep going.
+                        progress(f"sample {i + 1}/{samples} · {sym} build failed: {exc}")
 
-            if tick_success == 0 and progress is not None:
-                progress(f"sample {i + 1}/{samples} · all symbols failed this tick")
+            tick_dur = time.monotonic() - tick_start
+            remaining = max(0.0, tick_interval - tick_dur)
+            if progress is not None:
+                active_note = f"active {active}" if active else "no active symbol"
+                progress(
+                    f"tick {i + 1}/{samples} · {active_note} · "
+                    f"updated [{', '.join(updated) or '-'}] · "
+                    f"skipped [{', '.join(skipped) or '-'}] · "
+                    f"dur {tick_dur:.2f}s · sleep {remaining:.2f}s"
+                )
 
-            # Wait before the next tick (not after the last sample).
-            if i < samples - 1:
-                time.sleep(interval)
+            # Sleep only the remaining time; if a tick already ran past the tick
+            # interval, start the next one immediately.
+            if i < samples - 1 and remaining > 0:
+                time.sleep(remaining)
     except KeyboardInterrupt:
         if progress is not None:
             progress("interrupted — stopping, last fixtures kept")
@@ -373,6 +454,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Comma-separated timeframes, e.g. 5m,15m,1h.")
     parser.add_argument("--samples", type=int, default=120)
     parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--active-symbol", default=None, dest="active_symbol",
+                        help="Symbol to update on the fast cadence; others go to background.")
+    parser.add_argument("--active-interval", type=float, default=2.0, dest="active_interval",
+                        help="Fast cadence (s) for the active symbol (default: 2).")
+    parser.add_argument("--background-interval", type=float, default=10.0, dest="background_interval",
+                        help="Slow cadence (s) for non-active symbols (default: 10).")
     parser.add_argument("--max-frames", type=int, default=60, dest="max_frames")
     parser.add_argument("--wall-threshold", type=float,
                         default=DEFAULT_WALL_THRESHOLD_USD, dest="wall_threshold")
@@ -414,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
             return Path(args.output)
         return output_dir / f"{sym}_{tf}.json"
 
+    active_symbol = args.active_symbol.upper() if args.active_symbol else None
+
     try:
         result = run_live_multi(
             symbols=symbols,
@@ -426,6 +515,9 @@ def main(argv: list[str] | None = None) -> int:
             output_for=output_for,
             wall_threshold_usd=args.wall_threshold,
             progress=lambda msg: print(f"  {msg}"),
+            active_symbol=active_symbol,
+            active_interval=args.active_interval,
+            background_interval=args.background_interval,
         )
     except ValueError as exc:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
