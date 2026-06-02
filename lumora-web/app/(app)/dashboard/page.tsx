@@ -14,10 +14,19 @@ import {
 
 const DASH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
 
+// Active/primary market refreshes fast; the rest poll slowly in the background.
+const ACTIVE_SYMBOL = "BTCUSDT";
+const BACKGROUND_SYMBOLS = DASH_SYMBOLS.filter((s) => s !== ACTIVE_SYMBOL);
+const ACTIVE_REFRESH_MS = 2000;
+const BACKGROUND_REFRESH_MS = 9000;
+
 interface MarketState {
   payload: HeatmapApiPayload | null;
   error: string | null;
+  lastFetchedAt: string | null;
 }
+
+const EMPTY_MARKET: MarketState = { payload: null, error: null, lastFetchedAt: null };
 
 function marketStatus(
   m: MarketState,
@@ -44,38 +53,56 @@ export default function DashboardPage() {
   const [markets, setMarkets] = useState<Record<string, MarketState>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
-  // Pull each market from the shared /api/heatmap fixture source (the route
-  // falls back to mock server-side when no fixture exists).
-  const fetchMarkets = useCallback(async () => {
-    const entries = await Promise.all(
-      DASH_SYMBOLS.map(async (sym) => {
-        try {
-          const res = await fetch(
-            `/api/heatmap?source=fixture&symbol=${sym}&timeframe=5m`,
-            { cache: "no-store" },
-          );
-          if (!res.ok) {
-            const body = await res.json().catch(() => ({}));
-            const message = (body as { message?: string }).message ?? `API error ${res.status}`;
-            return [sym, { payload: null, error: message }] as const;
-          }
-          const payload: HeatmapApiPayload = await res.json();
-          return [sym, { payload, error: null }] as const;
-        } catch (err) {
-          return [sym, { payload: null, error: err instanceof Error ? err.message : "Network error" }] as const;
-        }
-      }),
-    );
-    setMarkets(Object.fromEntries(entries));
-    setLastFetchedAt(new Date().toISOString());
+  // Fetch one market from the shared /api/heatmap fixture source (the route
+  // falls back to mock server-side when no fixture exists). On error the last
+  // good payload is kept (it is real fixture data, not a fake placeholder).
+  const fetchSymbol = useCallback(async (sym: string) => {
+    try {
+      const res = await fetch(
+        `/api/heatmap?source=fixture&symbol=${sym}&timeframe=5m&_ts=${Date.now()}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const message = (body as { message?: string }).message ?? `API error ${res.status}`;
+        setMarkets((prev) => ({
+          ...prev,
+          [sym]: { ...(prev[sym] ?? EMPTY_MARKET), error: message },
+        }));
+        return;
+      }
+      const payload: HeatmapApiPayload = await res.json();
+      const now = new Date().toISOString();
+      setMarkets((prev) => ({
+        ...prev,
+        [sym]: { payload, error: null, lastFetchedAt: now },
+      }));
+      setLastFetchedAt(now);
+    } catch (err) {
+      setMarkets((prev) => ({
+        ...prev,
+        [sym]: {
+          ...(prev[sym] ?? EMPTY_MARKET),
+          error: err instanceof Error ? err.message : "Network error",
+        },
+      }));
+    }
   }, []);
 
-  // Auto-refresh every 5s; interval cleaned up on unmount.
+  // Tiered auto-refresh: the active market polls fast, background markets slow.
+  // Both intervals (and the initial load) are cleaned up on unmount.
   useEffect(() => {
-    fetchMarkets();
-    const id = setInterval(fetchMarkets, 5000);
-    return () => clearInterval(id);
-  }, [fetchMarkets]);
+    DASH_SYMBOLS.forEach((sym) => { fetchSymbol(sym); });
+    const activeId = setInterval(() => fetchSymbol(ACTIVE_SYMBOL), ACTIVE_REFRESH_MS);
+    const backgroundId = setInterval(
+      () => { BACKGROUND_SYMBOLS.forEach((sym) => fetchSymbol(sym)); },
+      BACKGROUND_REFRESH_MS,
+    );
+    return () => {
+      clearInterval(activeId);
+      clearInterval(backgroundId);
+    };
+  }, [fetchSymbol]);
 
   return (
     <div className="space-y-5 animate-[fadeIn_0.4s_ease-out]">
@@ -104,23 +131,27 @@ export default function DashboardPage() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {DASH_SYMBOLS.map((sym) => {
-            const m = markets[sym] ?? { payload: null, error: null };
+            const m = markets[sym] ?? EMPTY_MARKET;
             const status = marketStatus(m);
             const p = m.payload;
+            const isActive = sym === ACTIVE_SYMBOL;
             const price = p ? heatmapCurrentPrice(p) : null;
             const bidWall = p ? heatmapStrongestWall(p, "bid") : null;
             const askWall = p ? heatmapStrongestWall(p, "ask") : null;
             return (
               <GlassCard key={sym} className="p-3">
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="num text-sm font-semibold text-lumora-text">{sym}</span>
+                  <span className="num text-sm font-semibold text-lumora-text flex items-center gap-1.5">
+                    {sym}
+                    {isActive && <Badge variant="cyan" className="text-[9px] px-1 py-0">Fast</Badge>}
+                  </span>
                   <Badge variant={status.variant}>{status.label}</Badge>
                 </div>
 
-                {m.error ? (
-                  <p className="text-[11px] text-red-400">{m.error}</p>
-                ) : !p ? (
-                  <p className="text-[11px] text-lumora-muted">Loading…</p>
+                {!p ? (
+                  <p className="text-[11px] text-lumora-muted">
+                    {m.error ? `Fixture fallback — ${m.error}` : "Waiting for live data…"}
+                  </p>
                 ) : (
                   <>
                     <p className="num text-lg font-bold text-neon-cyan leading-tight">
@@ -160,6 +191,7 @@ export default function DashboardPage() {
                     </div>
                     <p className="text-[10px] text-lumora-muted mt-2">
                       {p.meta.liveUpdatedAt ? `live ${fmtTime(p.meta.liveUpdatedAt)}` : "no live timestamp"}
+                      {" · "}fetched {fmtTime(m.lastFetchedAt)}
                     </p>
                   </>
                 )}
