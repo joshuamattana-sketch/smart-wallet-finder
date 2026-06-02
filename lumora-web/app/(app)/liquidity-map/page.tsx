@@ -131,6 +131,37 @@ function HeatLegend() {
   );
 }
 
+// ── Last-good payload cache ──────────────────────────────────────────────────────
+// Module-level so the last successfully loaded payload survives component
+// remounts (e.g. navigating away to another app tab and back). Keyed by the
+// exact selection so we never show one market's data under another.
+const payloadCache = new Map<string, HeatmapApiPayload>();
+
+function cacheKey(symbol: string, timeframe: string, dataSource: string): string {
+  return `${symbol}|${timeframe.toLowerCase()}|${dataSource}`;
+}
+
+/** Minimal shape check so we never replace a good chart with junk. */
+function isValidPayload(data: unknown): data is HeatmapApiPayload {
+  if (typeof data !== "object" || data === null) return false;
+  const p = data as Record<string, unknown>;
+  return (
+    Array.isArray(p.cells) &&
+    Array.isArray(p.timeBuckets) &&
+    typeof p.meta === "object" &&
+    p.meta !== null
+  );
+}
+
+/** Whether a payload actually came from a fixture / local live source. */
+function payloadIsFixture(p: HeatmapApiPayload): boolean {
+  const s = p.meta?.source;
+  const d = p.meta?.dataSource;
+  return s === "fixture" || s === "local_live_fixture" || d === "local_live_fixture";
+}
+
+const INITIAL_KEY = cacheKey("BTCUSDT", "15m", "mock");
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function LiquidityMapPage() {
   const [symbol,    setSymbol]    = useState("BTCUSDT");
@@ -139,52 +170,83 @@ export default function LiquidityMapPage() {
   const [dataSource, setDataSource] = useState<"mock" | "fixture">("mock");
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const [payload,  setPayload]  = useState<HeatmapApiPayload | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
+  // Initialise from the last-good cache so a remount (app tab switch) shows the
+  // previous chart immediately instead of an empty frame.
+  const [payload, setPayload] = useState<HeatmapApiPayload | null>(
+    () => payloadCache.get(INITIAL_KEY) ?? null,
+  );
+  const [refreshing, setRefreshing] = useState(false); // any fetch in flight
+  const [apiError, setApiError]     = useState<string | null>(null);
+  const [fixtureFallback, setFixtureFallback] = useState(false);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
-  // `silent` skips the loading overlay so the 2s auto-refresh poll does not
-  // flicker the chart. On failure we keep the previous payload and surface the
-  // error — the next poll can recover on its own.
-  const fetchPayload = useCallback(async (opts?: { silent?: boolean }) => {
-    const silent = opts?.silent ?? false;
-    if (!silent) setLoading(true);
+  // Same proven fetch pattern as Terminal/Dashboard: hit /api/heatmap with a
+  // cache-buster, accept the JSON payload, and ALWAYS settle the in-flight flag
+  // in `finally`. Every fetch ends by setting either a payload or an error, so
+  // the loading state (derived as `!payload && !apiError`) can never get stuck.
+  const fetchPayload = useCallback(async () => {
+    const requestedFixture = dataSource === "fixture";
+    const tf = timeframe.toLowerCase();
+    const key = cacheKey(symbol, timeframe, dataSource);
+    setRefreshing(true);
     try {
-      const tf  = timeframe.toLowerCase();
       const exSlug = exchangeToApiSlug(exchange);
-      const params = new URLSearchParams({ symbol, exchange: exSlug, timeframe: tf });
-      // Fixture mode opts into locally exported payloads; the API falls back to
-      // mock automatically when no fixture file exists.
-      if (dataSource === "fixture") params.set("source", "fixture");
+      const params = new URLSearchParams({
+        symbol,                  // real symbol e.g. BTCUSDT — never a display label
+        exchange: exSlug,
+        timeframe: tf,           // 5m / 15m / 1h / 4h / 1d
+        _ts: String(Date.now()), // cache buster so each poll is fresh
+      });
+      if (requestedFixture) params.set("source", "fixture");
+
       const res = await fetch(`/api/heatmap?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // Keep the last good payload on screen; just surface the error.
         setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
         return;
       }
-      const data: HeatmapApiPayload = await res.json();
+
+      const data: unknown = await res.json();
+      if (!isValidPayload(data)) {
+        setApiError("Received an invalid heatmap payload");
+        return;
+      }
+
+      // Accept the payload as-is (empty cells → empty state, never a perpetual
+      // spinner). Replace the last good payload and cache it for remounts.
+      setFixtureFallback(requestedFixture && !payloadIsFixture(data));
+      payloadCache.set(key, data);
       setPayload(data);
       setApiError(null);
       setLastFetchedAt(new Date().toISOString());
     } catch (err) {
       setApiError(err instanceof Error ? err.message : "Network error");
     } finally {
-      if (!silent) setLoading(false);
+      setRefreshing(false); // always — the UI is never left stuck on loading
     }
   }, [symbol, exchange, timeframe, dataSource]);
 
   // Initial load + reload whenever symbol/exchange/timeframe/source changes.
   useEffect(() => { fetchPayload(); }, [fetchPayload]);
 
-  // Auto-refresh: poll every 2s while in fixture mode with auto-refresh on.
-  // The interval resets (cleanup runs) when symbol/timeframe/source change, on
-  // unmount, or when the toggle flips — so there are no leaked timers.
+  // Auto-refresh every 2s while the toggle is on (cleaned up on change/unmount).
+  // lastFetchedAt advances every tick even if the writer's liveUpdatedAt lags.
   useEffect(() => {
-    if (dataSource !== "fixture" || !autoRefresh) return;
-    const id = setInterval(() => { fetchPayload({ silent: true }); }, 2000);
+    if (!autoRefresh) return;
+    const id = setInterval(() => { fetchPayload(); }, 2000);
     return () => clearInterval(id);
-  }, [dataSource, autoRefresh, fetchPayload]);
+  }, [autoRefresh, fetchPayload]);
+
+  // Refresh immediately when the browser tab becomes visible again — the last
+  // good payload stays on screen while the refresh runs.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchPayload();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchPayload]);
 
   // Derive display values — fall back to static defaults when payload not loaded yet
   const isDemo        = payload?.meta.isDemo ?? true;
@@ -225,6 +287,27 @@ export default function LiquidityMapPage() {
   const apiWalls = payload?.walls ?? [];
   const showApiWalls = apiWalls.length > 0;
 
+  // Does the displayed payload match the current selection? When it doesn't and
+  // a fetch is in flight, we're loading a new selection while keeping old data.
+  const tfLower = timeframe.toLowerCase();
+  const payloadMatchesSelection =
+    payload != null &&
+    payload.symbol === symbol &&
+    String(payload.timeframe).toLowerCase() === tfLower;
+  const selectionLoading = refreshing && payload != null && !payloadMatchesSelection;
+  // Whether the displayed payload is real fixture / local-live data.
+  const isLiveFixture = payload != null && payloadIsFixture(payload);
+
+  // Status indicator — never implies "empty" while a payload is on screen.
+  const statusInfo =
+    !payload && !apiError    ? { text: "Loading",                  dot: "bg-yellow-400 animate-pulse", txt: "text-yellow-400" } :
+    !payload && apiError     ? { text: "Error",                    dot: "bg-red-400",                  txt: "text-red-400" } :
+    selectionLoading         ? { text: "Loading new selection",    dot: "bg-cyan-400 animate-pulse",   txt: "text-lumora-cyan" } :
+    apiError                 ? { text: "Connected · refresh failed", dot: "bg-amber-400",              txt: "text-amber-400" } :
+    refreshing && payload    ? { text: "Refreshing",               dot: "bg-cyan-400 animate-pulse",   txt: "text-lumora-cyan" } :
+    payload                  ? { text: "Connected",                dot: "bg-emerald-400",              txt: "text-emerald-400" } :
+                               { text: "—",                        dot: "bg-lumora-muted",             txt: "text-lumora-muted" };
+
   return (
     <div className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
 
@@ -238,7 +321,9 @@ export default function LiquidityMapPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={statusVariant}>{statusLabel}</Badge>
-          {isDemo && <Badge variant="yellow">Demo Data</Badge>}
+          {isLiveFixture
+            ? <Badge variant="green">Live Fixture</Badge>
+            : isDemo && <Badge variant="yellow">Demo Data</Badge>}
         </div>
       </div>
 
@@ -290,10 +375,10 @@ export default function LiquidityMapPage() {
             </button>
           ))}
         </div>
-        {/* Auto-refresh toggle — drives the 2s fixture poll */}
+        {/* Auto-refresh toggle — drives the 2s poll */}
         <button
           onClick={() => setAutoRefresh(v => !v)}
-          title="Auto refresh (2s) in fixture mode"
+          title="Auto refresh (2s)"
           className={clsx(
             "px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors",
             autoRefresh
@@ -305,9 +390,9 @@ export default function LiquidityMapPage() {
         </button>
         {/* Refresh */}
         <button onClick={() => fetchPayload()} title="Refresh"
-          disabled={loading}
+          disabled={refreshing}
           className="p-1.5 rounded-md border border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text transition-colors disabled:opacity-50">
-          <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
+          <RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />
         </button>
         {/* Legend */}
         <div className="ml-auto flex items-center gap-3">
@@ -357,16 +442,25 @@ export default function LiquidityMapPage() {
             <span className="text-[11px] text-lumora-muted uppercase tracking-wide font-medium">
               Liquidity Heatmap
             </span>
-            <span className="text-[10px] text-lumora-muted num">
-              {payload
-                ? `${payload.timeBuckets.length} frames · ${payload.meta.cellCount} cells · ${payload.meta.wallCount} walls`
-                : "—"}
-            </span>
+            <div className="flex items-center gap-2">
+              {(selectionLoading || (refreshing && payload)) && (
+                <span className="flex items-center gap-1 text-[9px] text-lumora-cyan">
+                  <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                  {selectionLoading ? "new selection" : "refreshing"}
+                </span>
+              )}
+              <span className="text-[10px] text-lumora-muted num">
+                {payload
+                  ? `${payload.timeBuckets.length} frames · ${payload.meta.cellCount} cells · ${payload.meta.wallCount} walls`
+                  : "—"}
+              </span>
+            </div>
           </div>
 
           <div className="relative" style={{ height: CHART_H, background: "#05030f" }}>
-            {/* Loading overlay — silent auto-refresh polls do not trigger this */}
-            {loading && (
+            {/* Initial loading — shown only before the first payload/error.
+                Cannot be infinite: every fetch ends by setting one of them. */}
+            {!payload && !apiError && (
               <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-lumora-card/80 border border-lumora-border text-lumora-muted text-xs">
                   <RefreshCw className="h-3 w-3 animate-spin" />
@@ -375,7 +469,7 @@ export default function LiquidityMapPage() {
               </div>
             )}
 
-            {/* Error card inside the chart area when there is nothing to show */}
+            {/* Error card when there is no last-good payload to keep showing */}
             {apiError && !payload && (
               <div className="absolute inset-0 z-30 flex items-center justify-center p-4">
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-xs">
@@ -385,15 +479,14 @@ export default function LiquidityMapPage() {
               </div>
             )}
 
-            {payload ? (
-              <HeatmapCanvas payload={payload} height={CHART_H} showDebug />
-            ) : (
-              !apiError && (
-                <div className="absolute inset-0 flex items-center justify-center text-xs text-lumora-muted">
-                  {loading ? "Loading heatmap…" : "Waiting for data…"}
-                </div>
-              )
+            {/* Valid but empty payload → explicit empty state, never a spinner */}
+            {payload && payload.cells.length === 0 && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center text-xs text-lumora-muted pointer-events-none">
+                No liquidity data in this window
+              </div>
             )}
+
+            {payload && <HeatmapCanvas payload={payload} height={CHART_H} showDebug />}
           </div>
         </GlassCard>
 
@@ -512,25 +605,9 @@ export default function LiquidityMapPage() {
             <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">
               API Status
             </span>
-            <span
-              className={clsx(
-                "inline-block w-1.5 h-1.5 rounded-full",
-                loading   ? "bg-yellow-400 animate-pulse" :
-                apiError  ? "bg-red-400" :
-                payload   ? "bg-emerald-400" :
-                            "bg-lumora-muted"
-              )}
-            />
-            <span
-              className={clsx(
-                "text-[10px] font-medium",
-                loading   ? "text-yellow-400" :
-                apiError  ? "text-red-400" :
-                payload   ? "text-emerald-400" :
-                            "text-lumora-muted"
-              )}
-            >
-              {loading ? "Loading" : apiError ? "Error" : payload ? "Connected" : "—"}
+            <span className={clsx("inline-block w-1.5 h-1.5 rounded-full", statusInfo.dot)} />
+            <span className={clsx("text-[10px] font-medium", statusInfo.txt)}>
+              {statusInfo.text}
             </span>
           </div>
 
@@ -554,7 +631,7 @@ export default function LiquidityMapPage() {
             // reveals a fixture→mock fallback when no fixture file exists.
             { k: "Source",      v: dataSource },
             { k: "Meta Src",    v: payload?.meta.source ?? payload?.meta.dataSource ?? "—" },
-            { k: "Auto",        v: dataSource === "fixture" ? (autoRefresh ? "On (2s)" : "Off") : "—" },
+            { k: "Auto",        v: autoRefresh ? "On (2s)" : "Off" },
             {
               k: "Live Upd",
               v: payload?.meta.liveUpdatedAt
@@ -574,7 +651,19 @@ export default function LiquidityMapPage() {
             </div>
           ))}
 
-          {/* Error detail */}
+          {/* Fixture fallback notice — requested fixture, got mock. Last good
+              fixture payload (if any) is kept on screen. */}
+          {fixtureFallback && (
+            <>
+              <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+              <span className="flex items-center gap-1 text-[10px] text-amber-400">
+                <AlertCircle className="h-3 w-3 shrink-0" />
+                Fixture fallback (mock)
+              </span>
+            </>
+          )}
+
+          {/* Error detail — chart keeps the last good payload visible. */}
           {apiError && (
             <>
               <div className="h-3 w-px bg-lumora-border hidden sm:block" />
