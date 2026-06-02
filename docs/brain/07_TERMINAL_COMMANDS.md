@@ -20,40 +20,47 @@ Use for:
 - Next.js build
 - Next.js dev server
 
-```
 cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"npm run buildnpm run dev
+```
+
 ```
 
 ## Python Tests
 
-```
 cd "C:\Users\Joshua\Desktop\wallet finder"python -m pytest tests/test_local_heatmap_live.pypython -m compileall scripts services tests
+
+```
+
 ```
 
 ## Local Live Writer
 
-```
 cd "C:\Users\Joshua\Desktop\wallet finder"python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --samples 999999 --max-frames 900 --target live
-```
-
-## Local + Live Compatibility
 
 ```
+
+```
+
+## Local + Live Compatibility 
+
 cd "C:\Users\Joshua\Desktop\wallet finder"python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --samples 999999 --max-frames 900 --target both
+
+```
+
 ```
 
 ## Git Rules
 
-Always check:
+Always check: git status
 
 ```
-git status
-```
-
-Never use:
 
 ```
-git add .
+
+Never use: git add .
+
+```
+
 ```
 
 Always add explicit files only.

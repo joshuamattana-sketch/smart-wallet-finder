@@ -504,3 +504,127 @@ class TestLocalHeatmapLive:
         btc_live = _payload(live_dir / "BTCUSDT_5m.json")["meta"]
         assert btc_live["source"] == "local_live_writer"
         assert btc_live["isActiveSymbol"] is True
+
+    # ── supabase targets ─────────────────────────────────────────────────────
+
+    def test_target_supabase_requires_env(self, tmp_path, capsys):
+        code, _, _ = self._run_targets(
+            tmp_path, ["--symbols", "BTCUSDT", "--target", "supabase",
+                       "--samples", "1", "--interval", "2"],
+        )
+        assert code == 1
+        assert "SUPABASE" in capsys.readouterr().err
+
+    def test_target_supabase_builds_correct_row(self, tmp_path):
+        captured_rows: list[dict] = []
+
+        def _fake_upsert(cfg, symbol, timeframe, payload, *, exchange="binance_spot"):
+            captured_rows.append({
+                "symbol": symbol, "timeframe": timeframe,
+                "exchange": exchange, "payload": payload,
+            })
+
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"), \
+             patch.object(live, "upsert_supabase_payload", side_effect=_fake_upsert), \
+             patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co",
+                                       "SUPABASE_SERVICE_ROLE_KEY": "test-key"}):
+            code = live.main(["--symbols", "BTCUSDT", "--target", "supabase",
+                              "--samples", "1", "--interval", "2",
+                              "--output-dir", str(fix_dir), "--live-dir", str(live_dir)])
+        assert code == 0
+        assert len(captured_rows) == 1
+        row = captured_rows[0]
+        assert row["symbol"] == "BTCUSDT"
+        assert row["timeframe"] == "5m"
+        assert row["exchange"] == "binance_spot"
+        meta = row["payload"]["meta"]
+        assert meta["source"] == "supabase_live_writer"
+        assert meta["dataSource"] == "supabase_live_writer"
+        assert meta["resolvedSource"] == "live"
+        assert meta["isDemo"] is False
+        assert meta["stale"] is False
+        assert meta.get("writerTarget") == "supabase"
+        # No local files written for supabase-only target.
+        assert not (fix_dir / "BTCUSDT_5m.json").exists()
+        assert not (live_dir / "BTCUSDT_5m.json").exists()
+
+    def test_target_live_and_supabase_writes_both(self, tmp_path):
+        upserted: list[str] = []
+
+        def _fake_upsert(cfg, symbol, timeframe, payload, *, exchange="binance_spot"):
+            upserted.append(f"{symbol}_{timeframe}")
+
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"), \
+             patch.object(live, "upsert_supabase_payload", side_effect=_fake_upsert), \
+             patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co",
+                                       "SUPABASE_SERVICE_ROLE_KEY": "test-key"}):
+            code = live.main(["--symbols", "BTCUSDT", "--target", "live-and-supabase",
+                              "--samples", "1", "--interval", "2",
+                              "--output-dir", str(fix_dir), "--live-dir", str(live_dir)])
+        assert code == 0
+        assert (live_dir / "BTCUSDT_5m.json").exists()
+        assert not (fix_dir / "BTCUSDT_5m.json").exists()
+        assert "BTCUSDT_5m" in upserted
+        assert _payload(live_dir / "BTCUSDT_5m.json")["meta"]["source"] == "local_live_writer"
+
+    def test_target_all_writes_fixture_live_supabase(self, tmp_path):
+        upserted: list[str] = []
+
+        def _fake_upsert(cfg, symbol, timeframe, payload, *, exchange="binance_spot"):
+            upserted.append(f"{symbol}_{timeframe}")
+
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"), \
+             patch.object(live, "upsert_supabase_payload", side_effect=_fake_upsert), \
+             patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co",
+                                       "SUPABASE_SERVICE_ROLE_KEY": "test-key"}):
+            code = live.main(["--symbols", "BTCUSDT", "--target", "all",
+                              "--samples", "1", "--interval", "2",
+                              "--output-dir", str(fix_dir), "--live-dir", str(live_dir)])
+        assert code == 0
+        assert (fix_dir / "BTCUSDT_5m.json").exists()
+        assert (live_dir / "BTCUSDT_5m.json").exists()
+        assert "BTCUSDT_5m" in upserted
+
+    def test_supabase_upsert_failure_does_not_crash(self, tmp_path):
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"), \
+             patch.object(live, "upsert_supabase_payload",
+                          side_effect=RuntimeError("network")), \
+             patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co",
+                                       "SUPABASE_SERVICE_ROLE_KEY": "test-key"}):
+            code = live.main(["--symbols", "BTCUSDT", "--target", "live-and-supabase",
+                              "--samples", "2", "--interval", "2",
+                              "--output-dir", str(fix_dir), "--live-dir", str(live_dir)])
+        assert code == 0
+        assert (live_dir / "BTCUSDT_5m.json").exists()
+
+    def test_no_secret_values_printed(self, tmp_path, capsys):
+        fix_dir = tmp_path / "fix"
+        live_dir = tmp_path / "live"
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"), \
+             patch.object(live, "upsert_supabase_payload"), \
+             patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co",
+                                       "SUPABASE_SERVICE_ROLE_KEY": "super-secret-key-123"}):
+            live.main(["--symbols", "BTCUSDT", "--target", "supabase",
+                       "--samples", "1", "--interval", "2",
+                       "--output-dir", str(fix_dir), "--live-dir", str(live_dir)])
+        captured = capsys.readouterr()
+        assert "super-secret-key-123" not in captured.out
+        assert "super-secret-key-123" not in captured.err

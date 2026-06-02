@@ -28,17 +28,17 @@ interface Resolution {
  *   fixture → mock
  *   mock
  */
-function resolvePayload(
+async function resolvePayload(
   requested: HeatmapSource,
   symbol: string,
   exchange: string,
   timeframe: string,
-): Resolution {
+): Promise<Resolution> {
   const mock = (): HeatmapApiPayload =>
     buildMockHeatmapPayload(symbol, exchange, timeframe as HeatmapTimeframe);
 
   if (requested === "live") {
-    const live = loadHeatmapLivePayload(symbol, timeframe);
+    const live = await loadHeatmapLivePayload(symbol, timeframe);
     if (live) return { payload: live, resolved: "live", isFallback: false };
     const fixture = loadHeatmapFixture(symbol, timeframe);
     if (fixture) return { payload: fixture, resolved: "fixture", isFallback: true };
@@ -102,7 +102,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   // Resolve the payload through the fallback chain (never throws on missing
   // files — the loaders return null and we degrade gracefully).
-  const { payload, resolved, isFallback } = resolvePayload(
+  const { payload, resolved, isFallback } = await resolvePayload(
     requested, symbol, exchange, timeframe,
   );
 

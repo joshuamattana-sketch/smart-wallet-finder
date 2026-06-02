@@ -32,6 +32,8 @@ import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,19 +55,33 @@ from services.heatmap_api_payload import (  # noqa: E402
 )
 
 SOURCE_TAG = "local_live_fixture"
-LIVE_SOURCE_TAG = "local_live_writer"   # stamped on payloads written to the live target
+LIVE_SOURCE_TAG = "local_live_writer"        # stamped on payloads written to the live target
+SUPABASE_SOURCE_TAG = "supabase_live_writer" # stamped on payloads upserted to Supabase
 EXCHANGE = "binance_spot"
 DEFAULT_WALL_THRESHOLD_USD = 1_000_000.0
 DEFAULT_OUTPUT_DIR = "lumora-web/fixtures/heatmap"
 DEFAULT_LIVE_DIR = "lumora-web/fixtures/live"
-VALID_TARGETS = ("fixture", "live", "both")
+VALID_TARGETS = ("fixture", "live", "both", "supabase", "live-and-supabase", "all")
+SUPABASE_TABLE = "heatmap_latest_payloads"
+WRITER_SOURCE_LABEL = "run_local_heatmap_live.py"
+_SUPABASE_HTTP_TIMEOUT = 8  # seconds
 
 
 def targets_for(target: str) -> list[str]:
-    """Expand a --target value into the concrete write targets."""
-    if target == "both":
-        return ["fixture", "live"]
-    return [target]
+    """Expand a --target value into the concrete write kinds (no duplicates)."""
+    mapping = {
+        "fixture":           ["fixture"],
+        "live":              ["live"],
+        "both":              ["fixture", "live"],
+        "supabase":          ["supabase"],
+        "live-and-supabase": ["live", "supabase"],
+        "all":               ["fixture", "live", "supabase"],
+    }
+    return mapping.get(target, [target])
+
+
+def target_requires_supabase(target: str) -> bool:
+    return "supabase" in targets_for(target)
 
 # Sensible per-symbol price-bucket widths (USD). Used when --price-step is not
 # given. Falls back to FALLBACK_PRICE_STEP for unknown symbols.
@@ -155,6 +171,95 @@ def resolve_price_step(
     return DEFAULT_PRICE_STEPS.get(sym, FALLBACK_PRICE_STEP)
 
 
+class SupabaseConfig:
+    """Resolved Supabase connection details (URL + service-role key)."""
+
+    def __init__(self, url: str, service_role_key: str) -> None:
+        self.url = url.rstrip("/")
+        self.service_role_key = service_role_key
+
+    @property
+    def upsert_endpoint(self) -> str:
+        return f"{self.url}/rest/v1/{SUPABASE_TABLE}?on_conflict=symbol,exchange,timeframe"
+
+
+def resolve_supabase_config(
+    url: str | None,
+    service_role_key: str | None,
+) -> SupabaseConfig:
+    """
+    Resolve Supabase URL + service-role key from CLI args, falling back to env
+    vars. Raises ValueError when either is missing (no secrets are echoed).
+    """
+    resolved_url = url or os.environ.get("SUPABASE_URL", "")
+    resolved_key = service_role_key or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not resolved_url:
+        raise ValueError(
+            "supabase target requires SUPABASE_URL (env var or --supabase-url)"
+        )
+    if not resolved_key:
+        raise ValueError(
+            "supabase target requires SUPABASE_SERVICE_ROLE_KEY "
+            "(env var or --supabase-service-role-key)"
+        )
+    return SupabaseConfig(resolved_url, resolved_key)
+
+
+def upsert_supabase_payload(
+    cfg: SupabaseConfig,
+    symbol: str,
+    timeframe: str,
+    payload: dict,
+    *,
+    exchange: str = EXCHANGE,
+) -> None:
+    """
+    Upsert one latest-payload row into Supabase via PostgREST.
+
+    Uses urllib (stdlib only, no new dependencies). The service-role key is
+    sent in headers and is never echoed in logs / error messages.
+    """
+    row = {
+        "symbol":          symbol,
+        "exchange":        exchange,
+        "timeframe":       timeframe,
+        "payload":         payload,
+        "live_updated_at": payload.get("meta", {}).get("liveUpdatedAt")
+                           or datetime.now(timezone.utc).isoformat(),
+        "writer_source":   WRITER_SOURCE_LABEL,
+    }
+    body = json.dumps([row]).encode("utf-8")
+    req = urllib.request.Request(
+        cfg.upsert_endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "apikey":        cfg.service_role_key,
+            "Authorization": f"Bearer {cfg.service_role_key}",
+            "Content-Type":  "application/json",
+            "Prefer":        "resolution=merge-duplicates,return=minimal",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_SUPABASE_HTTP_TIMEOUT) as resp:
+            if resp.status >= 300:
+                # Drain so the connection can be reused.
+                resp.read()
+                raise RuntimeError(f"supabase upsert HTTP {resp.status}")
+    except urllib.error.HTTPError as exc:
+        # Body may contain the row but never the key — safe to surface briefly.
+        snippet = ""
+        try:
+            snippet = exc.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"supabase upsert HTTP {exc.code}{(': ' + snippet) if snippet else ''}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"supabase upsert network error: {exc.reason}") from exc
+
+
 def write_payload_atomic(payload: dict, output: Path) -> None:
     """
     Write payload to `output` atomically: write a temp file in the same dir,
@@ -235,6 +340,7 @@ def run_live_multi(
     active_interval: float | None = None,
     background_interval: float | None = None,
     target: str = "fixture",
+    supabase: SupabaseConfig | None = None,
 ) -> dict:
     """
     Run the multi-symbol / multi-timeframe live collection loop.
@@ -281,6 +387,10 @@ def run_live_multi(
             )
 
     write_targets = targets_for(target)
+    if "supabase" in write_targets and supabase is None:
+        raise ValueError(
+            "supabase target requested but Supabase config (URL + service-role key) was not provided"
+        )
 
     # ── Resolve update schedule ─────────────────────────────────────────────
     active = active_symbol.upper() if active_symbol else None
@@ -373,19 +483,55 @@ def run_live_multi(
                             "stale": False,
                         },
                     }
+                    out = output_for(sym, tf, kind)
+                    write_payload_atomic(payload, out)
+                    if progress is not None:
+                        meta = payload["meta"]
+                        progress(
+                            f"write live · {sym} {tf} · -> {out} · "
+                            f"liveUpdatedAt={meta.get('liveUpdatedAt')} · "
+                            f"cells={meta.get('cellCount', 0)} · "
+                            f"frames={len(st['frames'])}"
+                        )
+                elif kind == "supabase":
+                    # Stamp supabase-writer metadata, then upsert via PostgREST.
+                    # Failures are caught per row so other targets/symbols keep going.
+                    payload = {
+                        **base,
+                        "meta": {
+                            **base["meta"],
+                            "source": SUPABASE_SOURCE_TAG,
+                            "dataSource": SUPABASE_SOURCE_TAG,
+                            "resolvedSource": "live",
+                            "writerTarget": target,
+                            "isDemo": False,
+                            "stale": False,
+                        },
+                    }
+                    try:
+                        upsert_supabase_payload(supabase, sym, tf, payload)
+                        if progress is not None:
+                            progress(
+                                f"write supabase · {sym} {tf} · "
+                                f"liveUpdatedAt={payload['meta'].get('liveUpdatedAt')} · "
+                                f"cells={payload['meta'].get('cellCount', 0)}"
+                            )
+                    except RuntimeError as exc:
+                        if progress is not None:
+                            progress(f"write supabase · {sym} {tf} · failed: {exc}")
                 else:
                     # Fixture target keeps the existing local_live_fixture meta.
                     payload = base
-                out = output_for(sym, tf, kind)
-                write_payload_atomic(payload, out)
-                if progress is not None:
-                    meta = payload["meta"]
-                    progress(
-                        f"write {kind} · {sym} {tf} · -> {out} · "
-                        f"liveUpdatedAt={meta.get('liveUpdatedAt')} · "
-                        f"cells={meta.get('cellCount', 0)} · "
-                        f"frames={len(st['frames'])}"
-                    )
+                    out = output_for(sym, tf, kind)
+                    write_payload_atomic(payload, out)
+                    if progress is not None:
+                        meta = payload["meta"]
+                        progress(
+                            f"write fixture · {sym} {tf} · -> {out} · "
+                            f"liveUpdatedAt={meta.get('liveUpdatedAt')} · "
+                            f"cells={meta.get('cellCount', 0)} · "
+                            f"frames={len(st['frames'])}"
+                        )
 
     try:
         for i in range(samples):
@@ -521,7 +667,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--live-dir", default=DEFAULT_LIVE_DIR, dest="live_dir",
                         help="Directory for live {SYMBOL}_{timeframe}.json files.")
     parser.add_argument("--target", default="fixture", choices=VALID_TARGETS,
-                        help="Where to write payloads: fixture | live | both (default: fixture).")
+                        help=("Where to write payloads: fixture | live | both | "
+                              "supabase | live-and-supabase | all (default: fixture)."))
+    parser.add_argument("--supabase-url", default=None, dest="supabase_url",
+                        help="Supabase project URL (fallback: env SUPABASE_URL).")
+    parser.add_argument("--supabase-service-role-key", default=None,
+                        dest="supabase_service_role_key",
+                        help=("Supabase service-role key (fallback: env "
+                              "SUPABASE_SERVICE_ROLE_KEY). Never echoed in logs."))
     return parser.parse_args(argv)
 
 
@@ -562,6 +715,18 @@ def main(argv: list[str] | None = None) -> int:
 
     active_symbol = args.active_symbol.upper() if args.active_symbol else None
 
+    # Resolve Supabase config up front when the target needs it, so a missing
+    # env / arg fails fast with a clear (secret-free) message.
+    supabase_cfg: SupabaseConfig | None = None
+    if target_requires_supabase(args.target):
+        try:
+            supabase_cfg = resolve_supabase_config(
+                args.supabase_url, args.supabase_service_role_key,
+            )
+        except ValueError as exc:
+            print(f"error: invalid argument — {exc}", file=sys.stderr)
+            return 1
+
     try:
         result = run_live_multi(
             symbols=symbols,
@@ -578,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
             active_interval=args.active_interval,
             background_interval=args.background_interval,
             target=args.target,
+            supabase=supabase_cfg,
         )
     except ValueError as exc:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
