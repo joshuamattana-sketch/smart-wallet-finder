@@ -33,6 +33,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -175,12 +176,18 @@ class SupabaseConfig:
     """Resolved Supabase connection details (URL + service-role key)."""
 
     def __init__(self, url: str, service_role_key: str) -> None:
-        self.url = url.rstrip("/")
+        base = url.rstrip("/")
+        if base.endswith("/rest/v1"):
+            base = base[: -len("/rest/v1")]
+        self.url = base
         self.service_role_key = service_role_key
 
     @property
     def upsert_endpoint(self) -> str:
-        return f"{self.url}/rest/v1/{SUPABASE_TABLE}?on_conflict=symbol,exchange,timeframe"
+        return (
+            f"{self.url}/rest/v1/{SUPABASE_TABLE}"
+            f"?on_conflict={urllib.parse.quote('symbol,exchange,timeframe', safe=',')}"
+        )
 
 
 def resolve_supabase_config(

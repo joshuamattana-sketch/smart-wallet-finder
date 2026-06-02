@@ -9,9 +9,20 @@ import { isKnownSymbol, getMarketSymbols } from "@/lib/market-sources";
 import { loadHeatmapFixture } from "@/lib/heatmap-fixture-loader";
 import { loadHeatmapLivePayload } from "@/lib/heatmap-live-loader";
 
+// Always render per-request: live payloads must never be served from Next's
+// route cache / Vercel data cache, or the UI shows stale numbers until a manual
+// page refresh.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const VALID_TIMEFRAMES: HeatmapTimeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 const VALID_SOURCES = ["mock", "fixture", "live"] as const;
 type HeatmapSource = (typeof VALID_SOURCES)[number];
+
+// No-store headers stamped on every response so no layer caches live data.
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+} as const;
 
 // Payload is considered fresh for this long (ms) after its timestamp.
 const FRESHNESS_WINDOW_MS = 30_000;
@@ -122,5 +133,5 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     ...(staleReason ? { staleReason } : {}),
   };
 
-  return NextResponse.json(payload);
+  return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
 }

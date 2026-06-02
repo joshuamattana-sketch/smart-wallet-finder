@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { mockOrderbook } from "@/lib/mock-data";
@@ -43,33 +43,48 @@ export default function TerminalPage() {
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
   const apiTf = apiTimeframe(timeframe);
-  const fetchLive = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/heatmap?source=live&symbol=${symbol}&exchange=binance_spot&timeframe=${apiTf}&_ts=${Date.now()}`,
-        { cache: "no-store" },
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
-        return;
-      }
-      const data: HeatmapApiPayload = await res.json();
-      setPayload(data);
-      setApiError(null);
-      setLastFetchedAt(new Date().toISOString());
-    } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Network error");
-    }
-  }, [symbol, apiTf]);
 
-  // Auto-refresh every 2s; interval resets on symbol/timeframe change and is
-  // cleaned up on unmount (no leaked timers).
+  // Auto-refresh every 2s with AbortController to prevent race conditions
+  // when the user switches symbol/timeframe mid-flight. Visibility restore
+  // triggers an immediate fetch so returning to the tab shows fresh data.
   useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchLive = async () => {
+      try {
+        const res = await fetch(
+          `/api/heatmap?source=live&symbol=${symbol}&exchange=binance_spot&timeframe=${apiTf}&_ts=${Date.now()}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setApiError((body as { message?: string }).message ?? `API error ${res.status}`);
+          return;
+        }
+        const data: HeatmapApiPayload = await res.json();
+        if (controller.signal.aborted) return;
+        setPayload(data);
+        setApiError(null);
+        setLastFetchedAt(new Date().toISOString());
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setApiError(err instanceof Error ? err.message : "Network error");
+      }
+    };
+
     fetchLive();
     const id = setInterval(fetchLive, 2000);
-    return () => clearInterval(id);
-  }, [fetchLive]);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchLive();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      controller.abort();
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [symbol, apiTf]);
 
   const livePrice = payload ? heatmapCurrentPrice(payload) : null;
   const lastPoint = payload ? heatmapLastPricePoint(payload) : null;

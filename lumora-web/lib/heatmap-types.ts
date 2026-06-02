@@ -104,6 +104,14 @@ export interface HeatmapMeta {
   stale?: boolean;
   /** Human-readable reason set when stale is true. */
   staleReason?: string;
+  /** Debug: Supabase env vars were present. */
+  supabaseConfigured?: boolean;
+  /** Debug: Supabase read was attempted. */
+  supabaseAttempted?: boolean;
+  /** Debug: safe error string when Supabase read failed (no secrets). */
+  supabaseError?: string;
+  /** Debug: HTTP status of the Supabase read attempt. */
+  supabaseStatus?: number;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */

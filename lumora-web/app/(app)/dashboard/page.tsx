@@ -89,6 +89,8 @@ export default function DashboardPage() {
 
   // Tiered auto-refresh: the active market polls fast, background markets slow.
   // Both intervals (and the initial load) are cleaned up on unmount.
+  // On visibility restore, an immediate fetch fires so the user never sees
+  // stale numbers after switching back from another tab.
   useEffect(() => {
     DASH_SYMBOLS.forEach((sym) => { fetchSymbol(sym); });
     const activeId = setInterval(() => fetchSymbol(ACTIVE_SYMBOL), ACTIVE_REFRESH_MS);
@@ -96,9 +98,16 @@ export default function DashboardPage() {
       () => { BACKGROUND_SYMBOLS.forEach((sym) => fetchSymbol(sym)); },
       BACKGROUND_REFRESH_MS,
     );
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        DASH_SYMBOLS.forEach((sym) => { fetchSymbol(sym); });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(activeId);
       clearInterval(backgroundId);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [fetchSymbol]);
 

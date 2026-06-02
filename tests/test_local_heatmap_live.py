@@ -507,6 +507,25 @@ class TestLocalHeatmapLive:
 
     # ── supabase targets ─────────────────────────────────────────────────────
 
+    def test_supabase_upsert_url_format(self):
+        cfg = live.SupabaseConfig("https://example.supabase.co", "key")
+        assert cfg.upsert_endpoint == (
+            "https://example.supabase.co/rest/v1/heatmap_latest_payloads"
+            "?on_conflict=symbol,exchange,timeframe"
+        )
+
+    def test_supabase_upsert_url_strips_trailing_slash(self):
+        cfg = live.SupabaseConfig("https://example.supabase.co/", "key")
+        assert cfg.upsert_endpoint.startswith("https://example.supabase.co/rest/v1/")
+        assert "//" not in cfg.upsert_endpoint.split("://", 1)[1]
+
+    def test_supabase_upsert_url_no_double_rest(self):
+        cfg = live.SupabaseConfig("https://example.supabase.co/rest/v1", "key")
+        assert cfg.upsert_endpoint == (
+            "https://example.supabase.co/rest/v1/heatmap_latest_payloads"
+            "?on_conflict=symbol,exchange,timeframe"
+        )
+
     def test_target_supabase_requires_env(self, tmp_path, capsys):
         code, _, _ = self._run_targets(
             tmp_path, ["--symbols", "BTCUSDT", "--target", "supabase",
