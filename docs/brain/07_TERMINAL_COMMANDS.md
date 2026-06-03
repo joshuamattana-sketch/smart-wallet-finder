@@ -131,6 +131,19 @@ python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --act
 
 ```
 
+## Railway Deploy (LM53C)
+
+See `docs/brain/08_RAILWAY_WORKER_DEPLOY.md` for full beginner guide.
+
+Config file: `railway.worker.toml`
+
+Start command: `python scripts/run_binance_ws_heatmap_live.py --use-env-config --target supabase --forever --range-mode wide`
+
+Verify history rows:
+```sql
+select * from heatmap_frame_history order by created_at desc limit 10;
+```
+
 ## Git Rules
 
 Always check: git status

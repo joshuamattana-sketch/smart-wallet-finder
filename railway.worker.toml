@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python scripts/run_binance_ws_heatmap_live.py --use-env-config --target supabase --forever --range-mode wide"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
