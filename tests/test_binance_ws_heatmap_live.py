@@ -354,6 +354,56 @@ class TestMainCli:
         assert code == 1
         assert "invalid timeframe" in capsys.readouterr().err
 
+    def test_range_mode_stamps_meta_on_payload(self, tmp_path):
+        """WS collector stamps priceRangeMode/Min/Max after the first message."""
+        out_dir, output_for = _output_factory(tmp_path)
+        ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=1.0, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100000.0, 100020.0)]),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=1, forever=False, now=_Clock(step=0.5),
+            range_mode="standard",
+        )
+        meta = json.loads((out_dir / "BTCUSDT_5m.json").read_text("utf-8"))["meta"]
+        # mid = 100010 → BTC standard ±3000 → [97010, 103010].
+        assert meta["priceRangeMode"] == "standard"
+        assert meta["priceRangeAbs"] == 3000.0
+        assert meta["priceRangeMin"] == 97010.0
+        assert meta["priceRangeMax"] == 103010.0
+
+    def test_range_mode_abs_override(self, tmp_path):
+        out_dir, output_for = _output_factory(tmp_path)
+        ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=1.0, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100000.0, 100020.0)]),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=1, forever=False, now=_Clock(step=0.5),
+            range_mode="tight", price_range_abs=4000.0,
+        )
+        meta = json.loads((out_dir / "BTCUSDT_5m.json").read_text("utf-8"))["meta"]
+        assert meta["priceRangeAbs"] == 4000.0
+        assert meta["priceRangeMax"] - meta["priceRangeMin"] == 8000.0
+
+    def test_invalid_range_mode_raises(self, tmp_path):
+        _, output_for = _output_factory(tmp_path)
+        import pytest
+        with pytest.raises(ValueError, match="invalid range mode"):
+            ws.run_ws_collector(
+                symbol="BTCUSDT", timeframes=["5m"],
+                write_interval=1.0, max_frames=10,
+                target="live", supabase=None,
+                output_for=output_for,
+                message_iter=iter([]),
+                fetch_depth=lambda *a, **k: _mock_snapshot(),
+                range_mode="bogus",
+            )
+
     def test_startup_banner_no_secrets(self, tmp_path, capsys, monkeypatch):
         monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "super-secret-xyz")

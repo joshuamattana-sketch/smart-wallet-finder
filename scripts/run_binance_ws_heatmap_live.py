@@ -58,7 +58,12 @@ from services.connectors.binance_depth_collector import (  # noqa: E402
     DepthCollectorError,
     fetch_depth_snapshot,
 )
-from services.orderbook_depth_bucketer import build_heatmap_cells  # noqa: E402
+from services.orderbook_depth_bucketer import (  # noqa: E402
+    VALID_RANGE_MODES,
+    auto_scale_price_step,
+    build_heatmap_cells,
+    resolve_price_range,
+)
 from services.heatmap_matrix_builder import build_heatmap_matrix  # noqa: E402
 from services.heatmap_api_payload import (  # noqa: E402
     VALID_TIMEFRAMES,
@@ -149,6 +154,7 @@ def build_ws_payload(
     frames: list[dict],
     price_path: list[dict],
     write_interval: float,
+    range_meta: dict | None = None,
 ) -> dict:
     """Build a HeatmapApiPayload from the rolling frame + price-path state."""
     matrix = build_heatmap_matrix(frames)
@@ -159,6 +165,7 @@ def build_ws_payload(
         exchange=EXCHANGE,
         price_path=price_path,
         current_price=current_price,
+        price_range_meta=range_meta,
     )
     payload["symbol"] = symbol
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -259,6 +266,9 @@ def run_ws_collector(
     progress: Callable[[str], None] | None = None,
     now: Callable[[], float] = time.monotonic,
     upsert: Callable[..., None] = upsert_supabase_payload,
+    range_mode: str = "standard",
+    price_range_abs: float | None = None,
+    price_range_percent: float | None = None,
 ) -> dict:
     """
     Drive the collector loop. Returns {writes: int, messages: int}.
@@ -284,6 +294,11 @@ def run_ws_collector(
         raise ValueError(
             f"invalid target {target!r}. Allowed: {', '.join(VALID_TARGETS)}"
         )
+    if range_mode not in VALID_RANGE_MODES:
+        raise ValueError(
+            f"invalid range mode {range_mode!r}. "
+            f"Allowed: {', '.join(VALID_RANGE_MODES)}"
+        )
     for tf in timeframes:
         if tf not in VALID_TIMEFRAMES:
             raise ValueError(
@@ -303,6 +318,7 @@ def run_ws_collector(
     state: dict[str, object] = {
         "best_bid": None, "best_ask": None, "mid": None,
         "last_event_at": None,
+        "range_meta": None,
     }
     frames: list[dict] = []
     price_path: list[dict] = []
@@ -310,18 +326,65 @@ def run_ws_collector(
     messages = 0
 
     def _refresh_depth() -> None:
-        """Fetch one REST depth snapshot, append a new frame, cap history."""
+        """
+        Fetch one REST depth snapshot, append a new frame, cap history.
+
+        When a mid is known, resolve the analysis price range, auto-scale
+        the bucket step, and filter the snapshot to that range. Before the
+        first WS message arrives we fall back to no filter (the bootstrap
+        frame still goes in so the very first write has cells).
+        """
         try:
             snap = fetch_depth(symbol, depth_limit)
         except (DepthCollectorError, ValueError) as exc:
             _say(f"depth refresh failed: {exc}")
             return
+
+        mid = state.get("mid")
+        price_range: tuple[float, float] | None = None
+        effective_step = price_step
+        if isinstance(mid, (int, float)) and mid > 0:
+            try:
+                info = resolve_price_range(
+                    symbol, range_mode, float(mid),
+                    abs_override=price_range_abs,
+                    pct_override=price_range_percent,
+                )
+            except ValueError as exc:
+                _say(f"range resolve failed: {exc}")
+                info = None
+            if info is not None:
+                price_range = (info["min"], info["max"])
+                # Auto-scale only for the wider modes — tight/standard
+                # preserve the user's --price-step exactly.
+                if range_mode in ("wide", "macro"):
+                    effective_step = auto_scale_price_step(
+                        info["max"] - info["min"], price_step,
+                    )
+
         frame = build_heatmap_cells(
-            snap, price_step=price_step, wall_threshold_usd=wall_threshold_usd,
+            snap, price_step=effective_step, wall_threshold_usd=wall_threshold_usd,
+            price_range=price_range,
         )
         frames.append(frame)
         if len(frames) > max_frames:
             del frames[: len(frames) - max_frames]
+
+        if isinstance(mid, (int, float)) and mid > 0 and price_range is not None:
+            info = resolve_price_range(
+                symbol, range_mode, float(mid),
+                abs_override=price_range_abs,
+                pct_override=price_range_percent,
+            )
+            state["range_meta"] = {
+                "mode":                info["mode"],
+                "min":                 info["min"],
+                "max":                 info["max"],
+                "abs":                 info["abs"],
+                "pct":                 info["pct"],
+                "available_depth_min": frame.get("available_depth_min"),
+                "available_depth_max": frame.get("available_depth_max"),
+            }
 
     # Bootstrap — one REST snapshot so the very first write has real cells.
     _refresh_depth()
@@ -365,9 +428,33 @@ def run_ws_collector(
                 if len(price_path) > max_frames:
                     del price_path[: len(price_path) - max_frames]
 
+                # Refresh range_meta against the LATEST mid so the canvas
+                # axis tracks price drift between depth refreshes.
+                latest_range_meta = state.get("range_meta")
+                try:
+                    info = resolve_price_range(
+                        symbol, range_mode, float(state["mid"]),
+                        abs_override=price_range_abs,
+                        pct_override=price_range_percent,
+                    )
+                    avail = (latest_range_meta or {})
+                    latest_range_meta = {
+                        "mode":                info["mode"],
+                        "min":                 info["min"],
+                        "max":                 info["max"],
+                        "abs":                 info["abs"],
+                        "pct":                 info["pct"],
+                        "available_depth_min": avail.get("available_depth_min"),
+                        "available_depth_max": avail.get("available_depth_max"),
+                    }
+                    state["range_meta"] = latest_range_meta
+                except ValueError:
+                    pass
+
                 for tf in timeframes:
                     payload = build_ws_payload(
                         symbol, tf, frames, price_path, write_interval,
+                        range_meta=latest_range_meta,
                     )
                     for kind in write_targets:
                         try:
@@ -433,6 +520,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Stop after N writes (dev/tests). Ignored with --forever.")
     parser.add_argument("--forever", action="store_true",
                         help="Run until Ctrl+C / SIGINT (recommended for hosted worker).")
+    # LM43: analysis-grade price range presets.
+    parser.add_argument("--range-mode", default="standard",
+                        choices=VALID_RANGE_MODES, dest="range_mode",
+                        help=("Heatmap price-range preset: tight | standard | "
+                              "wide | macro (default: standard)."))
+    parser.add_argument("--price-range-abs", type=float, default=None,
+                        dest="price_range_abs",
+                        help="Override preset with absolute USD half-range.")
+    parser.add_argument("--price-range-percent", type=float, default=None,
+                        dest="price_range_percent",
+                        help="Override preset with percent half-range (e.g. 0.05).")
     return parser.parse_args(argv)
 
 
@@ -481,7 +579,10 @@ def main(argv: list[str] | None = None) -> int:
         f"  max frames         = {args.max_frames}\n"
         f"  collector          = {COLLECTOR_TAG}\n"
         f"  supabase           = "
-        f"{'configured' if sb_cfg is not None else 'not configured'}",
+        f"{'configured' if sb_cfg is not None else 'not configured'}\n"
+        f"  range mode         = {args.range_mode}"
+        f"{f' (abs=±{args.price_range_abs})' if args.price_range_abs else ''}"
+        f"{f' (pct=±{args.price_range_percent})' if args.price_range_percent else ''}",
         flush=True,
     )
 
@@ -505,6 +606,9 @@ def main(argv: list[str] | None = None) -> int:
             samples=args.samples,
             forever=args.forever,
             progress=progress,
+            range_mode=args.range_mode,
+            price_range_abs=args.price_range_abs,
+            price_range_percent=args.price_range_percent,
         )
     except RuntimeError as exc:
         # Includes "websocket-client not installed".

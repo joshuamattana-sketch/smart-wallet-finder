@@ -112,6 +112,24 @@ export interface HeatmapMeta {
   supabaseError?: string;
   /** Debug: HTTP status of the Supabase read attempt. */
   supabaseStatus?: number;
+  /** LM43: analysis-grade price range preset used (tight | standard | wide | macro). */
+  priceRangeMode?: string;
+  /** LM43: resolved lower bound of the requested heatmap price range (USD). */
+  priceRangeMin?: number;
+  /** LM43: resolved upper bound of the requested heatmap price range (USD). */
+  priceRangeMax?: number;
+  /** LM43: absolute USD half-range that was used (when applicable). */
+  priceRangeAbs?: number;
+  /** LM43: percent half-range used (when applicable, e.g. 0.05 = ±5%). */
+  priceRangePercent?: number;
+  /** LM43: requested lower bound before any clamping (equal to priceRangeMin in MVP). */
+  priceRangeRequestedMin?: number;
+  /** LM43: requested upper bound before any clamping. */
+  priceRangeRequestedMax?: number;
+  /** LM43: lowest price observed in the raw exchange depth snapshot. */
+  availableDepthMin?: number;
+  /** LM43: highest price observed in the raw exchange depth snapshot. */
+  availableDepthMax?: number;
 }
 
 /** Full payload returned by GET /api/heatmap on success. */

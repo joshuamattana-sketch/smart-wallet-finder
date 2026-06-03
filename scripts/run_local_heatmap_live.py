@@ -49,7 +49,12 @@ from services.connectors.binance_depth_collector import (  # noqa: E402
     DepthCollectorError,
     fetch_depth_snapshot,
 )
-from services.orderbook_depth_bucketer import build_heatmap_cells  # noqa: E402
+from services.orderbook_depth_bucketer import (  # noqa: E402
+    VALID_RANGE_MODES,
+    auto_scale_price_step,
+    build_heatmap_cells,
+    resolve_price_range,
+)
 from services.heatmap_matrix_builder import build_heatmap_matrix  # noqa: E402
 from services.heatmap_api_payload import (  # noqa: E402
     VALID_TIMEFRAMES,
@@ -298,6 +303,7 @@ def build_live_payload(
     update_mode: str = "standard",
     effective_interval: float | None = None,
     is_active: bool = False,
+    range_meta: dict | None = None,
 ) -> dict:
     """Build the API payload for the current rolling frame window + live meta."""
     matrix = build_heatmap_matrix(frames)
@@ -308,6 +314,7 @@ def build_live_payload(
         exchange=EXCHANGE,
         price_path=price_path if price_path is not None else [],
         current_price=current_price,
+        price_range_meta=range_meta,
     )
 
     if symbol:
@@ -350,6 +357,9 @@ def run_live_multi(
     target: str = "fixture",
     supabase: SupabaseConfig | None = None,
     forever: bool = False,
+    range_mode: str = "standard",
+    price_range_abs: float | None = None,
+    price_range_percent: float | None = None,
 ) -> dict:
     """
     Run the multi-symbol / multi-timeframe live collection loop.
@@ -388,6 +398,11 @@ def run_live_multi(
     if target not in VALID_TARGETS:
         raise ValueError(
             f"invalid target {target!r}. Allowed: {', '.join(VALID_TARGETS)}"
+        )
+    if range_mode not in VALID_RANGE_MODES:
+        raise ValueError(
+            f"invalid range mode {range_mode!r}. "
+            f"Allowed: {', '.join(VALID_RANGE_MODES)}"
         )
     for tf in timeframes:
         if tf not in VALID_TIMEFRAMES:
@@ -431,7 +446,8 @@ def run_live_multi(
 
     # Per-symbol rolling state.
     state: dict[str, dict] = {
-        sym: {"frames": [], "price_path": [], "last_ts": None, "success": 0}
+        sym: {"frames": [], "price_path": [], "last_ts": None, "success": 0,
+              "range_meta": None}
         for sym in symbols
     }
     total_success = 0
@@ -445,13 +461,45 @@ def run_live_multi(
         ts_iso = ts.isoformat()
         snapshot["captured_at"] = ts_iso
 
-        step = resolve_price_step(sym, None, price_steps)
+        # LM43: compute mid first so we can resolve the analysis price range.
+        point = _price_point(snapshot, ts_iso)
+        base_step = resolve_price_step(sym, None, price_steps)
+
+        price_range: tuple[float, float] | None = None
+        range_info: dict | None = None
+        step = base_step
+        if point is not None:
+            range_info = resolve_price_range(
+                sym, range_mode, point["price"],
+                abs_override=price_range_abs,
+                pct_override=price_range_percent,
+            )
+            price_range = (range_info["min"], range_info["max"])
+            # Auto-scale only for the wider modes — tight/standard preserve
+            # the user's explicit --price-step / preset exactly (backward
+            # compatible with pre-LM43 behavior).
+            if range_mode in ("wide", "macro"):
+                step = auto_scale_price_step(
+                    range_info["max"] - range_info["min"], base_step,
+                )
+
         frame = build_heatmap_cells(
             snapshot, price_step=step, wall_threshold_usd=wall_threshold_usd,
+            price_range=price_range,
         )
         st["frames"].append(frame)
 
-        point = _price_point(snapshot, ts_iso)
+        if range_info is not None:
+            st["range_meta"] = {
+                "mode":                range_info["mode"],
+                "min":                 range_info["min"],
+                "max":                 range_info["max"],
+                "abs":                 range_info["abs"],
+                "pct":                 range_info["pct"],
+                "available_depth_min": frame.get("available_depth_min"),
+                "available_depth_max": frame.get("available_depth_max"),
+            }
+
         if point is not None:
             st["price_path"].append(point)
 
@@ -476,6 +524,7 @@ def run_live_multi(
                 update_mode=update_mode,
                 effective_interval=eff_interval[sym],
                 is_active=is_active,
+                range_meta=st["range_meta"],
             )
             for kind in write_targets:
                 if kind == "live":
@@ -694,6 +743,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         dest="supabase_service_role_key",
                         help=("Supabase service-role key (fallback: env "
                               "SUPABASE_SERVICE_ROLE_KEY). Never echoed in logs."))
+    # LM43: analysis-grade price range presets.
+    parser.add_argument("--range-mode", default="standard",
+                        choices=VALID_RANGE_MODES, dest="range_mode",
+                        help=("Heatmap price-range preset: tight | standard | "
+                              "wide | macro (default: standard). Per-symbol USD "
+                              "presets for BTCUSDT/ETHUSDT/SOLUSDT; ±%% fallback "
+                              "for other symbols."))
+    parser.add_argument("--price-range-abs", type=float, default=None,
+                        dest="price_range_abs",
+                        help=("Override the preset with an absolute USD "
+                              "half-range (e.g. 5000 = ±$5,000 around mid)."))
+    parser.add_argument("--price-range-percent", type=float, default=None,
+                        dest="price_range_percent",
+                        help=("Override the preset with a percent half-range "
+                              "(e.g. 0.05 = ±5%% of mid)."))
     return parser.parse_args(argv)
 
 
@@ -760,7 +824,10 @@ def main(argv: list[str] | None = None) -> int:
         f"  background interval= {args.background_interval}s\n"
         f"  base interval      = {args.interval}s\n"
         f"  supabase           = "
-        f"{'configured' if supabase_cfg is not None else 'not configured'}",
+        f"{'configured' if supabase_cfg is not None else 'not configured'}\n"
+        f"  range mode         = {args.range_mode}"
+        f"{f' (abs=±{args.price_range_abs})' if args.price_range_abs else ''}"
+        f"{f' (pct=±{args.price_range_percent})' if args.price_range_percent else ''}",
         flush=True,
     )
 
@@ -782,6 +849,9 @@ def main(argv: list[str] | None = None) -> int:
             target=args.target,
             supabase=supabase_cfg,
             forever=args.forever,
+            range_mode=args.range_mode,
+            price_range_abs=args.price_range_abs,
+            price_range_percent=args.price_range_percent,
         )
     except ValueError as exc:
         print(f"error: invalid argument — {exc}", file=sys.stderr)

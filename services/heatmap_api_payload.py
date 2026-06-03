@@ -32,6 +32,7 @@ def build_heatmap_api_payload(
     exchange: str = "binance_spot",
     price_path: list | None = None,
     current_price: float | None = None,
+    price_range_meta: dict | None = None,
 ) -> dict:
     """
     Convert a built heatmap matrix into a frontend-ready API payload.
@@ -94,6 +95,29 @@ def build_heatmap_api_payload(
     if current_price is not None:
         payload["summary"]["currentPrice"] = current_price
         payload["meta"]["currentPrice"] = current_price
+
+    # LM43: analysis-grade price range metadata. Note that priceMin/priceMax
+    # on the payload stay as the observed/compressed matrix bounds (so
+    # cell.p indices remain valid). The canvas reads priceRangeMin/Max from
+    # meta when it wants to span the wider requested context.
+    if price_range_meta is not None:
+        meta = payload["meta"]
+        if "mode" in price_range_meta:
+            meta["priceRangeMode"] = price_range_meta["mode"]
+        if price_range_meta.get("min") is not None:
+            meta["priceRangeMin"] = float(price_range_meta["min"])
+            meta["priceRangeRequestedMin"] = float(price_range_meta["min"])
+        if price_range_meta.get("max") is not None:
+            meta["priceRangeMax"] = float(price_range_meta["max"])
+            meta["priceRangeRequestedMax"] = float(price_range_meta["max"])
+        if price_range_meta.get("abs") is not None:
+            meta["priceRangeAbs"] = float(price_range_meta["abs"])
+        if price_range_meta.get("pct") is not None:
+            meta["priceRangePercent"] = float(price_range_meta["pct"])
+        if price_range_meta.get("available_depth_min") is not None:
+            meta["availableDepthMin"] = float(price_range_meta["available_depth_min"])
+        if price_range_meta.get("available_depth_max") is not None:
+            meta["availableDepthMax"] = float(price_range_meta["available_depth_max"])
 
     return payload
 

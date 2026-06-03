@@ -146,34 +146,44 @@ export function HeatmapCanvas({
       // p index → price (always relative to the full payload axis).
       const indexToPrice = (p: number) => payloadMin + p * step;
 
-      // ── Tighten the rendered range to the relevant data ─────────────────────
-      // A payload may span a far wider band than where liquidity actually sits.
-      // Focus the view on the cells/walls (plus a little padding and the current
-      // price) instead of drawing many empty price levels.
-      let dataLo = Infinity;
-      let dataHi = -Infinity;
-      for (const cell of payload.cells) {
-        if (cell.total < 6) continue;
-        const price = indexToPrice(cell.p);
-        if (price < dataLo) dataLo = price;
-        if (price > dataHi) dataHi = price;
-      }
-      for (const wall of payload.walls) {
-        if (wall.price_bucket < dataLo) dataLo = wall.price_bucket;
-        if (wall.price_bucket > dataHi) dataHi = wall.price_bucket;
-      }
-
+      // ── Pick the rendered y-axis bounds ─────────────────────────────────────
+      // LM43: when the writer stamps an analysis-grade requested range
+      // (meta.priceRangeMin/Max), honor it so the user sees the full wider
+      // context — even where Binance depth doesn't reach. Otherwise fall back
+      // to auto-tightening around where the densest liquidity sits.
+      const rangeMin = payload.meta?.priceRangeMin;
+      const rangeMax = payload.meta?.priceRangeMax;
       let pMin = payloadMin;
       let pMax = payloadMax;
-      if (dataHi > dataLo) {
-        const pad = Math.max(step * 2, (dataHi - dataLo) * 0.08);
-        pMin = Math.max(payloadMin, dataLo - pad);
-        pMax = Math.min(payloadMax, dataHi + pad);
-        // Keep the current price marker in view when it is reasonably close.
-        if (typeof currentPrice === "number" &&
-            currentPrice >= payloadMin && currentPrice <= payloadMax) {
-          pMin = Math.min(pMin, currentPrice - pad);
-          pMax = Math.max(pMax, currentPrice + pad);
+      if (
+        typeof rangeMin === "number" &&
+        typeof rangeMax === "number" &&
+        rangeMax > rangeMin
+      ) {
+        pMin = rangeMin;
+        pMax = rangeMax;
+      } else {
+        let dataLo = Infinity;
+        let dataHi = -Infinity;
+        for (const cell of payload.cells) {
+          if (cell.total < 6) continue;
+          const price = indexToPrice(cell.p);
+          if (price < dataLo) dataLo = price;
+          if (price > dataHi) dataHi = price;
+        }
+        for (const wall of payload.walls) {
+          if (wall.price_bucket < dataLo) dataLo = wall.price_bucket;
+          if (wall.price_bucket > dataHi) dataHi = wall.price_bucket;
+        }
+        if (dataHi > dataLo) {
+          const pad = Math.max(step * 2, (dataHi - dataLo) * 0.08);
+          pMin = Math.max(payloadMin, dataLo - pad);
+          pMax = Math.min(payloadMax, dataHi + pad);
+          if (typeof currentPrice === "number" &&
+              currentPrice >= payloadMin && currentPrice <= payloadMax) {
+            pMin = Math.min(pMin, currentPrice - pad);
+            pMax = Math.max(pMax, currentPrice + pad);
+          }
         }
       }
       if (!(pMax > pMin)) { pMin = payloadMin; pMax = payloadMax; }

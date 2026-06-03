@@ -61,3 +61,32 @@ Additive — does NOT replace the REST writer.
   `python scripts/run_binance_ws_heatmap_live.py --symbol BTCUSDT \
       --timeframes 5m,15m,1h --write-interval 1 --max-frames 1200 \
       --target supabase --forever`
+
+## Price Range Presets (LM43)
+Analysis-grade y-axis context for the heatmap. Both writers expose:
+`--range-mode tight|standard|wide|macro` (default: standard),
+`--price-range-abs <usd>` (override, ±USD half-range),
+`--price-range-percent <fraction>` (override, ±fraction of mid).
+
+Per-symbol USD half-range presets (around current mid):
+
+| Symbol  | tight | standard | wide  | macro  |
+|---------|-------|----------|-------|--------|
+| BTCUSDT | ±1000 | ±3000    | ±7500 | ±15000 |
+| ETHUSDT | ±100  | ±300     | ±750  | ±1500  |
+| SOLUSDT | ±10   | ±30      | ±75   | ±150   |
+
+Unknown symbols fall back to ±%: tight 1%, standard 3%, wide 7%, macro 15%.
+
+Implementation notes:
+- Bucketer filters bid/ask levels to the requested range before bucketing,
+  and reports raw snapshot extremes via `meta.availableDepthMin/Max`.
+- Auto-scales `price_step` only for `wide`/`macro` modes (target 600
+  buckets/row, snapped to 1/2/5 × 10^n). `tight`/`standard` keep the
+  user's explicit `--price-step` exactly — fully backward compatible.
+- HeatmapCanvas reads `meta.priceRangeMin/Max` and uses them as the
+  rendered y-axis bounds so the user sees the full requested context,
+  even where Binance depth doesn't reach.
+- New meta fields: `priceRangeMode`, `priceRangeMin`, `priceRangeMax`,
+  `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
+  `availableDepthMin/Max`.

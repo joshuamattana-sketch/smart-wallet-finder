@@ -749,6 +749,132 @@ class TestLocalHeatmapLive:
         out = capsys.readouterr().out
         assert "mode               = forever" in out
 
+    # ── LM43: price range presets ────────────────────────────────────────────
+
+    def test_default_range_mode_stamps_btc_standard(self, tmp_path):
+        """Default --range-mode=standard stamps the BTC ±3000 preset."""
+        _, outdir, _, _ = _run_multi(
+            tmp_path, ["--symbols", "BTCUSDT", "--samples", "1", "--interval", "2"],
+        )
+        meta = _payload(outdir / "BTCUSDT_5m.json")["meta"]
+        assert meta["priceRangeMode"] == "standard"
+        assert meta["priceRangeAbs"] == 3000.0
+        # mid = 67495 → ±3000 → [64495, 70495]
+        assert meta["priceRangeMin"] == 64495.0
+        assert meta["priceRangeMax"] == 70495.0
+
+    def test_range_mode_wide_is_wider_than_tight(self, tmp_path):
+        _, outdir_tight, _, _ = _run_multi(
+            tmp_path / "tight",
+            ["--symbols", "BTCUSDT", "--range-mode", "tight",
+             "--samples", "1", "--interval", "2"],
+        )
+        _, outdir_wide, _, _ = _run_multi(
+            tmp_path / "wide",
+            ["--symbols", "BTCUSDT", "--range-mode", "wide",
+             "--samples", "1", "--interval", "2"],
+        )
+        m_tight = _payload(outdir_tight / "BTCUSDT_5m.json")["meta"]
+        m_wide  = _payload(outdir_wide  / "BTCUSDT_5m.json")["meta"]
+        tight_span = m_tight["priceRangeMax"] - m_tight["priceRangeMin"]
+        wide_span  = m_wide["priceRangeMax"]  - m_wide["priceRangeMin"]
+        assert wide_span > tight_span
+        # BTC wide preset is ±7500 → 15000 wide.
+        assert wide_span == 15000.0
+        assert m_wide["priceRangeMode"] == "wide"
+
+    def test_range_macro_keeps_bucket_count_bounded(self, tmp_path):
+        """Macro range auto-scales price_step so the payload stays small."""
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT", "--range-mode", "macro",
+             "--samples", "1", "--interval", "2"],
+        )
+        payload = _payload(outdir / "BTCUSDT_5m.json")
+        # macro = ±15000 = 30000 wide; auto-scaled step keeps cells modest.
+        assert payload["meta"]["priceRangeMode"] == "macro"
+        assert payload["meta"]["cellCount"] < 200  # mock snapshot is tiny
+
+    def test_price_range_abs_overrides_preset(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT", "--range-mode", "tight",
+             "--price-range-abs", "5000",
+             "--samples", "1", "--interval", "2"],
+        )
+        meta = _payload(outdir / "BTCUSDT_5m.json")["meta"]
+        assert meta["priceRangeAbs"] == 5000.0
+        assert meta["priceRangeMax"] - meta["priceRangeMin"] == 10000.0
+
+    def test_price_range_percent_overrides_preset(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path,
+            ["--symbols", "BTCUSDT", "--range-mode", "tight",
+             "--price-range-percent", "0.1",
+             "--samples", "1", "--interval", "2"],
+        )
+        meta = _payload(outdir / "BTCUSDT_5m.json")["meta"]
+        assert meta["priceRangePercent"] == 0.1
+        # mid 67495 × 0.1 = 6749.5 radius → span ~13499
+        span = meta["priceRangeMax"] - meta["priceRangeMin"]
+        assert abs(span - 13499.0) < 1.0
+
+    def test_unknown_symbol_falls_back_to_percent(self, tmp_path):
+        """Symbols outside PRESET_ABS use the percent fallback."""
+        # _run_multi calls main(), which requires the symbol to make it through
+        # CLI parsing; symbol filtering happens server-side at fetch time.
+        # We just verify the range meta uses percent fallback.
+        from scripts import run_local_heatmap_live as live
+        from unittest.mock import patch
+        out = tmp_path / "fix"
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot("FOOUSDT")), \
+             patch.object(live.time, "sleep"):
+            code = live.main([
+                "--symbols", "FOOUSDT", "--range-mode", "wide",
+                "--samples", "1", "--interval", "2",
+                "--output-dir", str(out),
+            ])
+        assert code == 0
+        meta = _payload(out / "FOOUSDT_5m.json")["meta"]
+        # Unknown symbol → percent fallback (no abs).
+        assert "priceRangeAbs" not in meta
+        assert meta.get("priceRangePercent") == 0.07  # wide fallback
+
+    def test_existing_default_behavior_still_writes_payload(self, tmp_path):
+        """LM43 should be additive — default flow keeps producing valid payloads."""
+        _, out, _, _ = _run(tmp_path, ["--samples", "2", "--interval", "2"])
+        payload = _payload(out)
+        # Cells still populated, meta still has the live writer tags.
+        assert payload["cells"]
+        assert payload["meta"]["source"] == "local_live_fixture"
+        # And LM43 added a default range mode.
+        assert payload["meta"]["priceRangeMode"] == "standard"
+
+    def test_invalid_range_mode_cli_rejected(self, tmp_path):
+        """argparse rejects unknown --range-mode values."""
+        from scripts import run_local_heatmap_live as live
+        from unittest.mock import patch
+        with patch.object(live, "fetch_depth_snapshot",
+                          side_effect=lambda *a, **k: _mock_snapshot()), \
+             patch.object(live.time, "sleep"):
+            with pytest.raises(SystemExit) as exc:
+                live.main(["--symbols", "BTCUSDT", "--range-mode", "bogus",
+                           "--samples", "1", "--interval", "2",
+                           "--output-dir", str(tmp_path / "f")])
+        assert exc.value.code != 0
+
+    def test_meta_available_depth_present(self, tmp_path):
+        _, outdir, _, _ = _run_multi(
+            tmp_path, ["--symbols", "BTCUSDT", "--samples", "1", "--interval", "2"],
+        )
+        meta = _payload(outdir / "BTCUSDT_5m.json")["meta"]
+        assert "availableDepthMin" in meta
+        assert "availableDepthMax" in meta
+        # mock snapshot prices range 67410..67570
+        assert meta["availableDepthMin"] == 67410.0
+        assert meta["availableDepthMax"] == 67570.0
+
     def test_no_secret_values_printed(self, tmp_path, capsys):
         fix_dir = tmp_path / "fix"
         live_dir = tmp_path / "live"
