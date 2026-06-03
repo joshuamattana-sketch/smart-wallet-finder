@@ -83,6 +83,21 @@ python scripts/run_binance_ws_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT 
 Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the shell environment.
 Requires: pip install websocket-client (one-time)
 
+## WebSocket Collector — Env Config (LM53B)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+$env:WORKER_SYMBOLS = "BTCUSDT,ETHUSDT,SOLUSDT"
+$env:WORKER_TIMEFRAMES = "5m,15m,1h"
+$env:WORKER_HISTORY_TARGET = "supabase"
+$env:WORKER_HISTORY_INTERVAL = "10"
+$env:WORKER_MAX_CELLS = "300"
+$env:WORKER_MAX_WALLS = "50"
+python scripts/run_binance_ws_heatmap_live.py --use-env-config --target supabase --forever --range-mode wide
+```
+
+Explicit CLI args (--symbols, --timeframes, etc.) override env values when both are provided.
+
 ## WebSocket Collector — Supabase + LM45 History (heatmap_frame_history + liquidity_wall_history)
 
 ```powershell

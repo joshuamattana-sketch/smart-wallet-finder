@@ -834,3 +834,125 @@ class TestMainCli:
         assert "collector          = binance_websocket" in out
         assert "supabase           = configured" in out
         assert "super-secret-xyz" not in out
+
+
+# ── LM53B: --use-env-config wiring ──────────────────────────────────────────
+
+class TestUseEnvConfig:
+
+    def test_default_behavior_unchanged_without_flag(self, tmp_path):
+        """Without --use-env-config, symbols/timeframes use CLI defaults."""
+        captured: dict = {}
+        def _spy(*, symbols, timeframes, **kw):
+            captured["symbols"] = list(symbols)
+            captured["timeframes"] = list(timeframes)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["BTCUSDT"]
+        assert captured["timeframes"] == ["5m", "15m", "1h"]
+
+    def test_use_env_config_reads_env(self, tmp_path, monkeypatch):
+        """--use-env-config picks up WORKER_SYMBOLS and WORKER_TIMEFRAMES."""
+        monkeypatch.setenv("WORKER_SYMBOLS", "HYPEUSDT,SOLUSDT")
+        monkeypatch.setenv("WORKER_TIMEFRAMES", "15m")
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "none")
+        captured: dict = {}
+        def _spy(*, symbols, timeframes, **kw):
+            captured["symbols"] = list(symbols)
+            captured["timeframes"] = list(timeframes)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["HYPEUSDT", "SOLUSDT"]
+        assert captured["timeframes"] == ["15m"]
+
+    def test_explicit_cli_overrides_env(self, tmp_path, monkeypatch):
+        """Explicit --symbols on CLI wins over WORKER_SYMBOLS env."""
+        monkeypatch.setenv("WORKER_SYMBOLS", "HYPEUSDT")
+        monkeypatch.setenv("WORKER_TIMEFRAMES", "15m")
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "none")
+        captured: dict = {}
+        def _spy(*, symbols, timeframes, **kw):
+            captured["symbols"] = list(symbols)
+            captured["timeframes"] = list(timeframes)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--symbols", "BTCUSDT,ETHUSDT",
+                "--timeframes", "15m",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["BTCUSDT", "ETHUSDT"]
+        assert captured["timeframes"] == ["15m"]
+
+    def test_history_settings_mapped(self, tmp_path, monkeypatch):
+        """--use-env-config maps WORKER_HISTORY_* and WORKER_MAX_* env vars."""
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "supabase")
+        monkeypatch.setenv("WORKER_HISTORY_INTERVAL", "30")
+        monkeypatch.setenv("WORKER_MAX_CELLS", "150")
+        monkeypatch.setenv("WORKER_MAX_WALLS", "25")
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "fake-key")
+        captured: dict = {}
+        def _spy(**kw):
+            captured.update(kw)
+            return {"writes": 0, "messages": 0, "per_symbol": {},
+                    "history_writes": 0, "history_failures": 0,
+                    "history_per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--target", "supabase", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["history_target"] == "supabase"
+        assert captured["history_interval"] == 30.0
+        assert captured["history_max_cells"] == 150
+        assert captured["history_max_walls"] == 25
+
+    def test_missing_env_uses_defaults(self, tmp_path, monkeypatch):
+        """--use-env-config with no WORKER_* env vars falls back to config defaults."""
+        for key in ["WORKER_SYMBOLS", "WORKER_TIMEFRAMES", "WORKER_EXCHANGE",
+                     "WORKER_HISTORY_INTERVAL", "WORKER_MAX_CELLS", "WORKER_MAX_WALLS"]:
+            monkeypatch.delenv(key, raising=False)
+        # Override history target to none so test doesn't require Supabase config
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "none")
+        captured: dict = {}
+        def _spy(*, symbols, timeframes, **kw):
+            captured["symbols"] = list(symbols)
+            captured["timeframes"] = list(timeframes)
+            captured.update(kw)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        assert captured["timeframes"] == ["5m"]

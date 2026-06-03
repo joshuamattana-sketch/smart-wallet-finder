@@ -69,6 +69,7 @@ from services.heatmap_api_payload import (  # noqa: E402
     VALID_TIMEFRAMES,
     build_heatmap_api_payload,
 )
+from services.live_worker_config import load_live_worker_config  # noqa: E402
 from services.heatmap_history import (  # noqa: E402
     DEFAULT_HISTORY_INTERVAL_S,
     DEFAULT_HISTORY_MAX_CELLS,
@@ -735,11 +736,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         dest="history_max_walls",
                         help=("Cap on walls/zones written per history frame "
                               f"(default: {DEFAULT_HISTORY_MAX_WALLS})."))
+    # LM53B: env-config wiring.
+    parser.add_argument("--use-env-config", action="store_true",
+                        default=False, dest="use_env_config",
+                        help=("Read WORKER_* env vars via live_worker_config. "
+                              "Explicit CLI args override env values."))
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # LM53B: when --use-env-config is set, load env defaults and apply them
+    # where the user did not provide an explicit CLI override.
+    if args.use_env_config:
+        env_cfg = load_live_worker_config()
+        # Symbols: env only applies if neither --symbols nor --symbol was
+        # explicitly changed from the default.
+        if args.symbols is None and args.symbol == DEFAULT_SYMBOL:
+            args.symbols = ",".join(env_cfg["symbols"])
+        # Timeframes: only if the user kept the default.
+        if args.timeframes == DEFAULT_TIMEFRAMES:
+            args.timeframes = ",".join(env_cfg["timeframes"])
+        # History settings from env (only if user kept defaults).
+        if args.history_target == "none":
+            args.history_target = env_cfg["history_target"]
+        if args.history_interval == DEFAULT_HISTORY_INTERVAL_S:
+            args.history_interval = float(env_cfg["history_interval"])
+        if args.history_max_cells == DEFAULT_HISTORY_MAX_CELLS:
+            args.history_max_cells = int(env_cfg["max_cells"])
+        if args.history_max_walls == DEFAULT_HISTORY_MAX_WALLS:
+            args.history_max_walls = int(env_cfg["max_walls"])
 
     # LM42B: --symbols (CSV) wins; fall back to --symbol for backward compat.
     if args.symbols:
