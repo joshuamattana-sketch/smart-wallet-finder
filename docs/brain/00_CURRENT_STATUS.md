@@ -3,9 +3,14 @@
 Last updated: update manually after each major milestone.
 
 ## Current Milestone
-LM45 next: Heatmap History / Wall Persistence
-(extend Supabase schema and writer to store historical snapshots for trend
-analysis and wall-level persistence tracking).
+LM45 in progress — Heatmap History / Wall Persistence foundation:
+- Append-only Supabase tables `heatmap_frame_history` +
+  `liquidity_wall_history` (see `supabase/heatmap_history.sql`).
+- New helper module `services/heatmap_history_persistence.py`.
+- WS collector gains `--history-target none|supabase`,
+  `--history-interval`, `--history-max-cells`, `--history-max-walls`.
+- Off by default — existing latest-payload behaviour unchanged.
+- 1230 tests passing; history writes fail-isolated from latest writes.
 
 Previous completed milestones:
 - LM44 — Trader-grade liquidity aggregation (zones, keyZones, wall scoring v2)

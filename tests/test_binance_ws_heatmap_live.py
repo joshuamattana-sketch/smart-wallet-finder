@@ -639,6 +639,181 @@ class TestMainCli:
                 fetch_depth=lambda *a, **k: _mock_snapshot(),
             )
 
+    # ── LM45: history persistence ─────────────────────────────────────────────
+
+    def test_default_history_target_is_none_no_history_calls(self, tmp_path):
+        """Default --history-target none: history append funcs are never called."""
+        out_dir, output_for = _output_factory(tmp_path)
+        history_calls: list = []
+        def _spy_history(*a, **k): history_calls.append(("history", a, k))
+        def _spy_walls(*a, **k):   history_calls.append(("walls", a, k))
+        ws.run_ws_collector(
+            symbols=["BTCUSDT"], timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 3),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=2, forever=False, now=_Clock(step=0.5),
+            append_history=_spy_history, append_walls=_spy_walls,
+        )
+        assert history_calls == []  # off by default → never called
+
+    def test_history_target_supabase_requires_config(self, tmp_path):
+        """history_target=supabase but no SupabaseConfig → ValueError up front."""
+        _, output_for = _output_factory(tmp_path)
+        import pytest
+        with pytest.raises(ValueError, match="history-target=supabase requires"):
+            ws.run_ws_collector(
+                symbols=["BTCUSDT"], timeframes=["5m"],
+                write_interval=1.0, max_frames=10,
+                target="live", supabase=None,
+                output_for=output_for,
+                message_iter=iter([]),
+                fetch_depth=lambda *a, **k: _mock_snapshot(),
+                history_target="supabase",
+            )
+
+    def test_invalid_history_target_rejected(self, tmp_path):
+        _, output_for = _output_factory(tmp_path)
+        import pytest
+        with pytest.raises(ValueError, match="invalid history-target"):
+            ws.run_ws_collector(
+                symbols=["BTCUSDT"], timeframes=["5m"],
+                write_interval=1.0, max_frames=10,
+                target="live", supabase=None,
+                output_for=output_for,
+                message_iter=iter([]),
+                fetch_depth=lambda *a, **k: _mock_snapshot(),
+                history_target="bogus",
+            )
+
+    def test_invalid_history_interval_rejected(self, tmp_path):
+        _, output_for = _output_factory(tmp_path)
+        import pytest
+        with pytest.raises(ValueError, match="history-interval"):
+            ws.run_ws_collector(
+                symbols=["BTCUSDT"], timeframes=["5m"],
+                write_interval=1.0, max_frames=10,
+                target="live", supabase=None,
+                output_for=output_for,
+                message_iter=iter([]),
+                fetch_depth=lambda *a, **k: _mock_snapshot(),
+                history_interval=0,
+            )
+
+    def test_history_interval_throttles_writes(self, tmp_path):
+        """Many latest writes but only one history append within the interval."""
+        _, output_for = _output_factory(tmp_path)
+        sb_cfg = SupabaseConfig("https://example.supabase.co", "fake-key")
+        history_frames: list = []
+        wall_batches:   list = []
+        def _spy_frame(_cfg, row): history_frames.append(row)
+        def _spy_walls(_cfg, rows): wall_batches.append(list(rows))
+        # 10 msgs, clock advances 0.5s per iteration so total ~5s elapsed.
+        # write_interval=0.5 → ~10 latest writes; history_interval=3.0 →
+        # at most 2 history appends per symbol per timeframe.
+        result = ws.run_ws_collector(
+            symbols=["BTCUSDT"], timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="supabase", supabase=sb_cfg,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 10),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=None, forever=False, now=_Clock(step=0.5),
+            upsert=lambda *a, **k: None,                   # latest no-op
+            history_target="supabase", history_interval=3.0,
+            append_history=_spy_frame, append_walls=_spy_walls,
+        )
+        assert result["writes"] >= 5
+        # History throttled — at most 3 frames over a ~5s window.
+        assert 1 <= len(history_frames) <= 3
+        assert result["history_writes"] == len(history_frames)
+        # Wall append called the same number of times as frame append.
+        assert len(wall_batches) == len(history_frames)
+
+    def test_history_failure_does_not_stop_latest_writes(self, tmp_path):
+        """append_history raising HistoryWriteError must not abort the loop."""
+        _, output_for = _output_factory(tmp_path)
+        sb_cfg = SupabaseConfig("https://example.supabase.co", "fake-key")
+        from services.heatmap_history import HistoryWriteError
+        upserts: list = []
+        def _ok_upsert(*a, **k): upserts.append(1)
+        def _bad_history(*a, **k):
+            raise HistoryWriteError("supabase 500")
+        result = ws.run_ws_collector(
+            symbols=["BTCUSDT"], timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="supabase", supabase=sb_cfg,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 8),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=4, forever=False, now=_Clock(step=0.5),
+            upsert=_ok_upsert,
+            history_target="supabase", history_interval=0.1,
+            append_history=_bad_history,
+            append_walls=lambda *a, **k: None,
+        )
+        # Latest writes happened despite history failing every time.
+        assert result["writes"] == 4
+        assert len(upserts) == 4
+        assert result["history_failures"] >= 1
+        assert result["history_writes"] == 0
+
+    def test_history_row_carries_collector_and_symbol(self, tmp_path):
+        """Row shape: symbol/exchange/timeframe/frame_ts/collector/range_mode set."""
+        _, output_for = _output_factory(tmp_path)
+        sb_cfg = SupabaseConfig("https://example.supabase.co", "fake-key")
+        captured_rows: list = []
+        def _spy_frame(_cfg, row): captured_rows.append(row)
+        ws.run_ws_collector(
+            symbols=["BTCUSDT"], timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="supabase", supabase=sb_cfg,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 3),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=1, forever=False, now=_Clock(step=0.5),
+            upsert=lambda *a, **k: None,
+            history_target="supabase", history_interval=0.1,
+            append_history=_spy_frame,
+            append_walls=lambda *a, **k: None,
+        )
+        assert captured_rows
+        row = captured_rows[0]
+        assert row["symbol"]    == "BTCUSDT"
+        assert row["exchange"]  == "binance_spot"
+        assert row["timeframe"] == "5m"
+        assert row["collector"] == "binance_websocket"
+        assert row["range_mode"] in ("standard", "wide", "tight", "macro")
+        assert row["current_price"] is not None
+
+    def test_history_cli_flags_parse(self, tmp_path, monkeypatch):
+        captured: dict = {}
+        def _spy(**kwargs):
+            captured.update(kwargs)
+            return {"writes": 0, "messages": 0, "per_symbol": {},
+                    "history_writes": 0, "history_failures": 0,
+                    "history_per_symbol": {}}
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "fake-key")
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--symbols", "BTCUSDT", "--target", "supabase",
+                "--samples", "1", "--live-dir", str(tmp_path / "live"),
+                "--history-target", "supabase",
+                "--history-interval", "5",
+                "--history-max-cells", "120",
+                "--history-max-walls", "10",
+            ])
+        assert code == 0
+        assert captured["history_target"]    == "supabase"
+        assert captured["history_interval"]  == 5.0
+        assert captured["history_max_cells"] == 120
+        assert captured["history_max_walls"] == 10
+
     def test_startup_banner_no_secrets(self, tmp_path, capsys, monkeypatch):
         monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "super-secret-xyz")

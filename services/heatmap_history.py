@@ -29,11 +29,16 @@ Rules:
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 from services.heatmap_engine import SIDE_ASK, SIDE_BID, HeatmapCell
 
@@ -426,6 +431,304 @@ def _validate_symbol(symbol: object) -> str:
         raise ValueError("symbol cannot be empty")
     return stripped
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LM45 — Supabase persistence (append-only history & wall tables)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Everything below this point is independent of the in-memory
+# HeatmapHistoryStore above. It targets the append-only tables created by
+# `supabase/heatmap_history.sql`:
+#
+#     * heatmap_frame_history   — compact payload snapshots over time
+#     * liquidity_wall_history  — top-N zones per frame for trend analysis
+#
+# Design constraints (LM45):
+#   - Latest-payload writes (heatmap_latest_payloads) are NOT affected.
+#   - History writes default to off / conservative cadence (e.g. every 10s).
+#   - Compact payloads only — no full matrices in history.
+#   - History failures NEVER crash the collector loop; callers catch
+#     HistoryWriteError and keep running.
+#   - No secrets printed; reuses the existing service-role SupabaseConfig.
+#   - Stdlib only (urllib).
+
+HISTORY_FRAME_TABLE = "heatmap_frame_history"
+WALL_HISTORY_TABLE  = "liquidity_wall_history"
+
+DEFAULT_HISTORY_INTERVAL_S = 10.0
+DEFAULT_HISTORY_MAX_CELLS  = 300
+DEFAULT_HISTORY_MAX_WALLS  = 50
+
+VALID_HISTORY_TARGETS = ("none", "supabase")
+
+# Stamped on the compact payload meta so downstream consumers can tell this
+# row is the slimmed-down history version, not the full latest payload.
+HISTORY_PAYLOAD_TAG = "heatmap_history_v1"
+
+_HISTORY_HTTP_TIMEOUT_S = 8
+
+
+# ── Compact payload ──────────────────────────────────────────────────────────
+
+def build_compact_history_payload(
+    payload: dict,
+    *,
+    max_cells: int = DEFAULT_HISTORY_MAX_CELLS,
+    max_walls: int = DEFAULT_HISTORY_MAX_WALLS,
+) -> dict:
+    """
+    Return a slimmed-down copy of a HeatmapApiPayload suitable for history
+    storage. Drops the heavy bits (full cell grid, long pricePath) and keeps
+    just enough for trend reconstruction:
+
+      * top-N cells by `total` intensity (default 300)
+      * top-N walls by `total_usd`       (default 50)
+      * zones / keyZones (already small, trader-facing)
+      * meta + summary
+      * last pricePath point only (current mid + bestBid/Ask)
+      * identifying top-level fields (symbol/exchange/timeframe/price*)
+
+    The original `payload` is never mutated.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError(f"payload must be a dict, got {type(payload).__name__!r}")
+    if max_cells < 0 or max_walls < 0:
+        raise ValueError("max_cells and max_walls must be >= 0")
+
+    cells = payload.get("cells") or []
+    walls = payload.get("walls") or []
+
+    top_cells = sorted(
+        (c for c in cells if isinstance(c, dict)),
+        key=lambda c: c.get("total", 0) or 0,
+        reverse=True,
+    )[:max_cells]
+
+    top_walls = sorted(
+        (w for w in walls if isinstance(w, dict)),
+        key=lambda w: w.get("total_usd", 0) or 0,
+        reverse=True,
+    )[:max_walls]
+
+    price_path = payload.get("pricePath") or []
+    last_point = price_path[-1] if price_path else None
+
+    meta = dict(payload.get("meta") or {})
+    meta["historyTag"]        = HISTORY_PAYLOAD_TAG
+    meta["historyCellsKept"]  = len(top_cells)
+    meta["historyCellsTotal"] = len(cells)
+    meta["historyWallsKept"]  = len(top_walls)
+    meta["historyWallsTotal"] = len(walls)
+
+    compact: dict[str, Any] = {
+        "symbol":     payload.get("symbol"),
+        "exchange":   payload.get("exchange"),
+        "timeframe":  payload.get("timeframe"),
+        "priceMin":   payload.get("priceMin"),
+        "priceMax":   payload.get("priceMax"),
+        "priceStep":  payload.get("priceStep"),
+        "summary":    payload.get("summary"),
+        "cells":      top_cells,
+        "walls":      top_walls,
+        "meta":       meta,
+    }
+
+    if last_point is not None:
+        compact["lastPricePoint"] = last_point
+    if "zones" in payload:
+        compact["zones"] = payload["zones"]
+    if "keyZones" in payload:
+        compact["keyZones"] = payload["keyZones"]
+
+    return compact
+
+
+# ── Row builders ─────────────────────────────────────────────────────────────
+
+def build_history_frame_row(
+    payload: dict,
+    *,
+    symbol: str,
+    timeframe: str,
+    exchange: str = "binance_spot",
+    frame_ts: str | None = None,
+    max_cells: int = DEFAULT_HISTORY_MAX_CELLS,
+    max_walls: int = DEFAULT_HISTORY_MAX_WALLS,
+) -> dict:
+    """Build one heatmap_frame_history row from a HeatmapApiPayload."""
+    if not isinstance(payload, dict):
+        raise TypeError(f"payload must be a dict, got {type(payload).__name__!r}")
+
+    meta    = payload.get("meta")    or {}
+    summary = payload.get("summary") or {}
+
+    ts = (
+        frame_ts
+        or meta.get("liveUpdatedAt")
+        or datetime.now(timezone.utc).isoformat()
+    )
+
+    compact = build_compact_history_payload(
+        payload, max_cells=max_cells, max_walls=max_walls,
+    )
+
+    # Prefer summary.currentPrice → meta.currentPrice → last pricePath point.
+    current_price = summary.get("currentPrice")
+    if current_price is None:
+        current_price = meta.get("currentPrice")
+    if current_price is None:
+        last = compact.get("lastPricePoint")
+        if isinstance(last, dict):
+            current_price = last.get("price")
+
+    return {
+        "symbol":        symbol,
+        "exchange":      exchange,
+        "timeframe":     timeframe,
+        "frame_ts":      ts,
+        "current_price": current_price,
+        "price_min":     payload.get("priceMin"),
+        "price_max":     payload.get("priceMax"),
+        "range_mode":    meta.get("aggregationMode") or meta.get("priceRangeMode"),
+        "collector":     meta.get("collector"),
+        "cell_count":    meta.get("cellCount"),
+        "wall_count":    meta.get("wallCount"),
+        "zone_count":    meta.get("zoneCount"),
+        "payload":       compact,
+    }
+
+
+def build_wall_history_rows(
+    payload: dict,
+    *,
+    symbol: str,
+    timeframe: str,
+    exchange: str = "binance_spot",
+    frame_ts: str | None = None,
+    max_walls: int = DEFAULT_HISTORY_MAX_WALLS,
+) -> list[dict]:
+    """
+    Build liquidity_wall_history rows from a payload's keyZones (LM44).
+    Falls back to `zones` if `keyZones` is missing. Returns at most
+    `max_walls` rows, ordered by strengthScore desc.
+    """
+    if not isinstance(payload, dict):
+        raise TypeError(f"payload must be a dict, got {type(payload).__name__!r}")
+
+    candidates = payload.get("keyZones")
+    if not candidates:
+        candidates = payload.get("zones") or []
+    if not isinstance(candidates, list):
+        return []
+
+    meta = payload.get("meta") or {}
+    ts = (
+        frame_ts
+        or meta.get("liveUpdatedAt")
+        or datetime.now(timezone.utc).isoformat()
+    )
+
+    ranked = sorted(
+        (z for z in candidates if isinstance(z, dict)),
+        key=lambda z: z.get("strengthScore", 0) or 0,
+        reverse=True,
+    )[:max(0, max_walls)]
+
+    rows: list[dict] = []
+    for rank, z in enumerate(ranked, start=1):
+        rows.append({
+            "symbol":         symbol,
+            "exchange":       exchange,
+            "timeframe":      timeframe,
+            "frame_ts":       ts,
+            "side":           z.get("side"),
+            "price_min":      z.get("priceMin"),
+            "price_max":      z.get("priceMax"),
+            "center_price":   z.get("centerPrice"),
+            "total_usd":      z.get("totalUsd"),
+            "strength_score": z.get("strengthScore"),
+            "wall_rank":      rank,
+            "label":          z.get("label"),
+            "zone":           z,
+        })
+    return rows
+
+
+# ── Supabase REST writers (stdlib urllib) ────────────────────────────────────
+
+class HistoryWriteError(RuntimeError):
+    """Raised when a Supabase history append fails (HTTP or network)."""
+
+
+def _post_rows(
+    base_url: str,
+    service_role_key: str,
+    table: str,
+    rows: list[dict],
+    *,
+    timeout: int = _HISTORY_HTTP_TIMEOUT_S,
+) -> None:
+    """
+    POST a list of rows to PostgREST as an append (no on_conflict). Raises
+    `HistoryWriteError` on HTTP / network failure. Safe to call with zero
+    rows (returns immediately).
+    """
+    if not rows:
+        return
+    endpoint = f"{base_url.rstrip('/')}/rest/v1/{table}"
+    body = json.dumps(rows).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "apikey":        service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type":  "application/json",
+            "Prefer":        "return=minimal",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status >= 300:
+                resp.read()
+                raise HistoryWriteError(
+                    f"history append HTTP {resp.status} to {table}"
+                )
+    except urllib.error.HTTPError as exc:
+        snippet = ""
+        try:
+            snippet = exc.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            pass
+        raise HistoryWriteError(
+            f"history append HTTP {exc.code} to {table}"
+            f"{(': ' + snippet) if snippet else ''}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise HistoryWriteError(
+            f"history append network error to {table}: {exc.reason}"
+        ) from exc
+
+
+def append_history_frame(cfg, row: dict, *, table: str = HISTORY_FRAME_TABLE) -> None:
+    """Insert one heatmap_frame_history row via the given SupabaseConfig."""
+    _post_rows(cfg.url, cfg.service_role_key, table, [row])
+
+
+def append_wall_history_rows(
+    cfg,
+    rows: list[dict],
+    *,
+    table: str = WALL_HISTORY_TABLE,
+) -> None:
+    """Bulk-insert liquidity_wall_history rows. No-op when `rows` is empty."""
+    _post_rows(cfg.url, cfg.service_role_key, table, rows)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Demo / sanity block (in-memory store only — does NOT call Supabase)
+# ═════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     from services.heatmap_engine import calculate_intensity, demo_heatmap_cells

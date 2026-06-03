@@ -645,3 +645,348 @@ class TestEdgeCases:
         walls = store.detect_persistent_walls("BTCUSDT", min_intensity=85, min_frames=3)
         assert len(walls) >= 1
         assert all(w["persistence_count"] >= 3 for w in walls)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LM45 — Supabase persistence tests
+# ═════════════════════════════════════════════════════════════════════════════
+# Pure-function tests for the new helpers added to services/heatmap_history.py.
+# No real Supabase / network calls — urllib.request.urlopen is patched.
+
+from unittest.mock import patch  # noqa: E402
+
+from services.heatmap_history import (  # noqa: E402
+    DEFAULT_HISTORY_INTERVAL_S,
+    DEFAULT_HISTORY_MAX_CELLS,
+    DEFAULT_HISTORY_MAX_WALLS,
+    HISTORY_FRAME_TABLE,
+    HISTORY_PAYLOAD_TAG,
+    VALID_HISTORY_TARGETS,
+    WALL_HISTORY_TABLE,
+    HistoryWriteError,
+    append_history_frame,
+    append_wall_history_rows,
+    build_compact_history_payload,
+    build_history_frame_row,
+    build_wall_history_rows,
+)
+
+
+def _lm45_sample_payload(
+    *, cell_count: int = 5, wall_count: int = 3, with_zones: bool = True,
+) -> dict:
+    cells = [
+        {"p": i, "t": 0, "bid": 1.0, "ask": 0.0,
+         "total": float(100 - i), "price_bucket": 67000.0 + i}
+        for i in range(cell_count)
+    ]
+    walls = [
+        {"price_bucket": 67000.0 + (i * 10), "side": "bid" if i % 2 else "ask",
+         "total_usd": 1_000_000.0 - i * 100_000, "intensity": 80.0,
+         "label": "Major Bid Wall" if i % 2 else "Major Ask Wall",
+         "strengthScore": 90.0 - i, "wallRank": i + 1}
+        for i in range(wall_count)
+    ]
+    payload = {
+        "symbol": "BTCUSDT", "exchange": "binance_spot", "timeframe": "5m",
+        "priceMin": 67000.0, "priceMax": 67200.0, "priceStep": 10.0,
+        "timeBuckets": ["2026-06-01T12:00:00+00:00"],
+        "cells": cells, "walls": walls,
+        "summary": {"frame_count": 1, "currentPrice": 67100.5,
+                    "price_min": 67000.0, "price_max": 67200.0,
+                    "time_start": "t0", "time_end": "t0",
+                    "max_bid_intensity": 100.0, "max_ask_intensity": 80.0,
+                    "max_total_intensity": 100.0, "wall_count": wall_count,
+                    "symbol": "BTCUSDT"},
+        "meta": {
+            "schemaVersion":   "1.0",
+            "generatedAt":     "2026-06-01T12:00:00+00:00",
+            "cellCount":       cell_count,
+            "wallCount":       wall_count,
+            "isDemo":          False,
+            "liveUpdatedAt":   "2026-06-01T12:00:00+00:00",
+            "currentPrice":    67100.5,
+            "collector":       "binance_websocket",
+            "aggregationMode": "wide",
+            "zoneCount":       2,
+        },
+        "pricePath": [
+            {"t": "2026-06-01T11:59:00+00:00", "price": 67099.0,
+             "bestBid": 67098.0, "bestAsk": 67100.0},
+            {"t": "2026-06-01T12:00:00+00:00", "price": 67100.5,
+             "bestBid": 67099.5, "bestAsk": 67101.5},
+        ],
+    }
+    if with_zones:
+        payload["zones"] = [
+            {"side": "bid", "priceMin": 67000.0, "priceMax": 67010.0,
+             "centerPrice": 67005.0, "totalUsd": 800000.0, "maxIntensity": 80.0,
+             "bucketCount": 2, "label": "Bid Zone", "strengthScore": 70.0},
+            {"side": "ask", "priceMin": 67100.0, "priceMax": 67110.0,
+             "centerPrice": 67105.0, "totalUsd": 1200000.0, "maxIntensity": 95.0,
+             "bucketCount": 2, "label": "Ask Zone", "strengthScore": 92.0},
+        ]
+        payload["keyZones"] = list(payload["zones"])
+    return payload
+
+
+class TestLM45CompactPayload:
+
+    def test_drops_cells_above_max(self):
+        payload = _lm45_sample_payload(cell_count=500)
+        compact = build_compact_history_payload(payload, max_cells=50, max_walls=5)
+        assert len(compact["cells"]) == 50
+        totals = [c["total"] for c in compact["cells"]]
+        assert totals == sorted(totals, reverse=True)
+
+    def test_drops_walls_above_max(self):
+        payload = _lm45_sample_payload(wall_count=80)
+        compact = build_compact_history_payload(payload, max_cells=10, max_walls=20)
+        assert len(compact["walls"]) == 20
+        usds = [w["total_usd"] for w in compact["walls"]]
+        assert usds == sorted(usds, reverse=True)
+
+    def test_history_meta_tags_present(self):
+        compact = build_compact_history_payload(_lm45_sample_payload(cell_count=10))
+        m = compact["meta"]
+        assert m["historyTag"]        == HISTORY_PAYLOAD_TAG
+        assert m["historyCellsKept"]  == 10
+        assert m["historyCellsTotal"] == 10
+        assert "historyWallsKept"     in m
+        assert "historyWallsTotal"    in m
+
+    def test_keeps_only_last_price_path_point(self):
+        compact = build_compact_history_payload(_lm45_sample_payload())
+        assert "lastPricePoint" in compact
+        assert compact["lastPricePoint"]["price"] == 67100.5
+        assert "pricePath" not in compact
+
+    def test_zones_and_keyzones_preserved(self):
+        compact = build_compact_history_payload(_lm45_sample_payload(with_zones=True))
+        assert "zones" in compact
+        assert "keyZones" in compact
+
+    def test_zones_absent_when_payload_has_none(self):
+        compact = build_compact_history_payload(_lm45_sample_payload(with_zones=False))
+        assert "zones" not in compact
+        assert "keyZones" not in compact
+
+    def test_does_not_mutate_original(self):
+        payload = _lm45_sample_payload(cell_count=100, wall_count=20)
+        original_cells = list(payload["cells"])
+        original_walls = list(payload["walls"])
+        build_compact_history_payload(payload, max_cells=10, max_walls=5)
+        assert payload["cells"] == original_cells
+        assert payload["walls"] == original_walls
+        assert "historyTag" not in payload["meta"]
+
+    def test_negative_caps_rejected(self):
+        import pytest
+        with pytest.raises(ValueError, match=">= 0"):
+            build_compact_history_payload(_lm45_sample_payload(), max_cells=-1)
+        with pytest.raises(ValueError, match=">= 0"):
+            build_compact_history_payload(_lm45_sample_payload(), max_walls=-1)
+
+    def test_non_dict_payload_rejected(self):
+        import pytest
+        with pytest.raises(TypeError, match="payload must be a dict"):
+            build_compact_history_payload("not a payload")  # type: ignore[arg-type]
+
+
+class TestLM45HistoryFrameRow:
+
+    def test_row_shape(self):
+        row = build_history_frame_row(
+            _lm45_sample_payload(), symbol="BTCUSDT", timeframe="5m",
+        )
+        expected = {
+            "symbol", "exchange", "timeframe", "frame_ts", "current_price",
+            "price_min", "price_max", "range_mode", "collector",
+            "cell_count", "wall_count", "zone_count", "payload",
+        }
+        assert expected <= set(row.keys())
+        assert row["symbol"]        == "BTCUSDT"
+        assert row["exchange"]      == "binance_spot"
+        assert row["timeframe"]     == "5m"
+        assert row["range_mode"]    == "wide"
+        assert row["collector"]     == "binance_websocket"
+        assert row["current_price"] == 67100.5
+        assert row["price_min"]     == 67000.0
+        assert row["price_max"]     == 67200.0
+        assert row["cell_count"]    == 5
+        assert row["wall_count"]    == 3
+        assert row["zone_count"]    == 2
+        assert row["frame_ts"]      == "2026-06-01T12:00:00+00:00"
+        assert isinstance(row["payload"], dict)
+        assert row["payload"]["meta"]["historyTag"] == HISTORY_PAYLOAD_TAG
+
+    def test_explicit_frame_ts_wins(self):
+        row = build_history_frame_row(
+            _lm45_sample_payload(), symbol="BTCUSDT", timeframe="5m",
+            frame_ts="2030-01-01T00:00:00+00:00",
+        )
+        assert row["frame_ts"] == "2030-01-01T00:00:00+00:00"
+
+    def test_falls_back_to_now_when_no_meta_ts(self):
+        payload = _lm45_sample_payload()
+        del payload["meta"]["liveUpdatedAt"]
+        row = build_history_frame_row(
+            payload, symbol="BTCUSDT", timeframe="5m",
+        )
+        assert row["frame_ts"]
+        assert "T" in row["frame_ts"]
+
+    def test_current_price_fallback_chain(self):
+        payload = _lm45_sample_payload()
+        del payload["summary"]["currentPrice"]
+        row = build_history_frame_row(payload, symbol="BTCUSDT", timeframe="5m")
+        assert row["current_price"] == 67100.5  # meta.currentPrice
+        del payload["meta"]["currentPrice"]
+        row = build_history_frame_row(payload, symbol="BTCUSDT", timeframe="5m")
+        assert row["current_price"] == 67100.5  # lastPricePoint.price
+
+
+class TestLM45WallHistoryRows:
+
+    def test_uses_key_zones_top_n_ordered_by_strength(self):
+        rows = build_wall_history_rows(
+            _lm45_sample_payload(with_zones=True),
+            symbol="BTCUSDT", timeframe="5m", max_walls=10,
+        )
+        assert len(rows) == 2
+        assert rows[0]["strength_score"] >= rows[1]["strength_score"]
+        assert rows[0]["wall_rank"] == 1
+        assert rows[1]["wall_rank"] == 2
+        for r in rows:
+            for k in ("symbol", "exchange", "timeframe", "frame_ts", "side",
+                      "price_min", "price_max", "center_price", "total_usd",
+                      "strength_score", "wall_rank", "label", "zone"):
+                assert k in r
+
+    def test_max_walls_caps_output(self):
+        payload = _lm45_sample_payload(with_zones=False)
+        payload["keyZones"] = [
+            {"side": "bid", "priceMin": float(p), "priceMax": float(p + 1),
+             "centerPrice": float(p), "totalUsd": 1000.0 * p,
+             "maxIntensity": 50.0, "bucketCount": 1, "label": "Bid Zone",
+             "strengthScore": float(p)}
+            for p in range(1, 21)
+        ]
+        rows = build_wall_history_rows(
+            payload, symbol="BTCUSDT", timeframe="5m", max_walls=5,
+        )
+        assert len(rows) == 5
+        assert [r["wall_rank"] for r in rows] == [1, 2, 3, 4, 5]
+
+    def test_falls_back_to_zones_when_keyzones_missing(self):
+        payload = _lm45_sample_payload(with_zones=True)
+        del payload["keyZones"]
+        rows = build_wall_history_rows(
+            payload, symbol="BTCUSDT", timeframe="5m",
+        )
+        assert len(rows) == 2
+
+    def test_empty_when_no_zones(self):
+        rows = build_wall_history_rows(
+            _lm45_sample_payload(with_zones=False),
+            symbol="BTCUSDT", timeframe="5m",
+        )
+        assert rows == []
+
+
+class _LM45FakeCfg:
+    def __init__(self) -> None:
+        self.url = "https://example.supabase.co"
+        self.service_role_key = "fake-key"
+
+
+class _LM45OKResp:
+    status = 201
+    def read(self): return b""
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+class _LM45ErrResp:
+    def __init__(self, status: int = 500) -> None:
+        self.status = status
+    def read(self): return b""
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+class TestLM45SupabaseAppend:
+
+    def test_append_history_frame_posts_one_row(self):
+        cfg = _LM45FakeCfg()
+        captured: dict = {}
+        def _fake_urlopen(req, timeout=None):
+            captured["url"]     = req.full_url
+            captured["headers"] = dict(req.headers)
+            captured["body"]    = req.data
+            return _LM45OKResp()
+        row = build_history_frame_row(
+            _lm45_sample_payload(), symbol="BTCUSDT", timeframe="5m",
+        )
+        with patch(
+            "services.heatmap_history.urllib.request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            append_history_frame(cfg, row)
+        assert captured["url"].endswith(f"/rest/v1/{HISTORY_FRAME_TABLE}")
+        assert b"fake-key" not in captured["body"]
+
+    def test_append_wall_history_rows_targets_correct_table(self):
+        cfg = _LM45FakeCfg()
+        seen: list = []
+        def _fake(req, timeout=None):
+            seen.append(req.full_url)
+            return _LM45OKResp()
+        rows = build_wall_history_rows(
+            _lm45_sample_payload(with_zones=True),
+            symbol="BTCUSDT", timeframe="5m",
+        )
+        with patch(
+            "services.heatmap_history.urllib.request.urlopen",
+            side_effect=_fake,
+        ):
+            append_wall_history_rows(cfg, rows)
+        assert seen and seen[0].endswith(f"/rest/v1/{WALL_HISTORY_TABLE}")
+
+    def test_append_wall_history_rows_empty_is_noop(self):
+        cfg = _LM45FakeCfg()
+        called: list = []
+        def _fake_urlopen(req, timeout=None):
+            called.append(req.full_url)
+            return _LM45OKResp()
+        with patch(
+            "services.heatmap_history.urllib.request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            append_wall_history_rows(cfg, [])
+        assert called == []
+
+    def test_history_write_error_on_http_500(self):
+        import pytest
+        cfg = _LM45FakeCfg()
+        with patch(
+            "services.heatmap_history.urllib.request.urlopen",
+            return_value=_LM45ErrResp(500),
+        ):
+            with pytest.raises(HistoryWriteError):
+                append_history_frame(cfg, {"symbol": "BTCUSDT"})
+
+
+class TestLM45ModuleConstants:
+
+    def test_valid_history_targets(self):
+        assert VALID_HISTORY_TARGETS == ("none", "supabase")
+
+    def test_defaults_sane(self):
+        assert DEFAULT_HISTORY_INTERVAL_S >= 1.0
+        assert DEFAULT_HISTORY_MAX_CELLS >= 50
+        assert DEFAULT_HISTORY_MAX_WALLS >= 5
+
+    def test_history_payload_tag_versioned(self):
+        assert HISTORY_PAYLOAD_TAG.startswith("heatmap_history_")
+        assert any(ch.isdigit() for ch in HISTORY_PAYLOAD_TAG)

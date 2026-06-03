@@ -69,6 +69,17 @@ from services.heatmap_api_payload import (  # noqa: E402
     VALID_TIMEFRAMES,
     build_heatmap_api_payload,
 )
+from services.heatmap_history import (  # noqa: E402
+    DEFAULT_HISTORY_INTERVAL_S,
+    DEFAULT_HISTORY_MAX_CELLS,
+    DEFAULT_HISTORY_MAX_WALLS,
+    VALID_HISTORY_TARGETS,
+    HistoryWriteError,
+    append_history_frame,
+    append_wall_history_rows,
+    build_history_frame_row,
+    build_wall_history_rows,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -314,6 +325,13 @@ def run_ws_collector(
     range_mode: str = "standard",
     price_range_abs: float | None = None,
     price_range_percent: float | None = None,
+    # LM45 history persistence (off by default for full backward compat)
+    history_target: str = "none",
+    history_interval: float = DEFAULT_HISTORY_INTERVAL_S,
+    history_max_cells: int = DEFAULT_HISTORY_MAX_CELLS,
+    history_max_walls: int = DEFAULT_HISTORY_MAX_WALLS,
+    append_history: Callable[..., None] = append_history_frame,
+    append_walls: Callable[..., None] = append_wall_history_rows,
 ) -> dict:
     """
     Drive the multi-symbol WS collector loop. Returns
@@ -368,6 +386,26 @@ def run_ws_collector(
             "supabase target requested but Supabase config was not provided"
         )
 
+    # LM45: history target validation.
+    if history_target not in VALID_HISTORY_TARGETS:
+        raise ValueError(
+            f"invalid history-target {history_target!r}. "
+            f"Allowed: {', '.join(VALID_HISTORY_TARGETS)}"
+        )
+    history_enabled = history_target == "supabase"
+    if history_enabled and supabase is None:
+        raise ValueError(
+            "history-target=supabase requires Supabase config (set --target "
+            "supabase|both|all so SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY "
+            "are resolved up front)"
+        )
+    if history_interval <= 0:
+        raise ValueError(f"history-interval must be > 0, got {history_interval}")
+    if history_max_cells < 0 or history_max_walls < 0:
+        raise ValueError(
+            "history-max-cells and history-max-walls must be >= 0"
+        )
+
     def _say(msg: str) -> None:
         if progress is not None:
             progress(msg)
@@ -384,11 +422,15 @@ def run_ws_collector(
             "price_path":          [],
             "last_depth_refresh": -float("inf"),
             "last_write":         -float("inf"),
+            "last_history_at":    -float("inf"),  # LM45
             "writes":              0,
+            "history_writes":      0,             # LM45
         }
         for sym in symbols
     }
     total_writes = 0
+    history_writes = 0     # LM45 — total successful history appends
+    history_failures = 0   # LM45 — total caught history failures
     messages = 0
 
     def _resolve_range_for(sym: str, mid: float) -> dict | None:
@@ -524,11 +566,16 @@ def run_ws_collector(
                     }
                     st["range_meta"] = latest_range_meta
 
+                # Build + write the LATEST payload per timeframe, and stash
+                # them so the optional LM45 history pass can reuse the exact
+                # payloads (no double work).
+                payloads_by_tf: dict[str, dict] = {}
                 for tf in timeframes:
                     payload = build_ws_payload(
                         sym, tf, st["frames"], st["price_path"], write_interval,
                         range_meta=latest_range_meta,
                     )
+                    payloads_by_tf[tf] = payload
                     for kind in write_targets:
                         try:
                             if kind == "supabase":
@@ -542,10 +589,46 @@ def run_ws_collector(
                 st["writes"]  += 1
                 st["last_write"] = t
                 total_writes  += 1
+
+                # LM45: append compact history rows on a SEPARATE cadence —
+                # never every write_interval. Failures here are caught and
+                # never stop the latest-payload pipeline above.
+                history_due = (
+                    history_enabled
+                    and (t - st["last_history_at"]) >= history_interval
+                )
+                if history_due:
+                    for tf, payload in payloads_by_tf.items():
+                        try:
+                            frame_row = build_history_frame_row(
+                                payload,
+                                symbol=sym, timeframe=tf,
+                                max_cells=history_max_cells,
+                                max_walls=history_max_walls,
+                            )
+                            append_history(supabase, frame_row)
+                            wall_rows = build_wall_history_rows(
+                                payload,
+                                symbol=sym, timeframe=tf,
+                                max_walls=history_max_walls,
+                            )
+                            append_walls(supabase, wall_rows)
+                            history_writes += 1
+                            st["history_writes"] += 1
+                        except HistoryWriteError as exc:
+                            history_failures += 1
+                            _say(f"history · {sym} {tf} · failed: {exc}")
+                    st["last_history_at"] = t
+
                 _say(
                     f"write #{total_writes} · {sym} · tfs={','.join(timeframes)} · "
                     f"mid={st['mid']} · msgs={messages} · "
                     f"frames={len(st['frames'])} · pricePath={len(st['price_path'])}"
+                    + (
+                        f" · history={history_writes}"
+                        f"{f' (fail={history_failures})' if history_failures else ''}"
+                        if history_enabled else ""
+                    )
                 )
 
                 if not forever and samples is not None and total_writes >= samples:
@@ -557,9 +640,15 @@ def run_ws_collector(
         _say("interrupted — stopping cleanly, last writes kept")
 
     return {
-        "writes":     total_writes,
-        "messages":   messages,
-        "per_symbol": {sym: states[sym]["writes"] for sym in symbols},
+        "writes":           total_writes,
+        "messages":         messages,
+        "per_symbol":       {sym: states[sym]["writes"] for sym in symbols},
+        # LM45 — history persistence stats.
+        "history_writes":   history_writes,
+        "history_failures": history_failures,
+        "history_per_symbol": {
+            sym: states[sym]["history_writes"] for sym in symbols
+        },
     }
 
 
@@ -622,6 +711,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--price-range-percent", type=float, default=None,
                         dest="price_range_percent",
                         help="Override preset with percent half-range (e.g. 0.05).")
+    # LM45 — heatmap history & wall persistence (off by default).
+    parser.add_argument("--history-target", default="none",
+                        choices=list(VALID_HISTORY_TARGETS),
+                        dest="history_target",
+                        help=("Where to append compact history rows: "
+                              "none (default) | supabase. Requires --target "
+                              "supabase|both|all so Supabase env is resolved."))
+    parser.add_argument("--history-interval", type=float,
+                        default=DEFAULT_HISTORY_INTERVAL_S,
+                        dest="history_interval",
+                        help=(f"Seconds between history appends per symbol "
+                              f"(default: {DEFAULT_HISTORY_INTERVAL_S}). "
+                              f"History runs on a SEPARATE cadence from "
+                              f"--write-interval — never every 1s."))
+    parser.add_argument("--history-max-cells", type=int,
+                        default=DEFAULT_HISTORY_MAX_CELLS,
+                        dest="history_max_cells",
+                        help=("Cap on cells kept in each history row's compact "
+                              f"payload (default: {DEFAULT_HISTORY_MAX_CELLS})."))
+    parser.add_argument("--history-max-walls", type=int,
+                        default=DEFAULT_HISTORY_MAX_WALLS,
+                        dest="history_max_walls",
+                        help=("Cap on walls/zones written per history frame "
+                              f"(default: {DEFAULT_HISTORY_MAX_WALLS})."))
     return parser.parse_args(argv)
 
 
@@ -662,12 +775,22 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     sb_cfg: SupabaseConfig | None = None
-    if target_requires_supabase(args.target):
+    if target_requires_supabase(args.target) or args.history_target == "supabase":
         try:
             sb_cfg = resolve_supabase_config(None, None)
         except ValueError as exc:
             print(f"error: invalid argument — {exc}", file=sys.stderr)
             return 1
+
+    # LM45: enabling history without a Supabase main target is allowed —
+    # but we need a Supabase config either way.
+    if args.history_target == "supabase" and sb_cfg is None:
+        print(
+            "error: invalid argument — history-target=supabase requires "
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the environment",
+            file=sys.stderr,
+        )
+        return 1
 
     live_dir = Path(args.live_dir)
 
@@ -692,7 +815,13 @@ def main(argv: list[str] | None = None) -> int:
         f"{'configured' if sb_cfg is not None else 'not configured'}\n"
         f"  range mode         = {args.range_mode}"
         f"{f' (abs=±{args.price_range_abs})' if args.price_range_abs else ''}"
-        f"{f' (pct=±{args.price_range_percent})' if args.price_range_percent else ''}",
+        f"{f' (pct=±{args.price_range_percent})' if args.price_range_percent else ''}\n"
+        f"  history target     = {args.history_target}"
+        + (
+            f" (every {args.history_interval}s, max_cells={args.history_max_cells}"
+            f", max_walls={args.history_max_walls})"
+            if args.history_target != "none" else ""
+        ),
         flush=True,
     )
 
@@ -730,6 +859,10 @@ def main(argv: list[str] | None = None) -> int:
             range_mode=args.range_mode,
             price_range_abs=args.price_range_abs,
             price_range_percent=args.price_range_percent,
+            history_target=args.history_target,
+            history_interval=args.history_interval,
+            history_max_cells=args.history_max_cells,
+            history_max_walls=args.history_max_walls,
         )
     except RuntimeError as exc:
         # Includes "websocket-client not installed".
@@ -739,9 +872,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: invalid argument — {exc}", file=sys.stderr)
         return 1
 
+    history_note = ""
+    if args.history_target != "none":
+        history_note = (
+            f" · history {result.get('history_writes', 0)} append(s)"
+            + (
+                f" ({result.get('history_failures', 0)} failed)"
+                if result.get("history_failures") else ""
+            )
+        )
     print(
         f"Done. {result['writes']} write(s) · {result['messages']} ws message(s) "
-        f"· target '{args.target}'."
+        f"· target '{args.target}'{history_note}."
     )
     return 0
 

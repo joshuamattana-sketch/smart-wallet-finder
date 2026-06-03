@@ -91,6 +91,52 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM45 — Heatmap History & Wall Persistence Foundation
+Append-only history alongside the existing `heatmap_latest_payloads`
+(which is untouched). Two new Supabase tables, off by default in the
+collector, so deployment is safe.
+
+**SQL**: `supabase/heatmap_history.sql`
+- `heatmap_frame_history` — one compact snapshot row per
+  (symbol, exchange, timeframe, frame_ts)
+- `liquidity_wall_history` — top-N zones per frame for trend analysis
+- RLS enabled, no policies → service-role only (matches latest-payloads)
+
+**Helper module**: `services/heatmap_history.py` (LM45 section appended
+alongside the pre-existing in-memory `HeatmapHistoryStore` — both live in
+the same module)
+- `build_compact_history_payload(payload, max_cells=300, max_walls=50)`
+  → trims cells (top-N by `total`), walls (top-N by `total_usd`), drops
+  the full pricePath, keeps only the last point. Stamps
+  `meta.historyTag = "heatmap_history_v1"`.
+- `build_history_frame_row(payload, ...)` → one row for
+  `heatmap_frame_history`.
+- `build_wall_history_rows(payload, ...)` → up to N rows from `keyZones`
+  (fallback `zones`), ordered by `strengthScore` desc with `wall_rank`.
+- `append_history_frame(cfg, row)` / `append_wall_history_rows(cfg, rows)`
+  → stdlib urllib POST to PostgREST, raises `HistoryWriteError` on HTTP
+  / network failure. Callers catch and keep running.
+
+**WS collector** (`scripts/run_binance_ws_heatmap_live.py`):
+- New CLI flags: `--history-target none|supabase` (default none),
+  `--history-interval` (default 10s), `--history-max-cells` (300),
+  `--history-max-walls` (50).
+- History runs on a separate cadence — NEVER every `--write-interval`.
+- Per-symbol throttle via `state["last_history_at"]`.
+- History failures caught and counted; latest-payload pipeline
+  continues unaffected.
+- Return dict adds `history_writes`, `history_failures`,
+  `history_per_symbol`.
+
+**Recommended command (history ON)**:
+```
+python scripts/run_binance_ws_heatmap_live.py \
+    --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+    --write-interval 1 --max-frames 1200 \
+    --target supabase --forever --range-mode wide \
+    --history-target supabase --history-interval 10
+```
+
 ## LM42B — Multi-Symbol WebSocket Collector
 The WS collector now supports many symbols on one socket.
 
