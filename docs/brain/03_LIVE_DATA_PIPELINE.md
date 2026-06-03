@@ -91,6 +91,53 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM47 — Wall Persistence Feature Engine
+Pure deterministic aggregator. Sits one level above LM46 — consumes
+LM46 wall events and emits per-wall feature rows. No I/O, no Supabase,
+no UI, no API changes.
+
+**Module**: `services/wall_persistence_features.py`
+- Public entry: `compute_wall_features(events, *, options=None)`.
+- Returns a list of feature dicts sorted by
+  `(symbol, timeframe, side, price_mid)`.
+- Tolerant of `None`, empty iterables, malformed event dicts — never raises.
+
+**Grouping rule** (sequential, deterministic):
+Same `(symbol, exchange, timeframe, side)` AND band overlap OR mid within
+`zone_merge_pct`% of group centerline → merged. Group band expands as new
+events arrive.
+
+**Statuses** (from last event + counts):
+| Status     | Trigger |
+|------------|---------|
+| `broken`   | last event is `wall_broken` |
+| `pulled`   | last event is `wall_pulled` |
+| `defended` | last event is `wall_defended`, or defenses > touches |
+| `weakening`| last event is `wall_weakened`, or weakens > strengthens |
+| `active`   | default |
+
+**Configurable options** (`WallFeatureOptions`):
+- `zone_merge_pct` (0.10) — merge tolerance as % of centerline
+- `min_persistence_seconds` (0) — drop walls shorter than this
+- `min_confidence` (0) — drop events below this confidence before grouping
+- `max_reasons` (5) — last-N event reasons kept on the feature
+
+**Feature fields** (per wall):
+`wall_id, symbol, exchange, timeframe, side, price_low, price_high,
+price_mid, first_seen_ts, last_seen_ts, persistence_seconds,
+touch_count, defense_count, break_count, pull_count, strengthen_count,
+weaken_count, current_strength, max_strength, min_strength,
+strength_delta_pct, avg_distance_to_price_pct, last_event_type,
+confidence, status, reasons, metadata`.
+
+**Deterministic `wall_id`**: `wall_{sha1(symbol|exchange|timeframe|side|rounded_centroid)[:12]}`. Stable across runs and small price drift.
+
+**Next milestones can build on this**:
+- Persist features to a new `wall_persistence_features` Supabase table
+  (append-only, mirrored after LM45 pattern).
+- Surface a "active walls" sidebar in the Liquidity Map (read-only).
+- Use status transitions ("active" → "broken") as alert triggers.
+
 ## LM46 — Liquidity Wall Event Detector (Foundation)
 Pure deterministic service. No I/O, no Supabase, no UI, no API changes.
 

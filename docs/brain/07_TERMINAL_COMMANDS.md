@@ -37,6 +37,14 @@ python -m pytest tests/test_liquidity_wall_events.py
 python -m compileall services tests
 ```
 
+## LM47 Wall Persistence Feature Tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_wall_persistence_features.py
+python -m compileall services tests
+```
+
 ```
 
 ```
