@@ -152,6 +152,14 @@ python -m pytest tests/test_worker_health.py
 python -m compileall services tests
 ```
 
+## LM59 Local Status Check
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_local_status_check.py
+python scripts/run_local_status_check.py --json
+```
+
 ## Git Rules
 
 Always check: git status
