@@ -91,6 +91,46 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM46 — Liquidity Wall Event Detector (Foundation)
+Pure deterministic service. No I/O, no Supabase, no UI, no API changes.
+
+**Module**: `services/liquidity_wall_events.py`
+- Public entry: `detect_wall_events(previous_walls, current_walls,
+  symbol, exchange, timeframe, current_price, event_ts, thresholds)`.
+- Returns a list of event dicts sorted by `(event_type, side, price_mid)`.
+- Tolerant of `None` / partial / malformed input — never raises.
+
+**Event types**:
+| Type                | Trigger |
+|---------------------|---------|
+| `wall_created`      | new wall in `current_walls`, none/weak match in previous |
+| `wall_strengthened` | matched wall; strength ↑ ≥ `strengthened_delta_pct` |
+| `wall_weakened`     | matched wall; strength ↓ ≥ `weakened_delta_pct` |
+| `wall_pulled`       | wall in previous, gone in current, no price break |
+| `wall_touched`      | price inside band; strength steady/down |
+| `wall_defended`     | price inside band AND strength ↑ ≥ threshold (subsumes `strengthened`) |
+| `wall_broken`       | price past band by ≥ `broken_distance_pct` AND wall vanished/weakened (subsumes `weakened`) |
+
+**Configurable thresholds** (`WallEventThresholds`):
+- `min_strength` (30) — walls below this are ignored
+- `created_strength_threshold` (50) — new walls must reach this
+- `strengthened_delta_pct` / `weakened_delta_pct` (15 each) — % strength delta
+- `touch_distance_pct` (0.50) — % of price away from wall mid
+- `broken_distance_pct` (0.50) — % past band edge
+
+**Event fields**: `symbol, exchange, timeframe, event_ts, event_type, side,
+price_low, price_high, price_mid, strength, previous_strength,
+strength_delta_pct, distance_to_price_pct, confidence, reason, metadata`.
+
+**Helper**: `normalize_wall(w)` accepts LM44 keyZones (camelCase), LM45
+liquidity_wall_history rows (snake_case), and LM44 single-bucket walls
+(`price_bucket`).
+
+**Next milestones can build on this**:
+- Consume events into a future `liquidity_wall_events` Supabase table.
+- Surface a "recent events" feed in the UI (Liquidity Map sidebar or Terminal).
+- Add sweep/absorption/imbalance-flip detection as additional event types.
+
 ## LM45 — Heatmap History & Wall Persistence Foundation
 Append-only history alongside the existing `heatmap_latest_payloads`
 (which is untouched). Two new Supabase tables, off by default in the

@@ -29,6 +29,14 @@ cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"npm run buildnpm run dev
 
 cd "C:\Users\Joshua\Desktop\wallet finder"python -m pytest tests/test_local_heatmap_live.pypython -m compileall scripts services tests
 
+## LM46 Wall Event Detector Tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_liquidity_wall_events.py
+python -m compileall services tests
+```
+
 ```
 
 ```
