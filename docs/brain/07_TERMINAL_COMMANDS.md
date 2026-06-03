@@ -45,6 +45,14 @@ python -m pytest tests/test_wall_persistence_features.py
 python -m compileall services tests
 ```
 
+## LM48 Setup Classifier v1 Tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_setup_classifier.py
+python -m compileall services tests
+```
+
 ```
 
 ```

@@ -91,6 +91,58 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM48 — Setup Classifier v1
+Pure deterministic classifier. Sits one level above LM47 — consumes
+wall persistence features and emits trading setup candidates. No I/O,
+no Supabase, no UI, no API changes.
+
+**Module**: `services/setup_classifier.py`
+- Public entry: `classify_setups(features, *, options=None)`.
+- Returns a list of setup dicts sorted by
+  `(symbol, timeframe, setup_type, direction, price_zone_mid)`.
+- Tolerant of `None` / empty / malformed inputs — never raises.
+
+**Setup types**:
+| Setup type            | Trigger |
+|-----------------------|---------|
+| `long_absorption`     | strong defended/active **bid** wall (price floor) |
+| `short_rejection`     | strong defended/active **ask** wall (price ceiling) |
+| `breakout_pressure`   | strong wall now `broken`/`pulled`/`weakening` — direction inferred from side |
+| `liquidity_trap_risk` | A: broken/pulled wall AFTER ≥2 prior touches/defenses, OR B: balanced bid + ask walls (within `conflict_strength_pct`) |
+| `no_trade`            | features present but none meet thresholds (per market) |
+
+**Directions**: `long` / `short` / `neutral`.
+**Statuses**: `candidate` / `confirmed` / `invalidated` / `no_trade`.
+
+**Configurable thresholds** (`SetupClassifierOptions`):
+- `min_confidence`        (0.40) — feature confidence floor
+- `min_score`             (35.0) — drop setups below this score
+- `strong_wall_strength`  (60.0) — required current/max strength
+- `min_persistence_seconds` (30) — wall lifespan required
+- `near_price_distance_pct` (0.50) — informational; affects risks
+- `conflict_strength_pct`   (30.0) — bid vs ask strength delta for trap B
+- `trap_min_history_count`  (2)    — touches+defenses needed for trap A
+
+**Score formula** (0–100):
+`base = 0.40·confidence + 0.30·persistence_factor + 0.30·strength_factor`
+then setup-type-specific bonuses (defenses ↑, weakens ↓, broken/pulled ↑,
+balanced-wall bonus, etc.). Setup confidence is `0.7·(score/100) +
+0.3·wall_confidence`, clipped to [0, 1].
+
+**Deterministic `setup_id`**: `setup_{sha1(symbol|exchange|timeframe|setup_type|primary_wall_id)[:12]}`.
+
+**Per-setup fields**:
+`setup_id, symbol, exchange, timeframe, setup_ts, setup_type, direction,
+score, confidence, price_zone_low/high/mid, primary_wall_id,
+related_wall_ids, reasons, risks, status, metadata`.
+
+**Next milestones can build on this**:
+- Persist setups to a `trading_setups` Supabase table (mirroring LM45
+  pattern: append-only or upsert-by-setup_id; service-role-only RLS).
+- Surface a "Live Setups" panel in the Dashboard or Liquidity Map.
+- Track `candidate` → `confirmed`/`invalidated` transitions for alerting.
+- Add machine-learned scoring as v2 (LM48 is rule-based foundation).
+
 ## LM47 — Wall Persistence Feature Engine
 Pure deterministic aggregator. Sits one level above LM46 — consumes
 LM46 wall events and emits per-wall feature rows. No I/O, no Supabase,
