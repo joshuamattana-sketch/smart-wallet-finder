@@ -91,6 +91,125 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM50 — Signal Journal Foundation
+Pure-Python, dependency-light layer that turns LM49 standardized signal
+dicts into "journal entry" dicts. No I/O, no Supabase, no file writes —
+this is the in-memory contract that future persistence layers will read.
+
+**Module**: `services/signal_journal.py`
+
+**Public entry points**:
+- `create_signal_journal_entry(signal, *, created_at=None) → dict | None`
+- `create_signal_journal_entries(signals, *, created_at=None) → list[dict]`
+- `update_signal_outcome(entry, outcome) → dict` (returns a NEW entry; input never mutated)
+- `summarize_signal_journal(entries) → dict`
+
+**Outcome statuses**:
+| Status         | Meaning |
+|----------------|---------|
+| `pending`      | actionable signal awaiting price action |
+| `target_hit`   | at least one target reached |
+| `invalidated`  | invalidation price hit before any target |
+| `expired`      | neither hit nor invalidated within the watch window |
+| `no_trade`     | informational entry (LM49 no_trade or neutral direction) |
+| `unknown`      | explicit "we can't tell" (e.g. data gap) |
+
+**Initial outcome_status**: `no_trade` for `signal_level=="no_trade"` or
+`direction=="neutral"`; otherwise `pending`.
+
+**`update_signal_outcome` rules**:
+- Returns a fresh dict (immutable-style merge); never mutates the input.
+- Unknown keys are silently ignored — safe forward-compatibility.
+- Invalid `outcome_status` values are rejected (status untouched).
+- `no_trade` entries cannot be promoted to `target_hit`/`invalidated`,
+  but excursion fields and `notes` are still mergeable.
+
+**Summary returns** (zero-filled for known keys so callers never KeyError):
+`total_entries`, `by_direction`, `by_signal_level`, `by_outcome_status`,
+`by_setup_type`, `by_symbol`, `actionable_count`, `resolution_rate`.
+`actionable_count` = entries with level `setup`/`strong_setup` AND
+outcome not `no_trade`. `resolution_rate` = (resolved /
+pending+resolved), where resolved means `target_hit`, `invalidated`,
+or `expired`.
+
+**Deterministic `journal_id`**: `journal_{sha1(signal_id)[:12]}` —
+sticky to the underlying signal regardless of `created_at`. A signal
+level change creates a new `signal_id` and therefore a new
+`journal_id`.
+
+**Journal entry fields** (28 total):
+`journal_id, signal_id, symbol, exchange, timeframe, created_at,
+signal_ts, setup_type, direction, signal_level, score, confidence,
+entry_zone_low/high/mid, invalidation_price, targets, reasons,
+risks, action_hint, status, outcome_status, outcome_checked_at,
+outcome_5m, outcome_15m, outcome_1h,
+max_favorable_excursion_pct, max_adverse_excursion_pct,
+notes, metadata`.
+
+**Next milestones can build on this**:
+- **LM51 (persistence)** — append journal entries to a `signal_journal`
+  Supabase table (LM45 pattern: append-only with optional upsert-by-
+  `journal_id`, RLS, service-role-only). Reload on restart.
+- **LM52 (outcome tracker)** — watcher that compares `current_price`
+  against `invalidation_price` / `targets` over rolling windows and
+  calls `update_signal_outcome` with `target_hit` / `invalidated` /
+  `expired` + `max_favorable_excursion_pct` / `max_adverse_excursion_pct`.
+- **UI surface** — "Live Signals + Outcomes" panel in the Dashboard or
+  Terminal, reading from the persisted table.
+
+## LM49 — Signal Object Builder v1
+Pure deterministic builder. Sits one level above LM48 — consumes setup
+candidates and emits standardized signal dicts ready for UI / alerts.
+No I/O, no Supabase, no UI, no API changes.
+
+**Module**: `services/signal_builder.py`
+- Public entry: `build_signals(setups, *, options=None)`.
+- One signal per valid setup (including `no_trade` setups, so callers
+  can record that a market was inspected and decided against).
+- Output sorted by `(symbol, timeframe, setup_type, direction, entry_zone_mid)`.
+- Tolerant of `None` / malformed inputs — never raises.
+
+**Signal levels** (derived from setup score + confidence):
+| Level          | Trigger |
+|----------------|---------|
+| `no_trade`     | score < `watch_score` OR confidence < `min_confidence` |
+| `watch`        | `watch_score` ≤ score < `setup_score` |
+| `setup`        | `setup_score` ≤ score < `strong_setup_score` |
+| `strong_setup` | score ≥ `strong_setup_score` |
+
+**Statuses**: `active` (actionable level, non-neutral, not invalidated)
+| `waiting` (watch level or neutral direction) | `invalidated` (passed
+through from setup) | `no_trade`.
+
+**Action hints** (human-readable, constrained):
+`wait_for_confirmation`, `wait_for_retest` (for strong defended/rejected
+walls — best entered on a retest), `monitor_only`, `avoid_trade`.
+
+**Geometry** (for directional signals only):
+- Long: `invalidation = price_zone_low − price_zone_mid × invalidation_buffer_pct / 100`;
+  R = `mid − invalidation`; targets = `[mid + R·r1, mid + R·r2]`.
+- Short: mirror — `invalidation > zone_high`, targets below mid.
+- Neutral / no_trade: `invalidation_price=None`, `targets=[]`.
+
+**Configurable thresholds** (`SignalBuilderOptions`):
+- `watch_score` (30.0), `setup_score` (50.0), `strong_setup_score` (70.0)
+- `min_confidence` (0.40)
+- `target_r_multiple_1` (1.5), `target_r_multiple_2` (3.0)
+- `invalidation_buffer_pct` (0.20)
+
+**Deterministic `signal_id`**: `sig_{sha1(setup_id|signal_level|direction)[:12]}` — stable for the same setup at the same level.
+
+**Per-signal fields**:
+`signal_id, symbol, exchange, timeframe, signal_ts, setup_id, setup_type,
+direction, signal_level, score, confidence, entry_zone_low/high/mid,
+invalidation_price, targets, reasons, risks, action_hint, status, metadata`.
+
+**Next milestones can build on this**:
+- Persist signals to a `trading_signals` Supabase table (LM45 pattern).
+- Surface a "Live Signals" panel in the Dashboard or Terminal.
+- Wire `active` signals into the whale-alerts pipeline as a new source.
+- Track signal lifecycle (`waiting` → `active` → `invalidated`/`hit_target`).
+
 ## LM48 — Setup Classifier v1
 Pure deterministic classifier. Sits one level above LM47 — consumes
 wall persistence features and emits trading setup candidates. No I/O,

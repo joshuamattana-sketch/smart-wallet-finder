@@ -53,6 +53,22 @@ python -m pytest tests/test_setup_classifier.py
 python -m compileall services tests
 ```
 
+## LM49 Signal Object Builder v1 Tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_signal_builder.py
+python -m compileall services tests
+```
+
+## LM50 Signal Journal Foundation Tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_signal_journal.py
+python -m compileall services tests
+```
+
 ```
 
 ```
