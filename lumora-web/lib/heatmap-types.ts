@@ -193,6 +193,23 @@ export interface HeatmapApiPayload {
   zones?: HeatmapZone[];
   /** LM44: top-N zones by strengthScore. Optional. */
   keyZones?: HeatmapZone[];
+  /** LM60B: data status (latest/history freshness). Optional — only set when Supabase is configured. */
+  dataStatus?: HeatmapDataStatus | null;
+}
+
+/** LM60B: data status object for latest/history freshness. */
+export interface HeatmapDataStatus {
+  latest_found: boolean;
+  history_found: boolean;
+  latest_updated_at: string | null;
+  history_latest_frame_ts: string | null;
+  history_row_count: number;
+  latest_age_seconds: number | null;
+  history_age_seconds: number | null;
+  latest_fresh: boolean;
+  history_fresh: boolean;
+  data_mode: "live" | "stale" | "missing";
+  status_label: string;
 }
 
 /** Error body returned by GET /api/heatmap on 4xx. */

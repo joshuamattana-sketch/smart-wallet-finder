@@ -8,6 +8,7 @@ import type {
 import { isKnownSymbol, getMarketSymbols } from "@/lib/market-sources";
 import { loadHeatmapFixture } from "@/lib/heatmap-fixture-loader";
 import { loadHeatmapLivePayload } from "@/lib/heatmap-live-loader";
+import { loadHeatmapDataStatus } from "@/lib/heatmap-status-loader";
 
 // Always render per-request: live payloads must never be served from Next's
 // route cache / Vercel data cache, or the UI shows stale numbers until a manual
@@ -132,6 +133,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     stale,
     ...(staleReason ? { staleReason } : {}),
   };
+
+  // LM60B: attach data status (latest/history freshness) — never blocks or
+  // breaks the response; null on any failure.
+  try {
+    payload.dataStatus = await loadHeatmapDataStatus(symbol, timeframe, exchange);
+  } catch {
+    payload.dataStatus = null;
+  }
 
   return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
 }

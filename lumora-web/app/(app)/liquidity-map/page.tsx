@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/Badge";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
-import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
 import { heatmapResolvedStatus } from "@/lib/heatmap-types";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
 import {
@@ -156,6 +156,71 @@ function isValidPayload(data: unknown): data is HeatmapApiPayload {
 
 type DataSource = "mock" | "fixture" | "live";
 const INITIAL_KEY = cacheKey("BTCUSDT", "15m", "live");
+
+// ── LM60B: Data Status Panel ──────────────────────────────────────────────────
+function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataStatus | null; dataSource: string }) {
+  if (!dataStatus) {
+    if (dataSource !== "live") return null;
+    return (
+      <GlassCard className="p-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">Data Status</span>
+          <span className="text-[10px] text-lumora-muted">Supabase not configured</span>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  const modeColor = dataStatus.data_mode === "live" ? "text-emerald-400"
+    : dataStatus.data_mode === "stale" ? "text-amber-400" : "text-red-400";
+  const modeDot = dataStatus.data_mode === "live" ? "bg-emerald-400"
+    : dataStatus.data_mode === "stale" ? "bg-amber-400" : "bg-red-400";
+
+  const latestLabel = dataStatus.latest_found
+    ? (dataStatus.latest_fresh ? "Fresh" : `Stale (${dataStatus.latest_age_seconds}s)`)
+    : "Missing";
+  const latestColor = dataStatus.latest_found
+    ? (dataStatus.latest_fresh ? "text-emerald-400" : "text-amber-400")
+    : "text-red-400";
+
+  const historyLabel = dataStatus.history_found
+    ? (dataStatus.history_fresh ? "Fresh" : `Stale (${dataStatus.history_age_seconds}s)`)
+    : "Missing";
+  const historyColor = dataStatus.history_found
+    ? (dataStatus.history_fresh ? "text-emerald-400" : "text-amber-400")
+    : "text-red-400";
+
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return "—";
+    try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+    catch { return "—"; }
+  };
+
+  return (
+    <GlassCard className="p-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">Data Status</span>
+          <span className={clsx("inline-block w-1.5 h-1.5 rounded-full", modeDot)} />
+          <span className={clsx("text-[10px] font-medium", modeColor)}>{dataStatus.status_label}</span>
+        </div>
+        <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+        {[
+          { k: "Latest", v: latestLabel, c: latestColor },
+          { k: "Updated", v: fmtTime(dataStatus.latest_updated_at) },
+          { k: "History", v: historyLabel, c: historyColor },
+          { k: "History Ts", v: fmtTime(dataStatus.history_latest_frame_ts) },
+          { k: "History Rows", v: String(dataStatus.history_row_count) },
+        ].map(({ k, v, c }) => (
+          <div key={k} className="flex items-center gap-1">
+            <span className="text-[9px] uppercase tracking-wide text-lumora-muted">{k}</span>
+            <span className={clsx("num text-[10px] font-medium", c ?? "text-lumora-text")}>{v}</span>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  );
+}
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function LiquidityMapPage() {
@@ -672,6 +737,9 @@ export default function LiquidityMapPage() {
           )}
         </div>
       </GlassCard>
+
+      {/* LM60B: Data Status Panel */}
+      <DataStatusPanel dataStatus={payload?.dataStatus ?? null} dataSource={dataSource} />
 
     </div>
   );
