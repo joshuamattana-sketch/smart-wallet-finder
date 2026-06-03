@@ -26,9 +26,9 @@ def _lvl(price: float, qty: float) -> dict:
     return {"price": price, "quantity": qty, "usd": round(price * qty, 2)}
 
 
-def _mock_snapshot() -> dict:
+def _mock_snapshot(symbol: str = "BTCUSDT") -> dict:
     return {
-        "symbol":         "BTCUSDT",
+        "symbol":         symbol,
         "last_update_id": 1,
         "captured_at":    "2026-06-01T12:00:00+00:00",
         "bids": [_lvl(67490.0, 0.5), _lvl(67420.0, 25.0)],
@@ -67,8 +67,15 @@ class TestParseBookTicker:
 
     def test_valid_message_yields_bid_ask(self):
         out = ws.parse_book_ticker(_bt(100.0, 101.0))
-        assert out == {"bestBid": 100.0, "bestAsk": 101.0,
-                       "bestBidQty": 1.0, "bestAskQty": 1.0}
+        # LM42B: parse_book_ticker also surfaces `symbol` from the message
+        # so combined-stream collectors can route to per-symbol state.
+        assert out == {
+            "bestBid":    100.0,
+            "bestAsk":    101.0,
+            "bestBidQty": 1.0,
+            "bestAskQty": 1.0,
+            "symbol":     "BTCUSDT",
+        }
 
     def test_combined_stream_wrapper(self):
         wrapped = json.dumps({
@@ -469,6 +476,168 @@ class TestMainCli:
                 "--live-dir", str(tmp_path / "live"),
             ])
         assert captured_depth_limits == [100]
+
+    # ── LM42B: multi-symbol ──────────────────────────────────────────────────
+
+    def test_symbols_cli_parses_csv(self, tmp_path, monkeypatch):
+        captured: dict = {}
+        def _spy(*, symbols, **_):
+            captured["symbols"] = list(symbols)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--symbols", "BTCUSDT,ETHUSDT,SOLUSDT",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+    def test_symbol_backward_compat(self, tmp_path):
+        """Old --symbol BTCUSDT flow still resolves to a single-symbol list."""
+        captured: dict = {}
+        def _spy(*, symbols, **_):
+            captured["symbols"] = list(symbols)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--symbol", "BTCUSDT",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["BTCUSDT"]
+
+    def test_invalid_symbol_fails_cli(self, tmp_path, capsys):
+        code = ws.main([
+            "--symbols", "BTC-USDT",  # dash not allowed
+            "--target", "live", "--samples", "1",
+            "--live-dir", str(tmp_path / "live"),
+        ])
+        assert code == 1
+        assert "invalid Binance symbol" in capsys.readouterr().err
+
+    def test_build_ws_url_single(self):
+        assert ws.build_ws_url(["BTCUSDT"]) == (
+            "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
+        )
+
+    def test_build_ws_url_combined(self):
+        assert ws.build_ws_url(["BTCUSDT", "ETHUSDT", "SOLUSDT"]) == (
+            "wss://stream.binance.com:9443/stream"
+            "?streams=btcusdt@bookTicker/ethusdt@bookTicker/solusdt@bookTicker"
+        )
+
+    def test_build_ws_url_empty_raises(self):
+        import pytest
+        with pytest.raises(ValueError, match="at least one symbol"):
+            ws.build_ws_url([])
+
+    def test_parse_book_ticker_returns_symbol(self):
+        out = ws.parse_book_ticker(_bt(100.0, 101.0))
+        assert out is not None
+        assert out["symbol"] == "BTCUSDT"
+
+    def test_parse_combined_payload_routes_per_symbol(self):
+        eth_wrapped = json.dumps({
+            "stream": "ethusdt@bookTicker",
+            "data": {"s": "ETHUSDT", "b": "2000.0", "B": "1", "a": "2010.0", "A": "1"},
+        })
+        out = ws.parse_book_ticker(eth_wrapped)
+        assert out["symbol"] == "ETHUSDT"
+        assert out["bestBid"] == 2000.0
+
+    def test_multi_symbol_state_isolation(self, tmp_path):
+        """BTC message updates only BTC state; ETH message only ETH state."""
+        out_dir = tmp_path / "live"
+        # 3 BTC msgs + 1 ETH msg. Samples=4: BTC writes 3 times, ETH writes once.
+        msgs = [
+            _bt(100.0, 101.0),                  # BTC
+            _bt(100.0, 101.0),                  # BTC
+            _bt(100.0, 101.0),                  # BTC
+            json.dumps({"s": "ETHUSDT", "b": "2000.0", "B": "1",
+                        "a": "2010.0", "A": "1"}),
+        ]
+        result = ws.run_ws_collector(
+            symbols=["BTCUSDT", "ETHUSDT"], timeframes=["5m"],
+            write_interval=0.1, max_frames=10,
+            target="live", supabase=None,
+            output_for=lambda sym, tf: out_dir / f"{sym}_{tf}.json",
+            message_iter=iter(msgs),
+            fetch_depth=lambda sym, _l: _mock_snapshot(sym),
+            samples=None, forever=False, now=_Clock(step=0.5),
+        )
+        assert result["per_symbol"]["BTCUSDT"] >= 1
+        assert result["per_symbol"]["ETHUSDT"] >= 1
+        # Both files exist with the correct symbol baked in.
+        btc = json.loads((out_dir / "BTCUSDT_5m.json").read_text("utf-8"))
+        eth = json.loads((out_dir / "ETHUSDT_5m.json").read_text("utf-8"))
+        assert btc["symbol"] == "BTCUSDT"
+        assert eth["symbol"] == "ETHUSDT"
+
+    def test_one_symbol_depth_failure_does_not_erase_other(self, tmp_path):
+        """A failing fetch_depth for ETH doesn't wipe BTC's frames."""
+        from services.connectors.binance_depth_collector import DepthCollectorError
+        out_dir = tmp_path / "live"
+
+        def _spotty_depth(sym, _l):
+            if sym == "ETHUSDT":
+                raise DepthCollectorError("simulated ETH outage")
+            return _mock_snapshot(sym)
+
+        msgs = [_bt(100.0, 101.0)] * 5  # BTC msgs only
+        result = ws.run_ws_collector(
+            symbols=["BTCUSDT", "ETHUSDT"], timeframes=["5m"],
+            write_interval=0.1, max_frames=10,
+            target="live", supabase=None,
+            output_for=lambda sym, tf: out_dir / f"{sym}_{tf}.json",
+            message_iter=iter(msgs),
+            fetch_depth=_spotty_depth,
+            samples=2, forever=False, now=_Clock(step=0.5),
+        )
+        # BTC kept rolling, ETH never got a frame → only BTC writes counted.
+        assert result["per_symbol"]["BTCUSDT"] >= 1
+        assert result["per_symbol"]["ETHUSDT"] == 0
+        assert (out_dir / "BTCUSDT_5m.json").exists()
+        assert not (out_dir / "ETHUSDT_5m.json").exists()
+
+    def test_samples_caps_total_across_symbols(self, tmp_path):
+        """`samples` counts TOTAL writes across all symbols, not per-symbol."""
+        out_dir = tmp_path / "live"
+        # Lots of messages for both BTC and ETH; cap total at 4.
+        msgs = []
+        for _ in range(20):
+            msgs.append(_bt(100.0, 101.0))
+            msgs.append(json.dumps({"s": "ETHUSDT", "b": "2000", "B": "1",
+                                    "a": "2010", "A": "1"}))
+        result = ws.run_ws_collector(
+            symbols=["BTCUSDT", "ETHUSDT"], timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="live", supabase=None,
+            output_for=lambda sym, tf: out_dir / f"{sym}_{tf}.json",
+            message_iter=iter(msgs),
+            fetch_depth=lambda sym, _l: _mock_snapshot(sym),
+            samples=4, forever=False, now=_Clock(step=1.0),
+        )
+        assert result["writes"] == 4
+
+    def test_invalid_symbol_in_collector_raises(self, tmp_path):
+        import pytest
+        with pytest.raises(ValueError, match="invalid Binance symbol"):
+            ws.run_ws_collector(
+                symbols=["BTC-USDT"], timeframes=["5m"],
+                write_interval=1.0, max_frames=10,
+                target="live", supabase=None,
+                output_for=lambda s, t: tmp_path / f"{s}_{t}.json",
+                message_iter=iter([]),
+                fetch_depth=lambda *a, **k: _mock_snapshot(),
+            )
 
     def test_startup_banner_no_secrets(self, tmp_path, capsys, monkeypatch):
         monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")

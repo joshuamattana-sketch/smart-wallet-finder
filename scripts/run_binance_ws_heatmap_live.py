@@ -84,7 +84,11 @@ DEFAULT_DEPTH_LIMIT = 1000
 DEFAULT_PRICE_STEP = 10.0
 DEFAULT_LIVE_DIR = "lumora-web/fixtures/live"
 VALID_TARGETS = ("supabase", "live", "both", "all")
-WS_URL_TEMPLATE = "wss://stream.binance.com:9443/ws/{symbol}@bookTicker"
+WS_URL_TEMPLATE          = "wss://stream.binance.com:9443/ws/{symbol}@bookTicker"
+WS_URL_COMBINED_TEMPLATE = "wss://stream.binance.com:9443/stream?streams={streams}"
+
+# Binance Spot symbol shape: 3-12 chars, A-Z + 0-9 only (no separators).
+_SYMBOL_RE = __import__("re").compile(r"^[A-Z0-9]{3,12}$")
 
 # Reconnect backoff bounds.
 _MIN_BACKOFF_S = 1.0
@@ -136,7 +140,7 @@ def parse_book_ticker(raw: str | dict | None) -> dict | None:
     if "data" in obj and isinstance(obj["data"], dict):
         obj = obj["data"]
     try:
-        return {
+        out = {
             "bestBid":    float(obj["b"]),
             "bestAsk":    float(obj["a"]),
             "bestBidQty": float(obj.get("B") or 0.0),
@@ -144,6 +148,40 @@ def parse_book_ticker(raw: str | dict | None) -> dict | None:
         }
     except (KeyError, ValueError, TypeError):
         return None
+    # LM42B: surface the symbol (`s`) so multi-symbol collectors can route
+    # the message to the correct per-symbol state. Single-symbol callers
+    # can simply ignore the field.
+    sym = obj.get("s")
+    if isinstance(sym, str) and sym:
+        out["symbol"] = sym.upper()
+    return out
+
+
+# ── Multi-symbol helpers (LM42B) ──────────────────────────────────────────────
+
+def is_valid_binance_symbol(sym: str) -> bool:
+    """Reject garbage CLI input before we open a stream we know will 404."""
+    if not isinstance(sym, str):
+        return False
+    return bool(_SYMBOL_RE.match(sym.strip().upper()))
+
+
+def build_ws_url(symbols: list[str]) -> str:
+    """
+    Build the Binance public WS URL for one or many symbols.
+
+    Single symbol → the simple `/ws/{sym}@bookTicker` endpoint
+    (byte-for-byte backward compatible with LM42A).
+    Multiple symbols → the combined `/stream?streams=...` endpoint, which
+    multiplexes every bookTicker stream over one socket.
+    """
+    cleaned = [s.strip().lower() for s in symbols if s and s.strip()]
+    if not cleaned:
+        raise ValueError("at least one symbol is required to build a WS URL")
+    if len(cleaned) == 1:
+        return WS_URL_TEMPLATE.format(symbol=cleaned[0])
+    streams = "/".join(f"{s}@bookTicker" for s in cleaned)
+    return WS_URL_COMBINED_TEMPLATE.format(streams=streams)
 
 
 # ── Payload builder ───────────────────────────────────────────────────────────
@@ -254,7 +292,8 @@ def _default_ws_messages_with_reconnect(
 
 def run_ws_collector(
     *,
-    symbol: str,
+    symbols: list[str] | None = None,
+    symbol: str | None = None,                # LM42A backward-compat shim
     timeframes: list[str],
     write_interval: float,
     max_frames: int,
@@ -277,19 +316,31 @@ def run_ws_collector(
     price_range_percent: float | None = None,
 ) -> dict:
     """
-    Drive the collector loop. Returns {writes: int, messages: int}.
+    Drive the multi-symbol WS collector loop. Returns
+    ``{writes, messages, per_symbol: {sym: writes}}``.
 
-    Validates inputs, bootstraps a single REST depth frame, then iterates
-    `message_iter`. On every loop step it checks:
-      * depth refresh (every depth_refresh_seconds via fetch_depth)
-      * write cycle (every write_interval) — builds + writes the payload
-        for each timeframe to the requested targets.
+    Accepts either ``symbols=[...]`` (LM42B) or the legacy ``symbol=`` kwarg
+    (LM42A, auto-wrapped into a single-element list for backward compat).
 
-    Per-symbol failures (fetch errors, supabase errors) are logged but do not
-    crash the loop. KeyboardInterrupt exits cleanly.
+    Per-symbol state is fully isolated: a fetch failure or stream error on
+    one symbol never wipes another symbol's frames / price_path / range
+    meta. KeyboardInterrupt exits cleanly. ``samples`` counts total writes
+    across all symbols.
     """
-    if not symbol:
-        raise ValueError("symbol is required")
+    # ── Resolve symbols (with backward-compat shim) ─────────────────────────
+    if symbols is None and symbol is not None:
+        symbols = [symbol]
+    if not symbols:
+        raise ValueError("symbols (or symbol) is required")
+    symbols = [s.upper().strip() for s in symbols if s and s.strip()]
+    if not symbols:
+        raise ValueError("symbols list is empty after normalization")
+    for s in symbols:
+        if not is_valid_binance_symbol(s):
+            raise ValueError(
+                f"invalid Binance symbol {s!r} (expect A-Z/0-9, 3-12 chars)"
+            )
+
     if not timeframes:
         raise ValueError("at least one timeframe is required")
     if write_interval <= 0:
@@ -321,48 +372,53 @@ def run_ws_collector(
         if progress is not None:
             progress(msg)
 
-    state: dict[str, object] = {
-        "best_bid": None, "best_ask": None, "mid": None,
-        "last_event_at": None,
-        "range_meta": None,
+    # ── Per-symbol state ─────────────────────────────────────────────────────
+    states: dict[str, dict] = {
+        sym: {
+            "best_bid":            None,
+            "best_ask":            None,
+            "mid":                 None,
+            "last_event_at":       None,
+            "range_meta":          None,
+            "frames":              [],
+            "price_path":          [],
+            "last_depth_refresh": -float("inf"),
+            "last_write":         -float("inf"),
+            "writes":              0,
+        }
+        for sym in symbols
     }
-    frames: list[dict] = []
-    price_path: list[dict] = []
-    writes = 0
+    total_writes = 0
     messages = 0
 
-    def _refresh_depth() -> None:
-        """
-        Fetch one REST depth snapshot, append a new frame, cap history.
-
-        When a mid is known, resolve the analysis price range, auto-scale
-        the bucket step, and filter the snapshot to that range. Before the
-        first WS message arrives we fall back to no filter (the bootstrap
-        frame still goes in so the very first write has cells).
-        """
+    def _resolve_range_for(sym: str, mid: float) -> dict | None:
         try:
-            snap = fetch_depth(symbol, depth_limit)
+            return resolve_price_range(
+                sym, range_mode, float(mid),
+                abs_override=price_range_abs,
+                pct_override=price_range_percent,
+            )
+        except ValueError as exc:
+            _say(f"range resolve failed [{sym}]: {exc}")
+            return None
+
+    def _refresh_depth(sym: str) -> None:
+        """Fetch one REST snapshot for `sym`, append a new frame per-symbol."""
+        st = states[sym]
+        try:
+            snap = fetch_depth(sym, depth_limit)
         except (DepthCollectorError, ValueError) as exc:
-            _say(f"depth refresh failed: {exc}")
+            _say(f"depth refresh failed [{sym}]: {exc}")
             return
 
-        mid = state.get("mid")
+        mid = st["mid"]
         price_range: tuple[float, float] | None = None
         effective_step = price_step
+        info = None
         if isinstance(mid, (int, float)) and mid > 0:
-            try:
-                info = resolve_price_range(
-                    symbol, range_mode, float(mid),
-                    abs_override=price_range_abs,
-                    pct_override=price_range_percent,
-                )
-            except ValueError as exc:
-                _say(f"range resolve failed: {exc}")
-                info = None
+            info = _resolve_range_for(sym, mid)
             if info is not None:
                 price_range = (info["min"], info["max"])
-                # Auto-scale only for the wider modes — tight/standard
-                # preserve the user's --price-step exactly.
                 if range_mode in ("wide", "macro"):
                     effective_step = auto_scale_price_step(
                         info["max"] - info["min"], price_step,
@@ -374,17 +430,12 @@ def run_ws_collector(
             aggregation_mode=range_mode,
             current_price=(float(mid) if isinstance(mid, (int, float)) and mid > 0 else None),
         )
-        frames.append(frame)
-        if len(frames) > max_frames:
-            del frames[: len(frames) - max_frames]
+        st["frames"].append(frame)
+        if len(st["frames"]) > max_frames:
+            del st["frames"][: len(st["frames"]) - max_frames]
 
-        if isinstance(mid, (int, float)) and mid > 0 and price_range is not None:
-            info = resolve_price_range(
-                symbol, range_mode, float(mid),
-                abs_override=price_range_abs,
-                pct_override=price_range_percent,
-            )
-            state["range_meta"] = {
+        if info is not None and price_range is not None:
+            st["range_meta"] = {
                 "mode":                info["mode"],
                 "min":                 info["min"],
                 "max":                 info["max"],
@@ -394,12 +445,20 @@ def run_ws_collector(
                 "available_depth_max": frame.get("available_depth_max"),
             }
 
-    # Bootstrap — one REST snapshot so the very first write has real cells.
-    _refresh_depth()
-    last_depth_refresh = now()
-    last_write = -float("inf")  # force first write as soon as we have a mid
+    # Bootstrap each symbol with one initial REST snapshot, then stamp a
+    # shared last_depth_refresh so the first periodic refresh is on the
+    # same clock for every symbol.
+    for sym in symbols:
+        try:
+            _refresh_depth(sym)
+        except Exception as exc:                # pragma: no cover - defensive
+            _say(f"bootstrap failed [{sym}]: {exc}")
+    t0 = now()
+    for sym in symbols:
+        states[sym]["last_depth_refresh"] = t0
 
     try:
+        should_stop = False
         for raw in message_iter:
             # One clock read per iteration so injected test clocks tick
             # predictably and so the timing gates use a single monotonic value.
@@ -408,43 +467,51 @@ def run_ws_collector(
                 messages += 1
                 parsed = parse_book_ticker(raw)
                 if parsed is not None:
-                    state["best_bid"] = parsed["bestBid"]
-                    state["best_ask"] = parsed["bestAsk"]
-                    state["mid"] = round(
-                        (parsed["bestBid"] + parsed["bestAsk"]) / 2.0, 2,
-                    )
-                    state["last_event_at"] = t
+                    # Route bookTicker updates to the matching per-symbol
+                    # state. If `symbol` is missing (legacy single-stream
+                    # format that omits `s`), assume the first configured
+                    # symbol — single-symbol mode behaves identically.
+                    sym = parsed.get("symbol") or symbols[0]
+                    st = states.get(sym)
+                    if st is not None:
+                        st["best_bid"] = parsed["bestBid"]
+                        st["best_ask"] = parsed["bestAsk"]
+                        st["mid"] = round(
+                            (parsed["bestBid"] + parsed["bestAsk"]) / 2.0, 2,
+                        )
+                        st["last_event_at"] = t
 
-            # Periodic depth refresh (REST keeps cells alive).
-            if t - last_depth_refresh >= depth_refresh_seconds:
-                _refresh_depth()
-                last_depth_refresh = t
+            for sym in symbols:
+                st = states[sym]
 
-            # Periodic write — gated by write_interval and "have-data" guards.
-            ready = (
-                state["mid"] is not None and frames
-                and (t - last_write) >= write_interval
-            )
-            if ready:
+                # Periodic depth refresh (REST keeps cells alive).
+                if t - st["last_depth_refresh"] >= depth_refresh_seconds:
+                    _refresh_depth(sym)
+                    st["last_depth_refresh"] = t
+
+                # Periodic write — gated by write_interval and "have-data".
+                ready = (
+                    st["mid"] is not None and st["frames"]
+                    and (t - st["last_write"]) >= write_interval
+                )
+                if not ready:
+                    continue
+
                 ts_iso = datetime.now(timezone.utc).isoformat()
-                price_path.append({
+                st["price_path"].append({
                     "t":       ts_iso,
-                    "price":   state["mid"],
-                    "bestBid": state["best_bid"],
-                    "bestAsk": state["best_ask"],
+                    "price":   st["mid"],
+                    "bestBid": st["best_bid"],
+                    "bestAsk": st["best_ask"],
                 })
-                if len(price_path) > max_frames:
-                    del price_path[: len(price_path) - max_frames]
+                if len(st["price_path"]) > max_frames:
+                    del st["price_path"][: len(st["price_path"]) - max_frames]
 
                 # Refresh range_meta against the LATEST mid so the canvas
                 # axis tracks price drift between depth refreshes.
-                latest_range_meta = state.get("range_meta")
-                try:
-                    info = resolve_price_range(
-                        symbol, range_mode, float(state["mid"]),
-                        abs_override=price_range_abs,
-                        pct_override=price_range_percent,
-                    )
+                latest_range_meta = st["range_meta"]
+                info = _resolve_range_for(sym, st["mid"])
+                if info is not None:
                     avail = (latest_range_meta or {})
                     latest_range_meta = {
                         "mode":                info["mode"],
@@ -455,39 +522,45 @@ def run_ws_collector(
                         "available_depth_min": avail.get("available_depth_min"),
                         "available_depth_max": avail.get("available_depth_max"),
                     }
-                    state["range_meta"] = latest_range_meta
-                except ValueError:
-                    pass
+                    st["range_meta"] = latest_range_meta
 
                 for tf in timeframes:
                     payload = build_ws_payload(
-                        symbol, tf, frames, price_path, write_interval,
+                        sym, tf, st["frames"], st["price_path"], write_interval,
                         range_meta=latest_range_meta,
                     )
                     for kind in write_targets:
                         try:
                             if kind == "supabase":
-                                assert supabase is not None  # checked above
-                                upsert(supabase, symbol, tf, payload)
+                                assert supabase is not None
+                                upsert(supabase, sym, tf, payload)
                             elif kind == "live":
-                                write_payload_atomic(payload, output_for(symbol, tf))
+                                write_payload_atomic(payload, output_for(sym, tf))
                         except (RuntimeError, OSError) as exc:
-                            _say(f"write {kind} · {symbol} {tf} · failed: {exc}")
+                            _say(f"write {kind} · {sym} {tf} · failed: {exc}")
 
-                writes += 1
-                last_write = t
+                st["writes"]  += 1
+                st["last_write"] = t
+                total_writes  += 1
                 _say(
-                    f"write #{writes} · {symbol} · tfs={','.join(timeframes)} · "
-                    f"mid={state['mid']} · msgs={messages} · "
-                    f"frames={len(frames)} · pricePath={len(price_path)}"
+                    f"write #{total_writes} · {sym} · tfs={','.join(timeframes)} · "
+                    f"mid={st['mid']} · msgs={messages} · "
+                    f"frames={len(st['frames'])} · pricePath={len(st['price_path'])}"
                 )
 
-                if not forever and samples is not None and writes >= samples:
+                if not forever and samples is not None and total_writes >= samples:
+                    should_stop = True
                     break
+            if should_stop:
+                break
     except KeyboardInterrupt:
         _say("interrupted — stopping cleanly, last writes kept")
 
-    return {"writes": writes, "messages": messages}
+    return {
+        "writes":     total_writes,
+        "messages":   messages,
+        "per_symbol": {sym: states[sym]["writes"] for sym in symbols},
+    }
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -502,7 +575,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="WebSocket-based MVP collector for one Binance Spot symbol.",
     )
     parser.add_argument("--symbol", default=DEFAULT_SYMBOL,
-                        help=f"Symbol to subscribe to (default: {DEFAULT_SYMBOL}).")
+                        help=(f"Single symbol (default: {DEFAULT_SYMBOL}). "
+                              f"Ignored when --symbols is set."))
+    parser.add_argument("--symbols", default=None,
+                        help=("Comma-separated symbols, e.g. "
+                              "BTCUSDT,ETHUSDT,SOLUSDT. When set, subscribes "
+                              "to a combined Binance bookTicker stream."))
     parser.add_argument("--timeframes", default=DEFAULT_TIMEFRAMES,
                         help=f"Comma-separated timeframes (default: {DEFAULT_TIMEFRAMES}).")
     parser.add_argument("--write-interval", type=float,
@@ -549,7 +627,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    symbol = args.symbol.upper()
+
+    # LM42B: --symbols (CSV) wins; fall back to --symbol for backward compat.
+    if args.symbols:
+        symbols = [s.upper() for s in _split_list(args.symbols)]
+    else:
+        symbols = [args.symbol.upper()]
+
+    if not symbols:
+        print("error: invalid argument — no symbols resolved", file=sys.stderr)
+        return 1
+    for sym in symbols:
+        if not is_valid_binance_symbol(sym):
+            print(
+                f"error: invalid argument — invalid Binance symbol {sym!r} "
+                f"(expect A-Z/0-9, 3-12 chars)",
+                file=sys.stderr,
+            )
+            return 1
+
     try:
         timeframes = [t.lower() for t in _split_list(args.timeframes)]
     except ValueError as exc:
@@ -581,16 +677,17 @@ def main(argv: list[str] | None = None) -> int:
     mode_label = "forever" if args.forever else (
         f"samples={args.samples}" if args.samples is not None else "samples=∞"
     )
+    stream_label = "single" if len(symbols) == 1 else f"combined×{len(symbols)}"
     print(
         "run_binance_ws_heatmap_live startup:\n"
         f"  mode               = {mode_label}\n"
-        f"  symbol             = {symbol}\n"
+        f"  symbols            = {', '.join(symbols)}\n"
         f"  timeframes         = {', '.join(timeframes)}\n"
         f"  target             = {args.target}\n"
         f"  write interval     = {args.write_interval}s\n"
         f"  depth refresh      = {args.depth_refresh}s\n"
         f"  max frames         = {args.max_frames}\n"
-        f"  collector          = {COLLECTOR_TAG}\n"
+        f"  collector          = {COLLECTOR_TAG} ({stream_label} stream)\n"
         f"  supabase           = "
         f"{'configured' if sb_cfg is not None else 'not configured'}\n"
         f"  range mode         = {args.range_mode}"
@@ -599,7 +696,7 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
 
-    url = WS_URL_TEMPLATE.format(symbol=symbol.lower())
+    url = build_ws_url(symbols)
     progress = lambda m: print(f"  {m}", flush=True)  # noqa: E731
     msg_iter = _default_ws_messages_with_reconnect(url, progress=progress)
 
@@ -615,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = run_ws_collector(
-            symbol=symbol,
+            symbols=symbols,
             timeframes=timeframes,
             write_interval=args.write_interval,
             max_frames=args.max_frames,

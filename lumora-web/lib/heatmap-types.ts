@@ -146,6 +146,12 @@ export interface HeatmapMeta {
   bucketAggregation?: number;
   /** LM44: version tag for the wall/zone scoring model. "2" = LM44 model. */
   wallScoreVersion?: string;
+  /** LM42A/B: collector kind, e.g. "binance_websocket". */
+  collector?: string;
+  /** LM42A/B: source stream identifier, e.g. "bookTicker". */
+  stream?: string;
+  /** LM42A/B: configured write interval (seconds) on the producer side. */
+  writeIntervalSeconds?: number;
 }
 
 /**
@@ -274,11 +280,27 @@ export function heatmapResolvedStatus(p: HeatmapApiPayload | null): {
     return { label: "—", variant: "muted", resolved: null, isFallback: false, stale: false };
   }
   const m = p.meta;
-  const resolved = m?.resolvedSource ?? m?.source ?? m?.dataSource ?? null;
-  const isFallback = m?.isFallback ?? false;
-  const stale = heatmapIsStale(p);
+  const resolvedSource = m?.resolvedSource ?? null;
+  const sourceField    = m?.source ?? null;
+  const dataSource     = m?.dataSource ?? null;
+  const collector      = m?.collector ?? null;
+  const isFallback     = m?.isFallback ?? false;
+  const stale          = heatmapIsStale(p);
 
-  if (resolved === "live") {
+  // LM42C: any of these flags means we're on the real live pipeline (Supabase
+  // -> Vercel API, or local-WS writer that LM42B introduced). Older fixtures
+  // / mock payloads keep their Fixture Fallback / Demo Fallback labels.
+  const isLive =
+    resolvedSource === "live" ||
+    dataSource === "supabase_live" ||
+    dataSource === "binance_ws_live_writer" ||
+    sourceField === "supabase_live" ||
+    sourceField === "binance_ws_live_writer" ||
+    collector === "binance_websocket";
+
+  const resolved = resolvedSource ?? sourceField ?? dataSource ?? null;
+
+  if (isLive) {
     return { label: "Live", variant: "green", resolved, isFallback, stale };
   }
   if (resolved === "fixture" || resolved === "local_live_fixture" || resolved === "local_live_writer") {
