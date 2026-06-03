@@ -864,6 +864,59 @@ class TestLocalHeatmapLive:
                            "--output-dir", str(tmp_path / "f")])
         assert exc.value.code != 0
 
+    def test_wide_range_auto_bumps_depth_limit(self, tmp_path):
+        """LM43B: --range-mode wide auto-requests deeper book (5000 vs 1000)."""
+        from scripts import run_local_heatmap_live as live
+        from unittest.mock import patch
+        calls: list[tuple] = []
+        def _spy(symbol, limit):
+            calls.append((symbol, limit))
+            return _mock_snapshot()
+        with patch.object(live, "fetch_depth_snapshot", side_effect=_spy), \
+             patch.object(live.time, "sleep"):
+            code = live.main([
+                "--symbols", "BTCUSDT", "--range-mode", "wide",
+                "--samples", "1", "--interval", "2",
+                "--output-dir", str(tmp_path / "fix"),
+            ])
+        assert code == 0
+        assert calls and calls[0][1] == 5000
+
+    def test_standard_range_keeps_default_depth_limit(self, tmp_path):
+        from scripts import run_local_heatmap_live as live
+        from unittest.mock import patch
+        calls: list[tuple] = []
+        def _spy(symbol, limit):
+            calls.append((symbol, limit))
+            return _mock_snapshot()
+        with patch.object(live, "fetch_depth_snapshot", side_effect=_spy), \
+             patch.object(live.time, "sleep"):
+            code = live.main([
+                "--symbols", "BTCUSDT",
+                "--samples", "1", "--interval", "2",
+                "--output-dir", str(tmp_path / "fix"),
+            ])
+        assert code == 0
+        assert calls and calls[0][1] == 1000
+
+    def test_explicit_limit_wins_over_auto_bump(self, tmp_path):
+        from scripts import run_local_heatmap_live as live
+        from unittest.mock import patch
+        calls: list[tuple] = []
+        def _spy(symbol, limit):
+            calls.append((symbol, limit))
+            return _mock_snapshot()
+        with patch.object(live, "fetch_depth_snapshot", side_effect=_spy), \
+             patch.object(live.time, "sleep"):
+            code = live.main([
+                "--symbols", "BTCUSDT", "--range-mode", "macro",
+                "--limit", "100",
+                "--samples", "1", "--interval", "2",
+                "--output-dir", str(tmp_path / "fix"),
+            ])
+        assert code == 0
+        assert calls and calls[0][1] == 100
+
     def test_meta_available_depth_present(self, tmp_path):
         _, outdir, _, _ = _run_multi(
             tmp_path, ["--symbols", "BTCUSDT", "--samples", "1", "--interval", "2"],

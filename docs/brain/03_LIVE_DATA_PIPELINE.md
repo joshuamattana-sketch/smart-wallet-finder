@@ -90,3 +90,34 @@ Implementation notes:
 - New meta fields: `priceRangeMode`, `priceRangeMin`, `priceRangeMax`,
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
+
+## LM43C — Smart Viewport
+LM43B made the wide y-axis render, but for `macro` mode (±15000 USD) all
+real liquidity got compressed into a thin strip in the middle of a mostly
+empty axis. LM43C separates **collection** from **viewport**:
+- The writer still collects/stamps the wide requested range in meta.
+- The canvas computes the visible y-axis from where data actually exists
+  (cells/walls → fallback to `availableDepthMin/Max` → fallback to the
+  requested range) plus padding (20% for wide context, 8% otherwise) plus
+  the current price line.
+- The requested `priceRangeMin/Max` is used as an outer **ceiling** for
+  that viewport, never as a forced bound.
+- A small `View: Auto · Range: <mode>` chip in the canvas corner shows
+  the operator that auto-viewport is active.
+- Fallback: when no range meta exists, the original auto-tighten behavior
+  applies — fully backward compatible.
+
+## LM43B — Make Wide Range Actually Visible
+Fixes for "wide/macro looks narrow" after LM43:
+- **Per-cell absolute price**: `compress_heatmap_matrix` now emits
+  `cell.price_bucket` so the canvas can place each cell at its real price.
+  The legacy `priceMin + p × step` formula broke for sparse axes (common
+  for wide/macro), squishing cells into the wrong rows.
+- **Canvas honors meta range**: HeatmapCanvas uses `meta.priceRangeMin/Max`
+  as the rendered y-axis bounds whenever present, and treats them as a
+  valid axis even when the snapshot is empty (so the wider frame still
+  draws with empty space above/below the observed liquidity).
+- **Deeper book for wide/macro**: both writers auto-bump the Binance depth
+  API limit to 5000 (from 1000) for `--range-mode wide|macro`. Explicit
+  `--limit` / `--depth-limit` always wins. This populates more of the
+  wider y-axis with real far-from-mid levels.

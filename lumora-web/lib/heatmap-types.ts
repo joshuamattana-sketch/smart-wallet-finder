@@ -11,11 +11,19 @@ export type HeatmapTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
  * bid / ask / total are log-scaled intensities in [0, 100].
  */
 export interface HeatmapCell {
-  p: number;      // index into price_axis
+  p: number;      // index into price_axis (legacy — observed-axis index, may have gaps)
   t: number;      // index into timeBuckets
   bid: number;    // bid intensity 0–100 (0 when no bid liquidity at this cell)
   ask: number;    // ask intensity 0–100 (0 when no ask liquidity at this cell)
   total: number;  // combined intensity 0–100
+  /**
+   * LM43B: absolute USD price at the centre of this cell's bucket. Prefer
+   * this over `priceMin + p * step` when present — the observed price_axis
+   * has gaps for wide/macro ranges, so the index-times-step formula
+   * mis-places cells. Older fixtures without this field still work via the
+   * legacy formula.
+   */
+  price_bucket?: number;
 }
 
 /** A significant liquidity concentration detected above the wall threshold. */

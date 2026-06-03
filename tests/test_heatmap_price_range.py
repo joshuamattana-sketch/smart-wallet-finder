@@ -260,3 +260,101 @@ class TestPayloadMetaIntegration:
                   "priceRangeRequestedMin", "priceRangeRequestedMax",
                   "availableDepthMin", "availableDepthMax"):
             assert k not in m
+
+
+# ── LM43B: cell absolute price + canvas data shape ───────────────────────────
+
+class TestCellAbsolutePrice:
+
+    def test_cells_carry_price_bucket(self):
+        """compress_heatmap_matrix emits cell.price_bucket for canvas correctness."""
+        from services.heatmap_matrix_builder import (
+            build_heatmap_matrix, compress_heatmap_matrix,
+        )
+        frame = build_heatmap_cells(_wide_snapshot(), price_step=10.0)
+        matrix = build_heatmap_matrix([frame])
+        compact = compress_heatmap_matrix(matrix)
+        assert compact["cells"], "expected at least one non-zero cell"
+        for cell in compact["cells"]:
+            assert "price_bucket" in cell
+            assert isinstance(cell["price_bucket"], (int, float))
+
+    def test_cell_price_bucket_correct_with_gappy_axis(self):
+        """
+        When the observed axis has gaps (sparse liquidity across a wide
+        range), cell.price_bucket must equal the actual bucket price —
+        NOT priceMin + p*step, which assumes a contiguous grid.
+        """
+        from services.heatmap_matrix_builder import (
+            build_heatmap_matrix, compress_heatmap_matrix,
+        )
+        # Three distinct, far-apart buckets so the log-scaled intensity is
+        # strictly > 0 for each (avoids the floor-to-zero edge case).
+        snap = {
+            "symbol":      "BTCUSDT",
+            "captured_at": "2026-06-01T12:00:00+00:00",
+            "bids": [_lvl(67000.0, 1.0), _lvl(68500.0, 10.0)],
+            "asks": [_lvl(70000.0, 50.0)],
+        }
+        frame = build_heatmap_cells(snap, price_step=10.0)
+        matrix = build_heatmap_matrix([frame])
+        compact = compress_heatmap_matrix(matrix)
+
+        prices_via_bucket = sorted({c["price_bucket"] for c in compact["cells"]})
+        # The 70k ask is far from the 67k–68.5k bids → axis has big gaps.
+        assert 70000.0 in prices_via_bucket
+        assert 68500.0 in prices_via_bucket
+        cells_at_70k = [c for c in compact["cells"] if c["price_bucket"] == 70000.0]
+        assert cells_at_70k, "ask cell at 70000 must exist"
+        # LM43B bug fix: the legacy formula priceMin + p*step would mis-place
+        # this cell because the observed axis is sparse [..., 68500, 70000]
+        # and step=10 doesn't bridge the gap.
+        index_formula_price = compact["priceMin"] + cells_at_70k[0]["p"] * 10.0
+        assert index_formula_price != 70000.0
+        # The new absolute price_bucket field places it correctly.
+        assert cells_at_70k[0]["price_bucket"] == 70000.0
+
+    def test_canvas_data_shape_for_wide_range(self):
+        """
+        End-to-end: writer asks for wide range, snapshot only covers a
+        narrow slice. Payload carries (a) meta.priceRange{Min,Max} = wide
+        bounds, (b) priceMin/Max = narrow observed bounds, (c) per-cell
+        absolute price_bucket inside the wide range. This is exactly what
+        the canvas needs to render the wider axis correctly.
+        """
+        from services.heatmap_matrix_builder import build_heatmap_matrix
+        from services.heatmap_api_payload import build_heatmap_api_payload
+
+        snap = {
+            "symbol":      "BTCUSDT",
+            "captured_at": "2026-06-01T12:00:00+00:00",
+            "bids": [_lvl(67000.0, 5.0), _lvl(67100.0, 10.0)],
+            "asks": [_lvl(67150.0, 8.0), _lvl(67200.0, 6.0)],
+        }
+        info = resolve_price_range("BTCUSDT", "wide", 67100.0)
+        frame = build_heatmap_cells(
+            snap, price_step=50.0,
+            price_range=(info["min"], info["max"]),
+        )
+        matrix = build_heatmap_matrix([frame])
+        payload = build_heatmap_api_payload(
+            matrix,
+            price_range_meta={
+                "mode": "wide", "min": info["min"], "max": info["max"],
+                "abs": info["abs"], "pct": info["pct"],
+                "available_depth_min": frame["available_depth_min"],
+                "available_depth_max": frame["available_depth_max"],
+            },
+        )
+        m = payload["meta"]
+        assert m["priceRangeMin"] == info["min"]
+        assert m["priceRangeMax"] == info["max"]
+        assert m["priceRangeMax"] - m["priceRangeMin"] == 15000.0
+        assert payload["priceMin"] is not None
+        assert payload["priceMax"] is not None
+        assert payload["priceMax"] - payload["priceMin"] < 1000.0
+        for cell in payload["cells"]:
+            assert "price_bucket" in cell
+            assert info["min"] <= cell["price_bucket"] <= info["max"]
+        assert m["availableDepthMin"] == 67000.0
+        assert m["availableDepthMax"] == 67200.0

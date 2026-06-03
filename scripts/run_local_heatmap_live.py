@@ -704,7 +704,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Single symbol (default: BTCUSDT). Ignored when --symbols is set.")
     parser.add_argument("--symbols", default=None,
                         help="Comma-separated symbols, e.g. BTCUSDT,ETHUSDT,SOLUSDT.")
-    parser.add_argument("--limit", type=int, default=1000)
+    parser.add_argument("--limit", type=int, default=None,
+                        help=("Binance depth API limit. Defaults to 1000; "
+                              "auto-bumped to 5000 when --range-mode is wide "
+                              "or macro so far levels actually populate the "
+                              "wider y-axis."))
     parser.add_argument("--price-step", type=float, default=None, dest="price_step",
                         help="Global price step override applied to all symbols.")
     parser.add_argument("--price-steps", default=None, dest="price_steps",
@@ -836,7 +840,10 @@ def main(argv: list[str] | None = None) -> int:
             symbols=symbols,
             timeframes=timeframes,
             price_steps=resolved_steps,
-            limit=args.limit,
+            limit=(
+                args.limit if args.limit is not None
+                else (5000 if args.range_mode in ("wide", "macro") else 1000)
+            ),
             samples=args.samples,
             interval=args.interval,
             max_frames=args.max_frames,

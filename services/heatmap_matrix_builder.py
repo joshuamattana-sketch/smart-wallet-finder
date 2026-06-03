@@ -154,7 +154,18 @@ def compress_heatmap_matrix(matrix: dict) -> dict:
             ask   = ask_matrix[p_idx][t_idx]   if ask_matrix   else 0.0
             total = total_matrix[p_idx][t_idx] if total_matrix else 0.0
             if bid or ask or total:
-                cells.append({"p": p_idx, "t": t_idx, "bid": bid, "ask": ask, "total": total})
+                # LM43B: emit absolute `price_bucket` so the canvas can place
+                # cells correctly even when the observed price_axis has gaps
+                # (which is common for wide/macro ranges with coarse steps).
+                # Older consumers reading only `p` keep working.
+                cells.append({
+                    "p":            p_idx,
+                    "t":            t_idx,
+                    "bid":          bid,
+                    "ask":          ask,
+                    "total":        total,
+                    "price_bucket": price,
+                })
 
     return {
         "symbol": matrix.get("symbol", ""),

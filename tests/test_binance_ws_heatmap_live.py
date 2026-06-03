@@ -404,6 +404,53 @@ class TestMainCli:
                 range_mode="bogus",
             )
 
+    def test_wide_range_auto_bumps_depth_limit(self, tmp_path):
+        """LM43B: --range-mode wide bumps WS collector's depth_limit to 5000."""
+        captured_depth_limits: list[int] = []
+        def _spy_collector(*, depth_limit, **_):
+            captured_depth_limits.append(depth_limit)
+            return {"writes": 0, "messages": 0}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy_collector):
+            ws.main([
+                "--symbol", "BTCUSDT", "--range-mode", "wide",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert captured_depth_limits == [5000]
+
+    def test_standard_range_keeps_default_depth_limit(self, tmp_path):
+        captured_depth_limits: list[int] = []
+        def _spy_collector(*, depth_limit, **_):
+            captured_depth_limits.append(depth_limit)
+            return {"writes": 0, "messages": 0}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy_collector):
+            ws.main([
+                "--symbol", "BTCUSDT",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert captured_depth_limits == [1000]
+
+    def test_explicit_depth_limit_wins_over_auto_bump(self, tmp_path):
+        captured_depth_limits: list[int] = []
+        def _spy_collector(*, depth_limit, **_):
+            captured_depth_limits.append(depth_limit)
+            return {"writes": 0, "messages": 0}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy_collector):
+            ws.main([
+                "--symbol", "BTCUSDT", "--range-mode", "macro",
+                "--depth-limit", "100",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert captured_depth_limits == [100]
+
     def test_startup_banner_no_secrets(self, tmp_path, capsys, monkeypatch):
         monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "super-secret-xyz")

@@ -506,6 +506,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--depth-refresh", type=float,
                         default=DEFAULT_DEPTH_REFRESH_S, dest="depth_refresh",
                         help="Seconds between REST depth snapshots (default: 30).")
+    parser.add_argument("--depth-limit", type=int, default=None,
+                        dest="depth_limit",
+                        help=("Binance depth API limit. Defaults to 1000; "
+                              "auto-bumped to 5000 for --range-mode wide/macro "
+                              "so the wider y-axis actually carries far levels."))
     parser.add_argument("--price-step", type=float, default=DEFAULT_PRICE_STEP,
                         dest="price_step",
                         help="USD price bucket size for cells (default: 10).")
@@ -590,6 +595,16 @@ def main(argv: list[str] | None = None) -> int:
     progress = lambda m: print(f"  {m}", flush=True)  # noqa: E731
     msg_iter = _default_ws_messages_with_reconnect(url, progress=progress)
 
+    # LM43B: wide/macro want deeper books than the default 1000 levels so
+    # the wider y-axis actually carries data far from mid. Explicit
+    # --depth-limit always wins.
+    if args.depth_limit is not None:
+        effective_depth_limit = args.depth_limit
+    elif args.range_mode in ("wide", "macro"):
+        effective_depth_limit = 5000
+    else:
+        effective_depth_limit = DEFAULT_DEPTH_LIMIT
+
     try:
         result = run_ws_collector(
             symbol=symbol,
@@ -600,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
             supabase=sb_cfg,
             output_for=output_for,
             message_iter=msg_iter,
+            depth_limit=effective_depth_limit,
             depth_refresh_seconds=args.depth_refresh,
             price_step=args.price_step,
             wall_threshold_usd=args.wall_threshold,

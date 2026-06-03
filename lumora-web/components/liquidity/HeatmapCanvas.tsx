@@ -7,7 +7,7 @@
 // visual design.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import type { HeatmapApiPayload, HeatmapCell } from "@/lib/heatmap-types";
 import { intensityToColor, wallColor } from "@/lib/heatmap-colors";
 
 interface HeatmapCanvasProps {
@@ -110,8 +110,19 @@ export function HeatmapCanvas({
       ctx.fillRect(PAD_LEFT, PAD_TOP, plotW, plotH);
 
       // ── Derive price axis from priceMin/priceMax/priceStep ──────────────────
-      const priceMin = payload.priceMin;
-      const priceMax = payload.priceMax;
+      // LM43B: when meta carries a requested analysis range, treat it as a
+      // valid axis even if the snapshot is empty (no observed buckets) — we
+      // still want to draw the wider y-axis instead of "no data".
+      const observedMin = payload.priceMin;
+      const observedMax = payload.priceMax;
+      const metaRangeMin = payload.meta?.priceRangeMin;
+      const metaRangeMax = payload.meta?.priceRangeMax;
+      const haveMetaRange =
+        typeof metaRangeMin === "number" &&
+        typeof metaRangeMax === "number" &&
+        metaRangeMax > metaRangeMin;
+      const priceMin = observedMin ?? (haveMetaRange ? metaRangeMin : null);
+      const priceMax = observedMax ?? (haveMetaRange ? metaRangeMax : null);
       const step = payload.priceStep || 1;
       const buckets = payload.timeBuckets?.length ?? 0;
 
@@ -143,48 +154,85 @@ export function HeatmapCanvas({
       const payloadMin = priceMin as number;
       const payloadMax = priceMax as number;
 
-      // p index → price (always relative to the full payload axis).
+      // p index → price (relative to the full payload axis). LM43B: this
+      // is now a *fallback* — the writer also stamps absolute `price_bucket`
+      // on every cell since LM43B, which is correct even when the observed
+      // axis has gaps (common for wide/macro ranges with coarse steps).
       const indexToPrice = (p: number) => payloadMin + p * step;
+      const cellPrice = (cell: HeatmapCell): number =>
+        typeof cell.price_bucket === "number"
+          ? cell.price_bucket
+          : indexToPrice(cell.p);
 
-      // ── Pick the rendered y-axis bounds ─────────────────────────────────────
-      // LM43: when the writer stamps an analysis-grade requested range
-      // (meta.priceRangeMin/Max), honor it so the user sees the full wider
-      // context — even where Binance depth doesn't reach. Otherwise fall back
-      // to auto-tightening around where the densest liquidity sits.
+      // ── Pick the rendered y-axis bounds (LM43C: smart viewport) ─────────────
+      // Wide/macro modes COLLECT a wide context but the *viewport* should
+      // focus on where liquidity actually sits, padded around the current
+      // price. The requested range stays available in meta and acts as the
+      // outer ceiling for that viewport — never as a forced bound. This
+      // avoids the macro-mode failure case where all real liquidity gets
+      // compressed into a thin strip in the middle of an otherwise empty
+      // 30,000-USD-tall axis.
       const rangeMin = payload.meta?.priceRangeMin;
       const rangeMax = payload.meta?.priceRangeMax;
-      let pMin = payloadMin;
-      let pMax = payloadMax;
-      if (
+      const availMin = payload.meta?.availableDepthMin;
+      const availMax = payload.meta?.availableDepthMax;
+      const haveRequestedRange =
         typeof rangeMin === "number" &&
         typeof rangeMax === "number" &&
-        rangeMax > rangeMin
-      ) {
-        pMin = rangeMin;
-        pMax = rangeMax;
-      } else {
-        let dataLo = Infinity;
-        let dataHi = -Infinity;
-        for (const cell of payload.cells) {
-          if (cell.total < 6) continue;
-          const price = indexToPrice(cell.p);
-          if (price < dataLo) dataLo = price;
-          if (price > dataHi) dataHi = price;
+        rangeMax > rangeMin;
+
+      // 1) Start from where real data is: prefer observed cells/walls;
+      //    fall back to writer-reported available depth; finally the
+      //    requested range so something always renders.
+      let dataLo = Infinity;
+      let dataHi = -Infinity;
+      for (const cell of payload.cells) {
+        if (cell.total < 6) continue;
+        const price = cellPrice(cell);
+        if (price < dataLo) dataLo = price;
+        if (price > dataHi) dataHi = price;
+      }
+      for (const wall of payload.walls) {
+        if (wall.price_bucket < dataLo) dataLo = wall.price_bucket;
+        if (wall.price_bucket > dataHi) dataHi = wall.price_bucket;
+      }
+      if (!(dataHi > dataLo)) {
+        if (typeof availMin === "number" && typeof availMax === "number"
+            && availMax > availMin) {
+          dataLo = availMin;
+          dataHi = availMax;
+        } else if (haveRequestedRange) {
+          dataLo = rangeMin as number;
+          dataHi = rangeMax as number;
+        } else {
+          dataLo = payloadMin;
+          dataHi = payloadMax;
         }
-        for (const wall of payload.walls) {
-          if (wall.price_bucket < dataLo) dataLo = wall.price_bucket;
-          if (wall.price_bucket > dataHi) dataHi = wall.price_bucket;
-        }
-        if (dataHi > dataLo) {
-          const pad = Math.max(step * 2, (dataHi - dataLo) * 0.08);
-          pMin = Math.max(payloadMin, dataLo - pad);
-          pMax = Math.min(payloadMax, dataHi + pad);
-          if (typeof currentPrice === "number" &&
-              currentPrice >= payloadMin && currentPrice <= payloadMax) {
-            pMin = Math.min(pMin, currentPrice - pad);
-            pMax = Math.max(pMax, currentPrice + pad);
-          }
-        }
+      }
+
+      // 2) Pad around the data band. For wide/macro, use a larger relative
+      //    pad so the user perceives more context above/below liquidity
+      //    while still keeping the band readable.
+      const isWideContext = haveRequestedRange &&
+        ((rangeMax as number) - (rangeMin as number)) >= ((dataHi - dataLo) * 3);
+      const padFrac = isWideContext ? 0.20 : 0.08;
+      const pad = Math.max(step * 2, (dataHi - dataLo) * padFrac);
+
+      let pMin = dataLo - pad;
+      let pMax = dataHi + pad;
+
+      // 3) Always keep the current price visible, with breathing room.
+      if (typeof currentPrice === "number") {
+        const cpPad = Math.max(step * 4, (dataHi - dataLo) * 0.05);
+        pMin = Math.min(pMin, currentPrice - cpPad);
+        pMax = Math.max(pMax, currentPrice + cpPad);
+      }
+
+      // 4) Clamp to the requested range as an outer CEILING — never expand
+      //    the viewport to fill the whole wide/macro band.
+      if (haveRequestedRange) {
+        pMin = Math.max(pMin, rangeMin as number);
+        pMax = Math.min(pMax, rangeMax as number);
       }
       if (!(pMax > pMin)) { pMin = payloadMin; pMax = payloadMax; }
 
@@ -231,7 +279,7 @@ export function HeatmapCanvas({
       if (octx) {
         for (const cell of payload.cells) {
           if (cell.t < 0 || cell.t >= buckets) continue;
-          const price = indexToPrice(cell.p);
+          const price = cellPrice(cell);
           if (price < pMin || price > pMax) continue;
 
           const side =
@@ -438,6 +486,15 @@ export function HeatmapCanvas({
       {showDebug && debug && !error && (
         <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/40 text-[8px] leading-none text-white/35 font-mono pointer-events-none">
           {debug.drawn}/{debug.cells} · {debug.ms}ms
+        </div>
+      )}
+
+      {/* LM43C: tiny non-invasive label so the user knows the viewport
+          auto-fits the data even though the underlying mode collects a wider
+          context. Only shown when a range mode is stamped. */}
+      {payload.meta?.priceRangeMode && !error && (
+        <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/40 text-[9px] leading-none text-white/45 font-mono pointer-events-none">
+          View: Auto · Range: {payload.meta.priceRangeMode}
         </div>
       )}
     </div>
