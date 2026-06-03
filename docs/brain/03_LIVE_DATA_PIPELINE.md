@@ -91,6 +91,32 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM42B — Multi-Symbol WebSocket Collector
+The WS collector now supports many symbols on one socket.
+
+- `--symbols BTCUSDT,ETHUSDT,SOLUSDT` switches to Binance's combined
+  `/stream?streams=…` endpoint. Multiplexes every bookTicker over a
+  single TCP connection.
+- `--symbol BTCUSDT` still works unchanged (uses the original
+  `/ws/{sym}@bookTicker` endpoint for byte-for-byte LM42A compat).
+- `is_valid_binance_symbol` rejects garbage CLI input (`A-Z0-9`, 3–12
+  chars) before opening a stream that would 404.
+- Per-symbol state isolation: `bestBid/Ask`, `mid`, `frames`,
+  `price_path`, `range_meta`, `last_depth_refresh`, `last_write` are
+  all keyed by symbol. One symbol's depth-fetch or upsert error never
+  wipes another symbol's data.
+- Depth refresh is per-symbol; each symbol respects its own
+  `last_depth_refresh` and uses `depth_refresh_seconds` independently.
+- Write cadence is per-symbol — each symbol writes at most once per
+  `write_interval` window. `--samples` caps **total** writes across
+  symbols (e.g. `samples=4` with 2 symbols → 4 writes total).
+- Return shape: `{writes, messages, per_symbol: {sym: writes}}`.
+- Recommended hosted command:
+  `python scripts/run_binance_ws_heatmap_live.py \
+      --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+      --write-interval 1 --max-frames 1200 \
+      --target supabase --forever --range-mode wide`
+
 ## LM44 — Trader-Grade Liquidity Aggregation
 Layered on top of cells/walls; fully additive.
 
