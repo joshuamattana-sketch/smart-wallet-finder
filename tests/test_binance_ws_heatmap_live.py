@@ -958,6 +958,108 @@ class TestUseEnvConfig:
         assert captured["timeframes"] == ["5m"]
 
 
+# ── LM53F: env-config precedence fix ────────────────────────────────────────
+
+class TestEnvConfigPrecedence:
+
+    def test_env_history_target_none_no_supabase_required(self, tmp_path, monkeypatch):
+        """WORKER_HISTORY_TARGET=none + --use-env-config should not require SUPABASE_URL."""
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "none")
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        captured: dict = {}
+        def _spy(**kw):
+            captured.update(kw)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["history_target"] == "none"
+
+    def test_env_history_target_supabase_requires_config(self, tmp_path, monkeypatch, capsys):
+        """WORKER_HISTORY_TARGET=supabase + --use-env-config requires SUPABASE_URL."""
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "supabase")
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        code = ws.main([
+            "--use-env-config",
+            "--target", "live", "--samples", "1",
+            "--live-dir", str(tmp_path / "live"),
+        ])
+        assert code == 1
+        assert "SUPABASE" in capsys.readouterr().err
+
+    def test_explicit_cli_history_target_supabase_overrides_env_none(self, tmp_path, monkeypatch):
+        """Explicit --history-target supabase wins over WORKER_HISTORY_TARGET=none."""
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "none")
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "fake-key")
+        captured: dict = {}
+        def _spy(**kw):
+            captured.update(kw)
+            return {"writes": 0, "messages": 0, "per_symbol": {},
+                    "history_writes": 0, "history_failures": 0,
+                    "history_per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--history-target", "supabase",
+                "--target", "supabase", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["history_target"] == "supabase"
+
+    def test_explicit_cli_history_target_none_overrides_env_supabase(self, tmp_path, monkeypatch):
+        """Explicit --history-target none wins over WORKER_HISTORY_TARGET=supabase."""
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "supabase")
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        captured: dict = {}
+        def _spy(**kw):
+            captured.update(kw)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--use-env-config",
+                "--history-target", "none",
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["history_target"] == "none"
+
+    def test_default_unchanged_without_use_env_config(self, tmp_path, monkeypatch):
+        """Without --use-env-config, WORKER_* env vars are ignored."""
+        monkeypatch.setenv("WORKER_HISTORY_TARGET", "supabase")
+        monkeypatch.setenv("WORKER_SYMBOLS", "HYPEUSDT")
+        captured: dict = {}
+        def _spy(*, symbols, **kw):
+            captured["symbols"] = list(symbols)
+            captured.update(kw)
+            return {"writes": 0, "messages": 0, "per_symbol": {}}
+        with patch.object(ws, "_default_ws_messages_with_reconnect",
+                          return_value=iter([])), \
+             patch.object(ws, "run_ws_collector", side_effect=_spy):
+            code = ws.main([
+                "--target", "live", "--samples", "1",
+                "--live-dir", str(tmp_path / "live"),
+            ])
+        assert code == 0
+        assert captured["symbols"] == ["BTCUSDT"]
+        assert captured["history_target"] == "none"
+
+
 # ── LM53E: worker health heartbeat wiring ───────────────────────────────────
 
 class TestWorkerHealthWiring:

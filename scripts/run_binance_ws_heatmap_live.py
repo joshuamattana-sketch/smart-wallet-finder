@@ -785,25 +785,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    # LM53B: when --use-env-config is set, load env defaults and apply them
+    # LM53B/F: when --use-env-config is set, load env defaults and apply them
     # where the user did not provide an explicit CLI override.
+    # We parse argv to know which flags were explicitly provided — comparing
+    # against argparse defaults cannot distinguish "user typed the default"
+    # from "argparse filled it in."
     if args.use_env_config:
         env_cfg = load_live_worker_config()
-        # Symbols: env only applies if neither --symbols nor --symbol was
-        # explicitly changed from the default.
-        if args.symbols is None and args.symbol == DEFAULT_SYMBOL:
+        raw_argv = argv if argv is not None else sys.argv[1:]
+        _explicit = {a.lstrip("-").replace("-", "_")
+                     for a in raw_argv if a.startswith("--")}
+        if "symbols" not in _explicit and "symbol" not in _explicit:
             args.symbols = ",".join(env_cfg["symbols"])
-        # Timeframes: only if the user kept the default.
-        if args.timeframes == DEFAULT_TIMEFRAMES:
+        if "timeframes" not in _explicit:
             args.timeframes = ",".join(env_cfg["timeframes"])
-        # History settings from env (only if user kept defaults).
-        if args.history_target == "none":
+        if "history_target" not in _explicit:
             args.history_target = env_cfg["history_target"]
-        if args.history_interval == DEFAULT_HISTORY_INTERVAL_S:
+        if "history_interval" not in _explicit:
             args.history_interval = float(env_cfg["history_interval"])
-        if args.history_max_cells == DEFAULT_HISTORY_MAX_CELLS:
+        if "history_max_cells" not in _explicit:
             args.history_max_cells = int(env_cfg["max_cells"])
-        if args.history_max_walls == DEFAULT_HISTORY_MAX_WALLS:
+        if "history_max_walls" not in _explicit:
             args.history_max_walls = int(env_cfg["max_walls"])
 
     # LM42B: --symbols (CSV) wins; fall back to --symbol for backward compat.
