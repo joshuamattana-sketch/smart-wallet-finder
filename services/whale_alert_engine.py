@@ -841,6 +841,114 @@ def demo_whale_alerts() -> list[WhaleAlert]:
     return alerts
 
 
+# ── Minimal whale event detection (v2) ───────────────────────────────────
+
+_SEVERITY_INFO     = "info"
+_SEVERITY_NOTABLE  = "notable"
+_SEVERITY_HIGH     = "high"
+_SEVERITY_EXTREME  = "extreme"
+
+_DEFAULT_OPTIONS = {
+    "min_notional_usd": 100_000,
+    "high_notional_usd": 500_000,
+    "extreme_notional_usd": 1_000_000,
+    "allowed_symbols": None,
+    "blocked_symbols": None,
+}
+
+
+def _make_whale_event_id(source_type, symbol, tx_hash, wallet, notional_usd, event_ts):
+    import hashlib
+    raw = f"{source_type}|{symbol}|{tx_hash}|{wallet}|{notional_usd}|{event_ts}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _classify_severity(notional_usd, high_thresh, extreme_thresh):
+    if notional_usd >= extreme_thresh:
+        return _SEVERITY_EXTREME
+    if notional_usd >= high_thresh:
+        return _SEVERITY_HIGH
+    return _SEVERITY_NOTABLE
+
+
+def detect_whale_events(items, options=None):
+    """
+    Turn a list of trade/transfer dicts into whale event dicts.
+
+    Each item may contain: source_type, symbol, chain, exchange, side,
+    amount, price, notional_usd, wallet, tx_hash, event_ts, metadata.
+
+    Returns a list of whale event dicts for items above the notional threshold.
+    """
+    if not items:
+        return []
+
+    opts = dict(_DEFAULT_OPTIONS)
+    if options:
+        opts.update(options)
+
+    min_usd = float(opts["min_notional_usd"])
+    high_usd = float(opts["high_notional_usd"])
+    extreme_usd = float(opts["extreme_notional_usd"])
+    allowed = opts.get("allowed_symbols")
+    blocked = opts.get("blocked_symbols")
+
+    results = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        notional = float(item.get("notional_usd", 0) or 0)
+        if notional < min_usd:
+            continue
+
+        symbol = str(item.get("symbol", "") or "")
+        if allowed and symbol not in allowed:
+            continue
+        if blocked and symbol in blocked:
+            continue
+
+        source_type = str(item.get("source_type", "unknown") or "unknown")
+        chain = str(item.get("chain", "") or "")
+        exchange = str(item.get("exchange", "") or "")
+        side = str(item.get("side", "") or "")
+        amount = float(item.get("amount", 0) or 0)
+        price = float(item.get("price", 0) or 0)
+        wallet = str(item.get("wallet", "") or "")
+        tx_hash = str(item.get("tx_hash", "") or "")
+        event_ts = str(item.get("event_ts", "") or "")
+        metadata = item.get("metadata") or {}
+
+        severity = _classify_severity(notional, high_usd, extreme_usd)
+        confidence = 0.8 if tx_hash else 0.5
+        reason = f"{source_type} of {symbol} worth ${notional:,.0f}"
+
+        whale_event_id = _make_whale_event_id(
+            source_type, symbol, tx_hash, wallet, notional, event_ts
+        )
+
+        results.append({
+            "whale_event_id": whale_event_id,
+            "event_ts": event_ts,
+            "source_type": source_type,
+            "symbol": symbol,
+            "chain": chain,
+            "exchange": exchange,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "notional_usd": notional,
+            "wallet": wallet,
+            "tx_hash": tx_hash,
+            "severity": severity,
+            "confidence": confidence,
+            "reason": reason,
+            "metadata": metadata,
+        })
+
+    return results
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _fmt_size(size_usd: float) -> str:
