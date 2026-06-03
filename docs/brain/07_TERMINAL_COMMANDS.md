@@ -33,18 +33,35 @@ cd "C:\Users\Joshua\Desktop\wallet finder"python -m pytest tests/test_local_heat
 
 ```
 
-## Local Live Writer
+## WebSocket Collector — Supabase (PRIMARY, recommended)
 
-cd "C:\Users\Joshua\Desktop\wallet finder"python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --samples 999999 --max-frames 900 --target live
-
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_binance_ws_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h --write-interval 1 --max-frames 1200 --target supabase --forever --range-mode wide
 ```
 
+Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the shell environment.
+Requires: pip install websocket-client (one-time)
+
+## REST Writer — Supabase (fallback / alternative)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --forever --max-frames 900 --target supabase
 ```
 
-## Local + Live Compatibility 
+## Local Live Writer (fixtures/live only — no Supabase)
 
-cd "C:\Users\Joshua\Desktop\wallet finder"python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --samples 999999 --max-frames 900 --target both
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --samples 999999 --max-frames 900 --target live
+```
 
+## Local + Supabase (both targets)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_local_heatmap_live.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --active-symbol BTCUSDT --timeframes 5m,15m,1h --active-interval 2 --background-interval 10 --samples 999999 --max-frames 900 --target both
 ```
 
 ```

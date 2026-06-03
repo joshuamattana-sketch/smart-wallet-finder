@@ -3,12 +3,21 @@
 Last updated: update manually after each major milestone.
 
 ## Current Milestone
-LM41A in progress:
-Prepare hosted heatmap worker mode
-(writer can run forever as a hosted process; PC no longer required).
+LM45 next: Heatmap History / Wall Persistence
+(extend Supabase schema and writer to store historical snapshots for trend
+analysis and wall-level persistence tracking).
 
-Previous: LM39B — Supabase live updates stabilized end-to-end
-(writer → Supabase → API → Dashboard/Terminal/Liquidity Map).
+Previous completed milestones:
+- LM44 — Trader-grade liquidity aggregation (zones, keyZones, wall scoring v2)
+- LM43C — Smart viewport (wide/macro ranges stay readable)
+- LM43B — Wide range actually visible (cell.price_bucket, canvas fix)
+- LM43  — Analysis-grade price range presets (tight/standard/wide/macro)
+- LM42C — UI polling fix post-multi-symbol WebSocket (heatmapResolvedStatus)
+- LM42B — Multi-symbol WebSocket collector (combined stream)
+- LM42A — BTCUSDT Binance WebSocket collector MVP
+- LM41A — Hosted worker mode (--forever flag, startup banner)
+- LM39B — Supabase live updates stabilized end-to-end
+- LM38  — Supabase latest heatmap payload storage
 
 ## Completed
 - Lumora Web deployed on Vercel.
@@ -34,28 +43,48 @@ Previous: LM39B — Supabase live updates stabilized end-to-end
   (`order=live_updated_at.desc`, exact symbol/exchange/timeframe filter)
   and uses `live_updated_at` as the authoritative freshness timestamp.
 
-## Current Live Flow
-Binance Spot REST
-→ Python writer (`scripts/run_local_heatmap_live.py`)
+## Current Live Flow (while PC is running the collector)
+Binance Spot WebSocket (bookTicker)
+→ `scripts/run_binance_ws_heatmap_live.py` (LM42A/B WS collector)
 → Supabase `heatmap_latest_payloads`
-→ `/api/heatmap?source=live`
-→ Dashboard / Terminal / Liquidity Map
+→ `/api/heatmap?source=live` (Vercel, force-dynamic, no-store)
+→ Dashboard / Terminal / Liquidity Map (2s / 9s polling)
 Fallback chain: Supabase live → local live file → fixture → mock.
 
-## Current Unresolved Issue
-Diagnosis = Cause B (API read/refresh layer).
-- Writer/Supabase confirmed updating (not Cause A).
-- UI polling hardened in prior LM39B patches (not the root Cause C):
-  `source=live` + `_ts` + `cache:"no-store"`, persistent 2s/9s intervals,
-  functional setState (Dashboard), AbortController (Terminal),
-  visibilitychange immediate refresh.
-- API route now forced non-cacheable
-  (`dynamic="force-dynamic"`, `revalidate=0`,
-  `Cache-Control: no-store, no-cache, must-revalidate`).
-- To verify in production: confirm Dashboard/Terminal update without manual
-  refresh and the API response header carries `Cache-Control: no-store`.
-  If a fallback still occurs, inspect safe debug meta
-  (`supabaseConfigured / supabaseAttempted / supabaseStatus / supabaseError`).
+Active local command:
+```
+python scripts/run_binance_ws_heatmap_live.py \
+    --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+    --timeframes 5m,15m,1h \
+    --write-interval 1 --max-frames 1200 \
+    --target supabase --forever --range-mode wide
+```
+Required shell env (never in files): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+
+## Hosted Worker — Deployment Postponed
+- Code is 100% ready (`--forever --target supabase`, startup banner, clean
+  Ctrl+C, no secrets in files).
+- Railway Free plan blocks new resource creation and requires upgrade.
+- Decision: do not pay/upgrade yet.
+- PC must stay on for live data until a hosted worker is deployed.
+- Next deployment target options: Railway (paid), Render, Fly.io, VPS.
+
+## LM41A — Hosted Worker Mode (code-complete, not deployed)
+- Writer now supports `--forever`: runs indefinitely, ignores `--samples`,
+  exits cleanly on Ctrl+C / SIGINT.
+- Startup banner prints mode / target / symbols / timeframes / intervals /
+  supabase=configured|not (no secrets printed).
+- Recommended hosted command (REST writer):
+  `python scripts/run_local_heatmap_live.py --forever --target supabase \
+      --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+      --active-symbol BTCUSDT --active-interval 2 --background-interval 10`
+- Recommended hosted command (WS collector, preferred):
+  `python scripts/run_binance_ws_heatmap_live.py \
+      --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
+      --write-interval 1 --max-frames 1200 \
+      --target supabase --forever --range-mode wide`
+- Required env vars (hosting platform only, never in files):
+  SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 ## SECURITY — Action Required
 - The Supabase service-role key was exposed in screenshots and MUST be rotated.
@@ -63,27 +92,14 @@ Diagnosis = Cause B (API read/refresh layer).
   (shell / Vercel project env) — never in committed files.
 - Until rotated, treat the old key as compromised.
 
-## LM41A — Hosted Worker Mode (this patch)
-- Writer now supports `--forever`: runs indefinitely, ignores `--samples`,
-  exits cleanly on Ctrl+C / SIGINT.
-- Startup banner prints mode / target / symbols / timeframes / intervals /
-  supabase=configured|not (no secrets are printed).
-- In `--forever` mode, an empty initial collection does not exit 1 — the
-  worker is expected to be long-running.
-- Recommended hosted command:
-  `python scripts/run_local_heatmap_live.py --forever --target supabase \
-      --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframes 5m,15m,1h \
-      --active-symbol BTCUSDT --active-interval 2 --background-interval 10`
-- Required env vars (shell / hosting platform only, never in files):
-  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
-- Not deployed yet — code-ready only.
-
 ## Current Priority
-- Pick a hosting target (Fly.io / Railway / Render / VPS) and deploy
-  the `--forever --target supabase` worker.
-- Rotate the exposed Supabase service-role key before deploying.
-- Confirm LM39B live refresh continues to work end-to-end with the
-  hosted worker driving Supabase.
+1. Keep PC running the WS collector for live data until a hosted worker
+   is deployed.
+2. Next product step: LM45 Heatmap History / Wall Persistence
+   (Supabase schema for historical snapshots, wall trend analysis).
+3. Hosted Worker deployment — when ready to pay/commit:
+   Railway (upgrade required), Render Free, Fly.io Free, or any VPS.
+4. Supabase service-role key rotation remains an open security action item.
 
 ## Do Not Commit
 - `.env`
