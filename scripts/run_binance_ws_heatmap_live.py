@@ -159,6 +159,8 @@ def build_ws_payload(
     """Build a HeatmapApiPayload from the rolling frame + price-path state."""
     matrix = build_heatmap_matrix(frames)
     current_price = price_path[-1]["price"] if price_path else None
+    # LM44: forward zones from the latest frame.
+    latest_frame = frames[-1] if frames else None
     payload = build_heatmap_api_payload(
         matrix,
         timeframe=timeframe,
@@ -166,6 +168,10 @@ def build_ws_payload(
         price_path=price_path,
         current_price=current_price,
         price_range_meta=range_meta,
+        zones=(latest_frame.get("zones") if latest_frame else None),
+        key_zones=(latest_frame.get("key_zones") if latest_frame else None),
+        aggregation_mode=(latest_frame.get("aggregation_mode") if latest_frame else None),
+        bucket_aggregation=(latest_frame.get("bucket_aggregation") if latest_frame else None),
     )
     payload["symbol"] = symbol
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -365,6 +371,8 @@ def run_ws_collector(
         frame = build_heatmap_cells(
             snap, price_step=effective_step, wall_threshold_usd=wall_threshold_usd,
             price_range=price_range,
+            aggregation_mode=range_mode,
+            current_price=(float(mid) if isinstance(mid, (int, float)) and mid > 0 else None),
         )
         frames.append(frame)
         if len(frames) > max_frames:

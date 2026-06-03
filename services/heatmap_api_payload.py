@@ -33,6 +33,10 @@ def build_heatmap_api_payload(
     price_path: list | None = None,
     current_price: float | None = None,
     price_range_meta: dict | None = None,
+    zones: list | None = None,
+    key_zones: list | None = None,
+    aggregation_mode: str | None = None,
+    bucket_aggregation: int | None = None,
 ) -> dict:
     """
     Convert a built heatmap matrix into a frontend-ready API payload.
@@ -118,6 +122,20 @@ def build_heatmap_api_payload(
             meta["availableDepthMin"] = float(price_range_meta["available_depth_min"])
         if price_range_meta.get("available_depth_max") is not None:
             meta["availableDepthMax"] = float(price_range_meta["available_depth_max"])
+
+    # LM44: trader-grade liquidity zones + scoring metadata. All fields are
+    # optional — existing UI consumers that ignore `zones`/`keyZones` keep
+    # working unchanged.
+    if zones is not None:
+        payload["zones"] = zones
+        payload["meta"]["zoneCount"]        = len(zones)
+        payload["meta"]["wallScoreVersion"] = "2"
+    if key_zones is not None:
+        payload["keyZones"] = key_zones
+    if aggregation_mode is not None:
+        payload["meta"]["aggregationMode"] = aggregation_mode
+    if bucket_aggregation is not None:
+        payload["meta"]["bucketAggregation"] = int(bucket_aggregation)
 
     return payload
 

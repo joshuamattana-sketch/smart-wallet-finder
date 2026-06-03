@@ -304,6 +304,32 @@ export function HeatmapCanvas({
         ctx.imageSmoothingEnabled = prevSmoothing;
       }
 
+      // ── Layer 3.5: LM44 zone bands ──────────────────────────────────────────
+      // Render aggregated liquidity zones as semi-transparent bands spanning
+      // priceMin..priceMax. Gives wide/macro modes a readable "where is the
+      // liquidity" silhouette instead of just thin smoothed cell rows. Bands
+      // get a small minimum pixel height so very narrow zones stay visible.
+      // Old payloads without `zones` simply skip this layer.
+      const zonesArr = payload.zones;
+      if (Array.isArray(zonesArr) && zonesArr.length > 0) {
+        const minBandPx = 3;
+        for (const z of zonesArr) {
+          if (z.priceMax < pMin || z.priceMin > pMax) continue;
+          const clampedHi = Math.min(z.priceMax, pMax);
+          const clampedLo = Math.max(z.priceMin, pMin);
+          const yTop = priceToY(clampedHi);
+          const yBot = priceToY(clampedLo);
+          const top = Math.min(yTop, yBot);
+          const rawHeight = Math.abs(yBot - yTop);
+          const height = Math.max(minBandPx, rawHeight);
+          // Strength → alpha (0.06 baseline so weak zones don't disappear).
+          const alpha = Math.min(0.35, 0.06 + (z.strengthScore / 100) * 0.25);
+          const rgb = z.side === "bid" ? "16,185,129" : "239,68,68";
+          ctx.fillStyle = `rgba(${rgb},${alpha})`;
+          ctx.fillRect(PAD_LEFT, top, plotW, height);
+        }
+      }
+
       // ── Layer 4: wall highlights — accents, not dominant bars ───────────────
       for (const wall of payload.walls) {
         if (wall.price_bucket < pMin || wall.price_bucket > pMax) continue;

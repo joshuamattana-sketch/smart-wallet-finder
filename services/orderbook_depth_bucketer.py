@@ -44,6 +44,20 @@ PRESET_PCT_FALLBACK: dict[str, float] = {
 # only widens the step for the wide / macro modes where it's actually needed.
 DEFAULT_TARGET_BUCKETS = 600
 
+# LM44: how many EMPTY buckets a zone is allowed to span before it splits.
+# Tighter modes preserve detail; wider modes merge more aggressively so the
+# canvas shows fewer, more meaningful key zones rather than many hairlines.
+DEFAULT_ZONE_GAP_BUCKETS: dict[str, int] = {
+    "tight":    0,
+    "standard": 2,
+    "wide":     5,
+    "macro":    10,
+}
+# Default key-zone cap for the payload (top-N by strengthScore).
+DEFAULT_KEY_ZONE_COUNT = 8
+# Stamped on payloads aggregated under the LM44 wall/zone scoring model.
+WALL_SCORE_VERSION = "2"
+
 
 def resolve_price_range(
     symbol: str,
@@ -300,6 +314,162 @@ def detect_liquidity_walls(buckets: list[dict], threshold_usd: float) -> list[di
     return walls
 
 
+# ── Zone aggregation (LM44) ───────────────────────────────────────────────────
+
+def _zone_from_levels(side: str, levels: list[dict]) -> dict:
+    """Collapse a list of per-side levels into one zone dict."""
+    prices       = [lv["price"]     for lv in levels]
+    usds         = [lv["usd"]       for lv in levels]
+    intensities  = [lv["intensity"] for lv in levels]
+    p_min        = min(prices)
+    p_max        = max(prices)
+    total        = sum(usds)
+    center = (
+        sum(p * u for p, u in zip(prices, usds)) / total
+        if total > 0 else (p_min + p_max) / 2.0
+    )
+    return {
+        "side":          side,
+        "priceMin":      round(p_min, 4),
+        "priceMax":      round(p_max, 4),
+        "centerPrice":   round(center, 4),
+        "totalUsd":      round(total, 2),
+        "maxIntensity":  round(max(intensities) if intensities else 0.0, 2),
+        "bucketCount":   len(levels),
+        "label":         "Bid Zone" if side == "bid" else "Ask Zone",
+        "strengthScore": 0.0,
+    }
+
+
+def aggregate_liquidity_zones(
+    buckets: list[dict],
+    max_gap_buckets: int = 2,
+    price_step: float = 10.0,
+) -> list[dict]:
+    """
+    Group nearby buckets of the same side into liquidity zones.
+
+    Mixed buckets contribute their bid_usd to bid zones and ask_usd to ask
+    zones independently, so bids never get merged with asks.
+
+    A zone breaks when the next same-side bucket is more than
+    `max_gap_buckets * price_step` USD away from the previous one.
+
+    Returns zones sorted by centerPrice ascending.
+    """
+    if not buckets or price_step <= 0:
+        return []
+
+    side_levels: dict[str, list[dict]] = {"bid": [], "ask": []}
+    for b in buckets:
+        if b.get("bid_usd", 0.0) > 0:
+            side_levels["bid"].append({
+                "price":     b["price_bucket"],
+                "usd":       b["bid_usd"],
+                "intensity": b.get("intensity", 0.0) or 0.0,
+            })
+        if b.get("ask_usd", 0.0) > 0:
+            side_levels["ask"].append({
+                "price":     b["price_bucket"],
+                "usd":       b["ask_usd"],
+                "intensity": b.get("intensity", 0.0) or 0.0,
+            })
+
+    # max_gap_buckets is the number of empty buckets allowed between members,
+    # so two same-side buckets `g * price_step` apart are still grouped iff
+    # the bucket count between them is <= max_gap_buckets.
+    gap_threshold = (max(0, max_gap_buckets) + 1) * price_step + 1e-9
+
+    zones: list[dict] = []
+    for side in ("bid", "ask"):
+        levels = sorted(side_levels[side], key=lambda x: x["price"])
+        if not levels:
+            continue
+        current: list[dict] = [levels[0]]
+        for lv in levels[1:]:
+            if (lv["price"] - current[-1]["price"]) <= gap_threshold:
+                current.append(lv)
+            else:
+                zones.append(_zone_from_levels(side, current))
+                current = [lv]
+        zones.append(_zone_from_levels(side, current))
+
+    zones.sort(key=lambda z: z["centerPrice"])
+    return zones
+
+
+def score_zones(
+    zones: list[dict],
+    current_price: float | None = None,
+) -> list[dict]:
+    """
+    Mutate each zone in-place with `strengthScore` (0-100), `zoneWidth`,
+    `liquidityDensity`, and `distancePctFromPrice` (when current_price set).
+
+    Score model = log-normalized USD percentile (up to 90) plus a proximity
+    boost (up to 10) for zones within ±5% of the current price.
+    """
+    if not zones:
+        return zones
+    totals = [z["totalUsd"] for z in zones if z["totalUsd"] > 0]
+    max_total = max(totals) if totals else 0.0
+    log_max = math.log1p(max_total) if max_total > 0 else 0.0
+    for z in zones:
+        usd_score = (
+            (math.log1p(z["totalUsd"]) / log_max) * 90.0
+            if log_max > 0 else 0.0
+        )
+        proximity = 0.0
+        if current_price is not None and current_price > 0:
+            dist_frac = abs(z["centerPrice"] - current_price) / current_price
+            proximity = max(0.0, 10.0 * (1.0 - min(dist_frac / 0.05, 1.0)))
+            z["distancePctFromPrice"] = round(dist_frac * 100.0, 3)
+        z["strengthScore"]    = round(min(100.0, usd_score + proximity), 2)
+        z["zoneWidth"]        = round(z["priceMax"] - z["priceMin"], 4)
+        z["liquidityDensity"] = round(z["totalUsd"] / max(1.0, z["zoneWidth"] + 1.0), 2)
+    return zones
+
+
+def pick_key_zones(
+    zones: list[dict],
+    top_n: int = DEFAULT_KEY_ZONE_COUNT,
+) -> list[dict]:
+    """Return the top-N zones by strengthScore (highest first)."""
+    return sorted(zones, key=lambda z: z["strengthScore"], reverse=True)[:max(0, top_n)]
+
+
+def score_walls(
+    walls: list[dict],
+    current_price: float | None = None,
+) -> list[dict]:
+    """
+    Enrich walls with `strengthScore`, `wallRank`, and (when current_price
+    set) `distancePctFromPrice`. Same scoring model as zones.
+    """
+    if not walls:
+        return walls
+    totals = [w["total_usd"] for w in walls if w.get("total_usd", 0.0) > 0]
+    max_total = max(totals) if totals else 0.0
+    log_max = math.log1p(max_total) if max_total > 0 else 0.0
+    for w in walls:
+        usd_score = (
+            (math.log1p(w["total_usd"]) / log_max) * 90.0
+            if log_max > 0 else 0.0
+        )
+        proximity = 0.0
+        if current_price is not None and current_price > 0:
+            dist_frac = abs(w["price_bucket"] - current_price) / current_price
+            proximity = max(0.0, 10.0 * (1.0 - min(dist_frac / 0.05, 1.0)))
+            w["distancePctFromPrice"] = round(dist_frac * 100.0, 3)
+        w["strengthScore"] = round(min(100.0, usd_score + proximity), 2)
+    # Stable rank by strengthScore (1 = strongest).
+    for rank, w in enumerate(
+        sorted(walls, key=lambda x: x["strengthScore"], reverse=True), start=1,
+    ):
+        w["wallRank"] = rank
+    return walls
+
+
 # ── Combined pipeline ─────────────────────────────────────────────────────────
 
 def build_heatmap_cells(
@@ -307,6 +477,9 @@ def build_heatmap_cells(
     price_step: float = 10.0,
     wall_threshold_usd: float = 1_000_000.0,
     price_range: tuple[float, float] | None = None,
+    aggregation_mode: str | None = None,
+    current_price: float | None = None,
+    key_zone_count: int = DEFAULT_KEY_ZONE_COUNT,
 ) -> dict:
     """
     Full pipeline: bucket → intensity → walls.
@@ -341,6 +514,18 @@ def build_heatmap_cells(
     buckets_with_intensity = calculate_intensity_scale(bucketed["buckets"])
     walls = detect_liquidity_walls(buckets_with_intensity, wall_threshold_usd)
 
+    # LM44: zone aggregation + percentile/proximity wall scoring.
+    mode = aggregation_mode or "standard"
+    gap = DEFAULT_ZONE_GAP_BUCKETS.get(mode, DEFAULT_ZONE_GAP_BUCKETS["standard"])
+    zones = aggregate_liquidity_zones(
+        buckets_with_intensity,
+        max_gap_buckets=gap,
+        price_step=price_step,
+    )
+    score_zones(zones, current_price=current_price)
+    key_zones = pick_key_zones(zones, top_n=key_zone_count)
+    score_walls(walls, current_price=current_price)
+
     return {
         "symbol":               bucketed["symbol"],
         "captured_at":          bucketed["captured_at"],
@@ -349,4 +534,8 @@ def build_heatmap_cells(
         "walls":                walls,
         "available_depth_min":  available_min,
         "available_depth_max":  available_max,
+        "zones":                zones,
+        "key_zones":            key_zones,
+        "aggregation_mode":     mode,
+        "bucket_aggregation":   gap,
     }

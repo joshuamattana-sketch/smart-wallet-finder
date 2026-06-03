@@ -917,6 +917,26 @@ class TestLocalHeatmapLive:
         assert code == 0
         assert calls and calls[0][1] == 100
 
+    def test_payload_carries_lm44_zones(self, tmp_path):
+        """LM44: writer-produced payload includes zones / keyZones / meta."""
+        _, outdir, _, _ = _run_multi(
+            tmp_path, ["--symbols", "BTCUSDT", "--samples", "1", "--interval", "2"],
+        )
+        payload = _payload(outdir / "BTCUSDT_5m.json")
+        assert "zones" in payload
+        assert "keyZones" in payload
+        m = payload["meta"]
+        assert m["aggregationMode"]   == "standard"
+        assert m["wallScoreVersion"]  == "2"
+        assert isinstance(m["zoneCount"], int)
+        assert m["zoneCount"] == len(payload["zones"])
+        # Every zone has the trader-facing fields.
+        for z in payload["zones"]:
+            for k in ("side", "priceMin", "priceMax", "centerPrice",
+                      "totalUsd", "strengthScore", "label", "bucketCount"):
+                assert k in z
+            assert z["side"] in ("bid", "ask")
+
     def test_meta_available_depth_present(self, tmp_path):
         _, outdir, _, _ = _run_multi(
             tmp_path, ["--symbols", "BTCUSDT", "--samples", "1", "--interval", "2"],

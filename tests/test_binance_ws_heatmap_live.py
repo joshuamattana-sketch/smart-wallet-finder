@@ -354,6 +354,25 @@ class TestMainCli:
         assert code == 1
         assert "invalid timeframe" in capsys.readouterr().err
 
+    def test_payload_carries_lm44_zones(self, tmp_path):
+        """LM44: WS collector payload includes zones / keyZones / meta."""
+        out_dir, output_for = _output_factory(tmp_path)
+        ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=1.0, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100000.0, 100020.0)]),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=1, forever=False, now=_Clock(step=0.5),
+            range_mode="standard",
+        )
+        payload = json.loads((out_dir / "BTCUSDT_5m.json").read_text("utf-8"))
+        assert "zones" in payload
+        assert "keyZones" in payload
+        assert payload["meta"]["wallScoreVersion"] == "2"
+        assert payload["meta"]["aggregationMode"] == "standard"
+
     def test_range_mode_stamps_meta_on_payload(self, tmp_path):
         """WS collector stamps priceRangeMode/Min/Max after the first message."""
         out_dir, output_for = _output_factory(tmp_path)

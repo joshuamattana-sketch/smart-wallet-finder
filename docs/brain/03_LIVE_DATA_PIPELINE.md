@@ -91,6 +91,46 @@ Implementation notes:
   `priceRangeAbs`, `priceRangePercent`, `priceRangeRequestedMin/Max`,
   `availableDepthMin/Max`.
 
+## LM44 — Trader-Grade Liquidity Aggregation
+Layered on top of cells/walls; fully additive.
+
+**Zones** — `aggregate_liquidity_zones` groups same-side buckets into
+trader-facing bands. Bid and ask never merge into one zone. Group breaks
+when the next same-side bucket is more than `max_gap_buckets × price_step`
+away. Mode-aware gap defaults:
+
+| Mode      | max_gap_buckets |
+|-----------|-----------------|
+| tight     | 0  (only strictly adjacent) |
+| standard  | 2  |
+| wide      | 5  |
+| macro     | 10 |
+
+Each zone carries: `side`, `priceMin/Max`, `centerPrice` (USD-weighted),
+`totalUsd`, `maxIntensity`, `bucketCount`, `label`, `strengthScore`,
+`zoneWidth`, `liquidityDensity`, and `distancePctFromPrice` (when the
+writer knows the current mid).
+
+**Scoring** — `score_zones` / `score_walls`:
+log-normalized USD percentile (0–90) + proximity boost (0–10) for items
+within ±5% of current price. Walls get `wallRank` (1 = strongest).
+`meta.wallScoreVersion = "2"` tags payloads built under this model.
+
+**Key zones** — `keyZones` = top-N by strengthScore (default 8).
+
+**Payload additions** (all optional, older consumers ignore):
+- `payload.zones` (sorted by centerPrice)
+- `payload.keyZones`
+- `payload.meta.zoneCount`
+- `payload.meta.aggregationMode`
+- `payload.meta.bucketAggregation`
+- `payload.meta.wallScoreVersion`
+
+**Canvas** — HeatmapCanvas adds a zone-band layer between cells and walls.
+Bands span priceMin..priceMax with a 3px minimum height so even hairline
+zones stay visible; alpha scales with `strengthScore`. Payloads without
+`zones` skip the layer (backward compatible).
+
 ## LM43C — Smart Viewport
 LM43B made the wide y-axis render, but for `macro` mode (±15000 USD) all
 real liquidity got compressed into a thin strip in the middle of a mostly

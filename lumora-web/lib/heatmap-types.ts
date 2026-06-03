@@ -138,6 +138,34 @@ export interface HeatmapMeta {
   availableDepthMin?: number;
   /** LM43: highest price observed in the raw exchange depth snapshot. */
   availableDepthMax?: number;
+  /** LM44: count of liquidity zones included in the payload. */
+  zoneCount?: number;
+  /** LM44: aggregation preset used to build zones (tight | standard | wide | macro). */
+  aggregationMode?: string;
+  /** LM44: max-gap-buckets value used for zone aggregation. */
+  bucketAggregation?: number;
+  /** LM44: version tag for the wall/zone scoring model. "2" = LM44 model. */
+  wallScoreVersion?: string;
+}
+
+/**
+ * LM44: aggregated liquidity zone — a band of nearby same-side buckets
+ * collapsed into a single trader-facing object. Optional on the payload;
+ * older fixtures may omit `zones` entirely.
+ */
+export interface HeatmapZone {
+  side: "bid" | "ask";
+  priceMin: number;
+  priceMax: number;
+  centerPrice: number;
+  totalUsd: number;
+  maxIntensity: number;
+  bucketCount: number;
+  label: string;
+  strengthScore: number;   // 0-100
+  zoneWidth?: number;
+  liquidityDensity?: number;
+  distancePctFromPrice?: number;  // present when writer knew the current price
 }
 
 /** Full payload returned by GET /api/heatmap on success. */
@@ -155,6 +183,10 @@ export interface HeatmapApiPayload {
   meta: HeatmapMeta;
   /** Optional mid-price path overlay, one point per time bucket. */
   pricePath?: HeatmapPricePoint[];
+  /** LM44: aggregated liquidity zones (all, sorted by centerPrice). Optional. */
+  zones?: HeatmapZone[];
+  /** LM44: top-N zones by strengthScore. Optional. */
+  keyZones?: HeatmapZone[];
 }
 
 /** Error body returned by GET /api/heatmap on 4xx. */
