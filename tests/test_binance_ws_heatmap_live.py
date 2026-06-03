@@ -956,3 +956,92 @@ class TestUseEnvConfig:
         assert code == 0
         assert captured["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
         assert captured["timeframes"] == ["5m"]
+
+
+# ── LM53E: worker health heartbeat wiring ───────────────────────────────────
+
+class TestWorkerHealthWiring:
+
+    def test_heartbeat_flag_exists(self):
+        args = ws.parse_args(["--heartbeat-interval", "30"])
+        assert args.heartbeat_interval == 30.0
+
+    def test_default_heartbeat_interval_is_60(self):
+        args = ws.parse_args([])
+        assert args.heartbeat_interval == 60.0
+
+    def test_health_state_created(self, tmp_path):
+        _, output_for = _output_factory(tmp_path)
+        result = ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=1.0, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)]),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=1, forever=False, now=_Clock(step=0.5),
+        )
+        hs = result["health_state"]
+        assert hs is not None
+        assert "started_at" in hs
+        assert "total_ticks" in hs
+        assert isinstance(hs["symbols_seen"], set)
+
+    def test_ok_tick_recorded(self, tmp_path):
+        _, output_for = _output_factory(tmp_path)
+        result = ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 10),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=3, forever=False, now=_Clock(step=0.5),
+        )
+        hs = result["health_state"]
+        assert hs["ok_ticks"] >= 3
+        assert "BTCUSDT" in hs["symbols_seen"]
+
+    def test_error_tick_recorded(self, tmp_path):
+        _, output_for = _output_factory(tmp_path)
+        sb_cfg = SupabaseConfig("https://example.supabase.co", "key")
+
+        def _bad_upsert(*a, **k):
+            raise RuntimeError("network fail")
+
+        result = ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="supabase", supabase=sb_cfg,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 10),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=2, forever=False, now=_Clock(step=0.5),
+            upsert=_bad_upsert,
+        )
+        hs = result["health_state"]
+        assert hs["error_ticks"] >= 1
+        assert "network fail" in (hs["last_error"] or "")
+
+    def test_heartbeat_payload_shape(self, tmp_path):
+        from services.worker_health import build_worker_heartbeat
+        _, output_for = _output_factory(tmp_path)
+        result = ws.run_ws_collector(
+            symbol="BTCUSDT", timeframes=["5m"],
+            write_interval=0.5, max_frames=10,
+            target="live", supabase=None,
+            output_for=output_for,
+            message_iter=iter([_bt(100.0, 101.0)] * 5),
+            fetch_depth=lambda *a, **k: _mock_snapshot(),
+            samples=2, forever=False, now=_Clock(step=0.5),
+        )
+        hb = build_worker_heartbeat(result["health_state"], now=100.0)
+        assert "status" in hb
+        assert "uptime_seconds" in hb
+        assert "total_ticks" in hb
+        assert "ok_ticks" in hb
+        assert "error_ticks" in hb
+        assert "last_error" in hb
+        assert "symbols_seen" in hb
+        assert "exchanges_seen" in hb
+        assert isinstance(hb["symbols_seen"], list)

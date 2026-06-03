@@ -144,7 +144,7 @@ Verify history rows:
 select * from heatmap_frame_history order by created_at desc limit 10;
 ```
 
-## LM53D Worker Health Tests
+## LM53D/E Worker Health Tests
 
 ```powershell
 cd "C:\Users\Joshua\Desktop\wallet finder"

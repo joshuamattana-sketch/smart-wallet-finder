@@ -70,6 +70,11 @@ from services.heatmap_api_payload import (  # noqa: E402
     build_heatmap_api_payload,
 )
 from services.live_worker_config import load_live_worker_config  # noqa: E402
+from services.worker_health import (  # noqa: E402
+    create_worker_health_state,
+    record_worker_tick,
+    build_worker_heartbeat,
+)
 from services.heatmap_history import (  # noqa: E402
     DEFAULT_HISTORY_INTERVAL_S,
     DEFAULT_HISTORY_MAX_CELLS,
@@ -333,6 +338,8 @@ def run_ws_collector(
     history_max_walls: int = DEFAULT_HISTORY_MAX_WALLS,
     append_history: Callable[..., None] = append_history_frame,
     append_walls: Callable[..., None] = append_wall_history_rows,
+    # LM53E: worker health heartbeat
+    heartbeat_interval: float = 60.0,
 ) -> dict:
     """
     Drive the multi-symbol WS collector loop. Returns
@@ -410,6 +417,16 @@ def run_ws_collector(
     def _say(msg: str) -> None:
         if progress is not None:
             progress(msg)
+
+    # LM53E: worker health state
+    health_state = create_worker_health_state({
+        "symbols": list(symbols),
+        "timeframes": list(timeframes),
+        "target": target,
+        "history_target": history_target,
+    })
+    health_state["started_at"] = now()
+    last_heartbeat_at = -float("inf")
 
     # ── Per-symbol state ─────────────────────────────────────────────────────
     states: dict[str, dict] = {
@@ -586,10 +603,12 @@ def run_ws_collector(
                                 write_payload_atomic(payload, output_for(sym, tf))
                         except (RuntimeError, OSError) as exc:
                             _say(f"write {kind} · {sym} {tf} · failed: {exc}")
+                            record_worker_tick(health_state, symbol=sym, ok=False, error=str(exc), now=t)
 
                 st["writes"]  += 1
                 st["last_write"] = t
                 total_writes  += 1
+                record_worker_tick(health_state, symbol=sym, exchange=EXCHANGE, ok=True, now=t)
 
                 # LM45: append compact history rows on a SEPARATE cadence —
                 # never every write_interval. Failures here are caught and
@@ -618,6 +637,7 @@ def run_ws_collector(
                             st["history_writes"] += 1
                         except HistoryWriteError as exc:
                             history_failures += 1
+                            record_worker_tick(health_state, symbol=sym, ok=False, error=str(exc), now=t)
                             _say(f"history · {sym} {tf} · failed: {exc}")
                     st["last_history_at"] = t
 
@@ -635,6 +655,18 @@ def run_ws_collector(
                 if not forever and samples is not None and total_writes >= samples:
                     should_stop = True
                     break
+            # LM53E: periodic heartbeat log
+            if heartbeat_interval > 0 and (t - last_heartbeat_at) >= heartbeat_interval:
+                hb = build_worker_heartbeat(health_state, now=t)
+                _say(
+                    f"heartbeat · status={hb['status']} · "
+                    f"uptime={hb['uptime_seconds']:.0f}s · "
+                    f"ticks={hb['total_ticks']} (ok={hb['ok_ticks']} err={hb['error_ticks']}) · "
+                    f"symbols={hb['symbols_seen']} · exchanges={hb['exchanges_seen']}"
+                    + (f" · last_error={hb['last_error']}" if hb["last_error"] else "")
+                )
+                last_heartbeat_at = t
+
             if should_stop:
                 break
     except KeyboardInterrupt:
@@ -650,6 +682,8 @@ def run_ws_collector(
         "history_per_symbol": {
             sym: states[sym]["history_writes"] for sym in symbols
         },
+        # LM53E — worker health snapshot.
+        "health_state": health_state,
     }
 
 
@@ -736,6 +770,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         dest="history_max_walls",
                         help=("Cap on walls/zones written per history frame "
                               f"(default: {DEFAULT_HISTORY_MAX_WALLS})."))
+    # LM53E: worker health heartbeat.
+    parser.add_argument("--heartbeat-interval", type=float, default=60.0,
+                        dest="heartbeat_interval",
+                        help="Seconds between heartbeat log lines (default: 60).")
     # LM53B: env-config wiring.
     parser.add_argument("--use-env-config", action="store_true",
                         default=False, dest="use_env_config",
@@ -890,6 +928,7 @@ def main(argv: list[str] | None = None) -> int:
             history_interval=args.history_interval,
             history_max_cells=args.history_max_cells,
             history_max_walls=args.history_max_walls,
+            heartbeat_interval=args.heartbeat_interval,
         )
     except RuntimeError as exc:
         # Includes "websocket-client not installed".
