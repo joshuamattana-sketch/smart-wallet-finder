@@ -50,7 +50,7 @@ export function StatusBadge({
           className={clsx(
             "inline-block h-1.5 w-1.5 rounded-full shrink-0",
             s.dot,
-            variant === "live" && "animate-pulse",
+            variant === "live" && "lm-live-dot",
           )}
         />
       )}

@@ -419,10 +419,10 @@ export default function LiquidityMapPage() {
         <div className="flex rounded-md border border-lm-border overflow-hidden">
           {TIMEFRAMES.map(tf => (
             <button key={tf} onClick={() => setTimeframe(tf)}
-              className={clsx("px-2.5 py-1.5 text-xs font-medium transition-colors",
+              className={clsx("lm-segment-btn px-2.5 py-1.5 text-xs font-medium",
                 timeframe === tf
-                  ? "bg-lumora-purple text-white"
-                  : "text-lm-muted hover:text-lm-text bg-lm-surface")}>
+                  ? "lm-segment-active"
+                  : "text-lm-muted bg-lm-surface")}>
               {tf}
             </button>
           ))}
@@ -433,10 +433,10 @@ export default function LiquidityMapPage() {
         <div className="flex rounded-md border border-lm-border overflow-hidden" title="Heatmap data source">
           {(["live", "fixture", "mock"] as const).map(src => (
             <button key={src} onClick={() => setDataSource(src)}
-              className={clsx("px-2.5 py-1.5 text-xs font-medium capitalize transition-colors",
+              className={clsx("lm-segment-btn px-2.5 py-1.5 text-xs font-medium capitalize",
                 dataSource === src
-                  ? "bg-lumora-purple text-white"
-                  : "text-lm-muted hover:text-lm-text bg-lm-surface")}>
+                  ? "lm-segment-active"
+                  : "text-lm-muted bg-lm-surface")}>
               {src}
             </button>
           ))}
@@ -446,10 +446,10 @@ export default function LiquidityMapPage() {
           onClick={() => setAutoRefresh(v => !v)}
           title="Auto refresh (2s)"
           className={clsx(
-            "px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors",
+            "lm-segment-btn px-2.5 py-1.5 text-xs font-medium rounded-md border",
             autoRefresh
-              ? "border-lumora-purple bg-lumora-purple/15 text-lm-text"
-              : "border-lm-border bg-lm-surface text-lm-muted hover:text-lm-text"
+              ? "lm-toggle-active"
+              : "border-lm-border bg-lm-surface text-lm-muted"
           )}
         >
           Auto {autoRefresh ? "On" : "Off"}
@@ -457,7 +457,7 @@ export default function LiquidityMapPage() {
         {/* Refresh */}
         <button onClick={() => fetchPayload()} title="Refresh"
           disabled={refreshing}
-          className="p-1.5 rounded-md border border-lm-border bg-lm-surface text-lm-muted hover:text-lm-text transition-colors disabled:opacity-50">
+          className="lm-segment-btn p-1.5 rounded-md border border-lm-border bg-lm-surface text-lm-muted disabled:opacity-50">
           <RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />
         </button>
         {/* Legend */}
@@ -468,7 +468,7 @@ export default function LiquidityMapPage() {
             <span className="inline-block w-5 h-[1.5px] bg-white/60 rounded" />Price
           </span>
           <span className="flex items-center gap-1.5 text-[10px] text-lumora-cyan">
-            <span className="inline-block w-2 h-2 rounded-full bg-lumora-cyan shadow-[0_0_6px_rgba(34,211,238,0.9)]" />Now
+            <span className="lm-now-dot inline-block w-2 h-2 rounded-full bg-lumora-cyan" />Now
           </span>
         </div>
       </Panel>
@@ -523,7 +523,7 @@ export default function LiquidityMapPage() {
             </div>
           </div>
 
-          <div className="relative" style={{ height: CHART_H, background: "#0a0a0c" }}>
+          <div className="lm-chart-frame relative" style={{ height: CHART_H, background: "#0a0a0c" }}>
             {/* Initial loading — shown only before the first payload/error.
                 Cannot be infinite: every fetch ends by setting one of them. */}
             {!payload && !apiError && (
@@ -586,7 +586,7 @@ export default function LiquidityMapPage() {
                 const isAsk = w.side === "ask";
                 const badge = w.intensity >= 85 ? "WALL" : isAsk ? "RES" : "SUP";
                 return (
-                  <Panel flush key={`${w.price_bucket}-${w.side}`} className="p-3 flex items-start gap-2.5">
+                  <Panel flush hover key={`${w.price_bucket}-${w.side}`} className="p-3 flex items-start gap-2.5">
                     <div
                       className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
                       style={{
@@ -618,7 +618,7 @@ export default function LiquidityMapPage() {
                 );
               })
             : ZONES.slice(0, 4).map(z => (
-                <Panel flush key={z.price} className="p-3 flex items-start gap-2.5">
+                <Panel flush hover key={z.price} className="p-3 flex items-start gap-2.5">
                   <div
                     className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
                     style={{

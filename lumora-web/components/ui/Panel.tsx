@@ -23,7 +23,7 @@ export function Panel({
       className={clsx(
         "rounded-lg border border-lm-border bg-lm-surface",
         flush ? "" : compact ? "p-2" : "p-3",
-        hover && "transition-colors hover:border-zinc-600",
+        hover && "lm-panel-hover",
         className,
       )}
     >

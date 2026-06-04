@@ -425,14 +425,18 @@ export function HeatmapCanvas({
         currentPrice <= pMax
       ) {
         const y = Math.round(priceToY(currentPrice)) + 0.5;
+        ctx.save();
         ctx.strokeStyle = "rgba(34,211,238,0.85)";
         ctx.lineWidth = 1.5;
+        ctx.shadowColor = "rgba(34,211,238,0.55)";
+        ctx.shadowBlur = 3;
         ctx.setLineDash([4, 3]);
         ctx.beginPath();
         ctx.moveTo(PAD_LEFT, y);
         ctx.lineTo(PAD_LEFT + plotW, y);
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.restore();
 
         ctx.fillStyle = "rgba(34,211,238,0.95)";
         ctx.font = "bold 10px sans-serif";

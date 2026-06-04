@@ -82,3 +82,78 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── LM61D: Lumora micro-interaction primitives ──────────────────────────── */
+
+/* Panel hover: subtle border lift + brighter surface. 150ms ease-out. */
+.lm-panel-hover {
+  transition: background-color 150ms ease-out, border-color 150ms ease-out,
+              box-shadow 150ms ease-out;
+}
+.lm-panel-hover:hover {
+  background-color: #17171a;
+  border-color: #2a2a30;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
+              0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Segmented-control button base */
+.lm-segment-btn {
+  transition: background-color 140ms ease-out, color 140ms ease-out,
+              box-shadow 140ms ease-out;
+}
+.lm-segment-btn:hover {
+  background-color: #17171a;
+  color: #e0e0e4;
+}
+
+/* Active segment: restrained purple band with a single inner highlight. */
+.lm-segment-active {
+  background-color: rgba(139, 92, 246, 0.18);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.45),
+              inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Toggle (Auto on) — same restrained accent */
+.lm-toggle-active {
+  border-color: rgba(139, 92, 246, 0.55);
+  background-color: rgba(139, 92, 246, 0.12);
+  color: #e0e0e4;
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.15);
+}
+
+/* Heatmap container: subtle inner ring so the chart feels recessed, no glow. */
+.lm-chart-frame {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025),
+              inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* Live dot — restrained cyan/green glow (3px blur, ~1.6s pulse) */
+.lm-live-dot {
+  box-shadow: 0 0 4px currentColor;
+  animation: lm-live-pulse 1.6s ease-in-out infinite;
+}
+
+/* Now marker — slightly brighter cyan, subtle glow */
+.lm-now-dot {
+  box-shadow: 0 0 5px rgba(34, 211, 238, 0.55);
+}
+
+@keyframes lm-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .lm-panel-hover,
+  .lm-segment-btn,
+  .lm-live-dot {
+    transition: none;
+    animation: none;
+  }
+  .lm-live-dot {
+    opacity: 1;
+  }
+}
