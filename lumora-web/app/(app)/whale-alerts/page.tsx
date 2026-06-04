@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PageTransition } from "@/components/ui/PageTransition";
 import { mockWhaleAlerts } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronUp, Filter, Zap } from "lucide-react";
@@ -49,7 +50,7 @@ export default function WhaleAlertsPage() {
     : `$${n.toFixed(0)}`;
 
   return (
-    <div className="space-y-4">
+    <PageTransition className="space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -139,7 +140,7 @@ export default function WhaleAlertsPage() {
                 <button
                   onClick={() => setExpanded(isOpen ? null : a.id)}
                   className={clsx(
-                    "lm-row w-full px-3 py-2 text-left grid grid-cols-[44px_44px_1fr_auto_auto_auto_14px] items-center gap-3",
+                    "lm-row w-full px-3 py-2 text-left grid grid-cols-[40px_40px_minmax(0,1fr)_auto_auto_14px] sm:grid-cols-[44px_44px_minmax(0,1fr)_auto_auto_auto_14px] items-center gap-2 sm:gap-3",
                     isOpen && "lm-row-open",
                   )}
                 >
@@ -252,6 +253,6 @@ export default function WhaleAlertsPage() {
           )}
         </Panel>
       </div>
-    </div>
+    </PageTransition>
   );
 }

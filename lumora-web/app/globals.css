@@ -251,6 +251,14 @@ body {
               0 1px 0 rgba(34, 211, 238, 0.25);
 }
 
+/* Hide horizontal scrollbar (used on the mobile nav strip) */
+.lm-no-scrollbar {
+  scrollbar-width: none;
+}
+.lm-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Brand wordmark — restrained, monospace-leaning */
 .lm-brand {
   font-family: 'JetBrains Mono', monospace;
@@ -258,14 +266,56 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ── LM61K: Motion + skeleton primitives ─────────────────────────────────── */
+
+/* Page enter — very short fade + tiny upward translate */
+.lm-page-enter {
+  animation: lm-page-enter 160ms ease-out both;
+}
+@keyframes lm-page-enter {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Skeleton block — neutral dark surface, slow restrained pulse */
+.lm-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: #161619;
+  border: 1px solid #1e1e22;
+  border-radius: 6px;
+}
+.lm-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.025) 50%,
+    transparent 100%
+  );
+  animation: lm-skeleton-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes lm-skeleton-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
 /* Respect users who prefer reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .lm-panel-hover,
   .lm-segment-btn,
   .lm-nav-link,
-  .lm-live-dot {
+  .lm-live-dot,
+  .lm-page-enter,
+  .lm-skeleton::after {
     transition: none;
     animation: none;
+  }
+  .lm-page-enter {
+    opacity: 1;
+    transform: none;
   }
   .lm-live-dot {
     opacity: 1;

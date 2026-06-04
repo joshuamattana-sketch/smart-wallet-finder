@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PageTransition } from "@/components/ui/PageTransition";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
 import { TrendingUp, Activity, Zap, RefreshCw } from "lucide-react";
@@ -124,7 +126,7 @@ export default function DashboardPage() {
     headerStatus.resolved == null ? "bg-lm-muted" : "bg-yellow-400";
 
   return (
-    <div className="space-y-4">
+    <PageTransition className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -173,9 +175,14 @@ export default function DashboardPage() {
                 </div>
 
                 {!p ? (
-                  <p className="text-[11px] text-lm-muted mt-3">
-                    {m.error ? `Waiting (last error: ${m.error})` : "Waiting for live data…"}
-                  </p>
+                  <div className="mt-2 space-y-2">
+                    <Skeleton variant="line" height="h-7" width="w-2/3" />
+                    <Skeleton variant="line" width="w-1/2" />
+                    <Skeleton variant="line" width="w-3/4" />
+                    {m.error && (
+                      <p className="text-[10px] text-red-400/80 mt-1 truncate">last error: {m.error}</p>
+                    )}
+                  </div>
                 ) : (
                   <>
                     {/* Price — primary visual element */}
@@ -260,7 +267,7 @@ export default function DashboardPage() {
             </h2>
             <Panel flush className="divide-y divide-lm-border/60">
               {mockSetups.map((s) => (
-                <div key={s.symbol} className="lm-row px-3 py-2.5 grid grid-cols-[80px_1fr_136px_56px] gap-3 items-center">
+                <div key={s.symbol} className="lm-row px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[80px_1fr_136px_56px] sm:gap-3 sm:items-center">
                   {/* Symbol + bias */}
                   <div className="min-w-0">
                     <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
@@ -365,6 +372,6 @@ export default function DashboardPage() {
           </p>
         </div>
       </div>
-    </div>
+    </PageTransition>
   );
 }

@@ -1,5 +1,6 @@
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PageTransition } from "@/components/ui/PageTransition";
 import { mockPaperTrades, mockJournal } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { TrendingUp, TrendingDown, BookOpen } from "lucide-react";
@@ -16,7 +17,7 @@ export default function PaperTradingPage() {
     `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString()}`;
 
   return (
-    <div className="space-y-4">
+    <PageTransition className="space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -285,6 +286,6 @@ export default function PaperTradingPage() {
           })}
         </Panel>
       </div>
-    </div>
+    </PageTransition>
   );
 }

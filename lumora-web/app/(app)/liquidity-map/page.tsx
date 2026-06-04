@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PageTransition } from "@/components/ui/PageTransition";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
@@ -373,7 +374,7 @@ export default function LiquidityMapPage() {
                                { text: "—",                        dot: "bg-lm-muted",             txt: "text-lm-muted" };
 
   return (
-    <div className="space-y-4">
+    <PageTransition className="space-y-4">
 
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -746,6 +747,6 @@ export default function LiquidityMapPage() {
       {/* LM60B: Data Status Panel */}
       <DataStatusPanel dataStatus={payload?.dataStatus ?? null} dataSource={dataSource} />
 
-    </div>
+    </PageTransition>
   );
 }

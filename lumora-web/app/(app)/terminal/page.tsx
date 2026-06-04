@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PageTransition } from "@/components/ui/PageTransition";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { mockOrderbook } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { ChevronDown, Info, RefreshCw, AlertCircle } from "lucide-react";
@@ -119,7 +121,7 @@ export default function TerminalPage() {
   const pressureText = ob.pressureSummary[timeframe];
 
   return (
-    <div className="space-y-4">
+    <PageTransition className="space-y-4">
       {/* Header + controls */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="mr-2">
@@ -245,7 +247,17 @@ export default function TerminalPage() {
             Order Flow Dominance
           </p>
           {!payload ? (
-            <p className="text-[11px] text-lm-muted">{apiError ?? "Loading live data…"}</p>
+            <div className="space-y-2">
+              <Skeleton variant="line" height="h-2" />
+              <Skeleton variant="line" height="h-14" />
+              <div className="grid grid-cols-2 gap-2">
+                <Skeleton variant="line" height="h-10" />
+                <Skeleton variant="line" height="h-10" />
+              </div>
+              {apiError && (
+                <p className="text-[10px] text-red-400/80 truncate">{apiError}</p>
+              )}
+            </div>
           ) : (
             <>
               {/* Pressure bar */}
@@ -325,7 +337,14 @@ export default function TerminalPage() {
             </span>
           </div>
           {!payload ? (
-            <div className="px-3 py-3 text-[11px] text-lm-muted">{apiError ?? "Loading…"}</div>
+            <div className="px-3 py-3 space-y-2">
+              <Skeleton variant="line" />
+              <Skeleton variant="line" width="w-3/4" />
+              <Skeleton variant="line" width="w-2/3" />
+              {apiError && (
+                <p className="text-[10px] text-red-400/80 truncate">{apiError}</p>
+              )}
+            </div>
           ) : payload.walls.length === 0 ? (
             <div className="px-3 py-3 text-[11px] text-lm-muted">No walls detected in current window.</div>
           ) : (
@@ -364,6 +383,6 @@ export default function TerminalPage() {
           )}
         </Panel>
       </div>
-    </div>
+    </PageTransition>
   );
 }
