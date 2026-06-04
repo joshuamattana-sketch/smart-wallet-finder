@@ -161,6 +161,50 @@ body {
   50% { opacity: 0.55; }
 }
 
+/* ── LM61F: Dashboard density primitives ─────────────────────────────────── */
+
+/* Terminal-style row hover — flat brighten, no purple tint */
+.lm-row {
+  transition: background-color 120ms ease-out;
+}
+.lm-row:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Big tabular price */
+.lm-price {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #e0e0e4;
+}
+
+/* Side rail accent for bid/ask rows */
+.lm-rail-bid::before,
+.lm-rail-ask::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+}
+.lm-rail-bid::before { background: #22c55e; }
+.lm-rail-ask::before { background: #ef4444; }
+
+/* Section header — quiet uppercase label sat in a row with a hairline */
+.lm-section-rule {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.06),
+    transparent
+  );
+}
+
 /* ── LM61E: App shell / nav primitives ───────────────────────────────────── */
 
 /* Top nav bar — denser, terminal-like, hairline bottom border */

@@ -124,7 +124,7 @@ export default function DashboardPage() {
     headerStatus.resolved == null ? "bg-lm-muted" : "bg-yellow-400";
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -140,7 +140,7 @@ export default function DashboardPage() {
       {/* Live Markets — shared /api/heatmap fixture source, auto-refresh 5s */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2">
+          <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2">
             <Activity className="h-3.5 w-3.5 text-lm-cyan" /> Live Markets
           </h2>
           <span className="flex items-center gap-1.5 text-[10px] text-lm-muted">
@@ -159,48 +159,47 @@ export default function DashboardPage() {
             const askWall = p ? heatmapStrongestWall(p, "ask") : null;
             return (
               <Panel flush hover key={sym} className="p-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="num text-sm font-semibold text-lm-text flex items-center gap-1.5">
-                    {sym}
-                    {isActive && <StatusBadge variant="neutral" size="sm">Fast</StatusBadge>}
-                  </span>
+                {/* Header: symbol label + status */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="num text-[11px] font-semibold uppercase tracking-widest text-lm-text-dim">
+                      {sym}
+                    </span>
+                    {isActive && <StatusBadge variant="neutral" size="sm">FAST</StatusBadge>}
+                  </div>
                   <StatusBadge variant={status.variant} dot={status.variant === "live"}>
                     {status.label}
                   </StatusBadge>
                 </div>
 
                 {!p ? (
-                  <p className="text-[11px] text-lm-muted">
+                  <p className="text-[11px] text-lm-muted mt-3">
                     {m.error ? `Waiting (last error: ${m.error})` : "Waiting for live data…"}
                   </p>
                 ) : (
                   <>
-                    <p className="num text-lg font-bold text-lm-cyan leading-tight">
-                      {price !== null
-                        ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                        : "—"}
-                    </p>
-                    {(status.isFallback || status.stale) && (
-                      <p className="text-[10px] text-amber-400 mt-1">
-                        {status.isFallback ? "Live unavailable — fallback" : ""}
-                        {status.isFallback && status.stale ? " · " : ""}
-                        {status.stale ? "Stale" : ""}
-                      </p>
-                    )}
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-2 text-[11px]">
-                      <span className="text-lm-muted">Cells</span>
-                      <span className="num text-right text-lm-text">{p.meta.cellCount}</span>
-                      <span className="text-lm-muted">Walls</span>
-                      <span className="num text-right text-lm-text">{p.meta.wallCount}</span>
-                      <span className="text-lm-muted">Source</span>
-                      <span className="num text-right text-lm-text">
-                        {p.meta.resolvedSource ?? p.meta.source ?? p.meta.dataSource ?? "—"}
+                    {/* Price — primary visual element */}
+                    <div className="mt-2 flex items-baseline gap-2">
+                      <span className="lm-price text-2xl text-lm-text leading-none">
+                        {price !== null
+                          ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                          : "—"}
                       </span>
+                      {(status.isFallback || status.stale) && (
+                        <span className="text-[10px] text-amber-400 uppercase tracking-wide">
+                          {status.stale ? "Stale" : "Fallback"}
+                        </span>
+                      )}
                     </div>
+
+                    {/* Hairline divider */}
+                    <div className="lm-section-rule mt-3" />
+
+                    {/* Bid / Ask rail rows */}
                     <div className="mt-2 space-y-1">
                       {bidWall && (
-                        <div className="flex items-center gap-2 text-[11px]">
-                          <StatusBadge variant="bid" size="sm">BID</StatusBadge>
+                        <div className="lm-rail-bid relative pl-2.5 flex items-center gap-2 text-[11px]">
+                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-6">Bid</span>
                           <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
                           <span className="num text-lm-muted ml-auto">
                             ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
@@ -208,8 +207,8 @@ export default function DashboardPage() {
                         </div>
                       )}
                       {askWall && (
-                        <div className="flex items-center gap-2 text-[11px]">
-                          <StatusBadge variant="ask" size="sm">ASK</StatusBadge>
+                        <div className="lm-rail-ask relative pl-2.5 flex items-center gap-2 text-[11px]">
+                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-6">Ask</span>
                           <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
                           <span className="num text-lm-muted ml-auto">
                             ${(askWall.total_usd / 1_000_000).toFixed(2)}M
@@ -217,7 +216,26 @@ export default function DashboardPage() {
                         </div>
                       )}
                     </div>
-                    <p className="text-[10px] text-lm-muted mt-2">
+
+                    {/* Meta KPI strip */}
+                    <div className="mt-2.5 grid grid-cols-3 gap-2 text-[10px]">
+                      <div>
+                        <p className="text-lm-muted uppercase tracking-wide">Cells</p>
+                        <p className="num text-lm-text">{p.meta.cellCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-lm-muted uppercase tracking-wide">Walls</p>
+                        <p className="num text-lm-text">{p.meta.wallCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-lm-muted uppercase tracking-wide">Source</p>
+                        <p className="num text-lm-text truncate">
+                          {p.meta.resolvedSource ?? p.meta.source ?? p.meta.dataSource ?? "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-lm-muted mt-2.5 num">
                       {p.meta.liveUpdatedAt ? `live ${fmtTime(p.meta.liveUpdatedAt)}` : "no live timestamp"}
                       {" · "}fetched {fmtTime(m.lastFetchedAt)}
                     </p>
@@ -230,102 +248,108 @@ export default function DashboardPage() {
       </div>
 
       {/* 2-col: setups | right panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
 
         {/* Left column */}
-        <div className="lg:col-span-2 space-y-5">
+        <div className="lg:col-span-2 space-y-4">
           {/* Top Setups */}
           <div>
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2 mb-2">
+            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2 mb-2">
               <TrendingUp className="h-3.5 w-3.5 text-lm-purple" /> Top Market Setups
               <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
             </h2>
-            <div className="space-y-2">
+            <Panel flush className="divide-y divide-lm-border/60">
               {mockSetups.map((s) => (
-                <Panel flush hover key={s.symbol} className="p-3">
-                  <div className="flex items-start gap-4">
-                    {/* Symbol + bias */}
-                    <div className="shrink-0 w-28">
-                      <p className="num text-sm font-semibold text-lm-text">{s.symbol}</p>
-                      <StatusBadge
-                        variant={s.bias === "LONG" ? "bid" : s.bias === "SHORT" ? "ask" : "neutral"}
-                        className="mt-1"
-                      >
-                        {s.bias}
-                      </StatusBadge>
-                    </div>
+                <div key={s.symbol} className="lm-row px-3 py-2.5 grid grid-cols-[80px_1fr_136px_56px] gap-3 items-center">
+                  {/* Symbol + bias */}
+                  <div className="min-w-0">
+                    <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
+                    <StatusBadge
+                      variant={s.bias === "LONG" ? "bid" : s.bias === "SHORT" ? "ask" : "neutral"}
+                      size="sm"
+                      className="mt-1"
+                    >
+                      {s.bias}
+                    </StatusBadge>
+                  </div>
 
-                    {/* Reason + tags */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-lm-text-dim leading-relaxed">{s.reason}</p>
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {s.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-lm-border/50 text-lm-muted"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Levels */}
-                    <div className="shrink-0 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs num text-right">
-                      <span className="text-lm-muted">Entry</span>
-                      <span className="text-lm-text">{s.entry}</span>
-                      <span className="text-lm-muted">Target</span>
-                      <span className="text-emerald-400">{s.target}</span>
-                      <span className="text-lm-muted">Stop</span>
-                      <span className="text-red-400">{s.stop}</span>
-                    </div>
-
-                    {/* Confidence bar */}
-                    <div className="shrink-0 w-12 text-right">
-                      <div className="h-1.5 rounded-full bg-lm-border overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-lm-cyan/80"
-                          style={{ width: `${s.confidence}%` }}
-                        />
-                      </div>
-                      <p className="num text-[11px] text-lm-text-dim mt-1">{s.confidence}%</p>
+                  {/* Reason + tags */}
+                  <div className="min-w-0">
+                    <p className="text-[11.5px] text-lm-text-dim leading-snug line-clamp-2">{s.reason}</p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {s.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-lm-surface-muted text-lm-muted border border-lm-border/60"
+                        >
+                          {tag}
+                        </span>
+                      ))}
                     </div>
                   </div>
-                </Panel>
+
+                  {/* Levels — aligned label/value columns */}
+                  <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] num">
+                    <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Entry</span>
+                    <span className="text-right text-lm-text">{s.entry}</span>
+                    <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Target</span>
+                    <span className="text-right text-emerald-400">{s.target}</span>
+                    <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Stop</span>
+                    <span className="text-right text-red-400">{s.stop}</span>
+                  </div>
+
+                  {/* Confidence */}
+                  <div className="text-right">
+                    <div className="h-1 rounded-full bg-lm-border overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-lm-cyan/80"
+                        style={{ width: `${s.confidence}%` }}
+                      />
+                    </div>
+                    <p className="num text-[10px] text-lm-text-dim mt-1">{s.confidence}%</p>
+                  </div>
+                </div>
               ))}
-            </div>
+            </Panel>
           </div>
 
         </div>
 
         {/* Right panel */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Whale Alerts */}
           <Panel flush className="overflow-hidden">
-            <div className="px-3 py-2.5 border-b border-lm-border flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-1.5">
+            <div className="px-3 py-2 border-b border-lm-border flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-1.5">
                 <Zap className="h-3 w-3 text-lm-cyan" /> Whale Alerts
               </span>
               <div className="flex items-center gap-1.5">
                 <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
-                <StatusBadge variant="neutral">{mockWhaleAlerts.length}</StatusBadge>
+                <StatusBadge variant="neutral" size="sm">{mockWhaleAlerts.length}</StatusBadge>
               </div>
             </div>
-            <div className="overflow-y-auto max-h-[272px] divide-y divide-lm-border/40">
+            <div className="overflow-y-auto max-h-[340px] divide-y divide-lm-border/60">
               {mockWhaleAlerts.map((a) => (
-                <div key={a.id} className="px-3 py-2.5 transition-colors hover:bg-white/[0.02]">
-                  <div className="flex items-center gap-2 mb-1">
-                    <StatusBadge variant={a.side === "BUY" ? "bid" : "ask"} className="w-10 justify-center shrink-0">
+                <div key={a.id} className="lm-row px-3 py-2">
+                  {/* Top line: side · symbol · type · size */}
+                  <div className="flex items-center gap-2">
+                    <StatusBadge variant={a.side === "BUY" ? "bid" : "ask"} size="sm" className="w-9 justify-center shrink-0">
                       {a.side}
                     </StatusBadge>
-                    <span className="num text-xs font-semibold text-lm-text">{a.symbol}</span>
-                    <span className="text-[11px] text-lm-muted">{a.type}</span>
-                    <span className="ml-auto num text-xs font-semibold text-lm-text">{a.size}</span>
+                    <span className="num text-[12px] font-semibold text-lm-text">{a.symbol}</span>
+                    <span className="text-[10px] text-lm-muted uppercase tracking-wide">{a.type}</span>
+                    <span className="ml-auto num text-[12px] font-semibold text-lm-text">{a.size}</span>
                   </div>
-                  <p className="text-[11px] text-lm-muted leading-snug pl-12">{a.reason}</p>
-                  <div className="flex items-center gap-1.5 mt-1 pl-12">
-                    <StatusBadge variant="neutral" size="sm">{a.exchange}</StatusBadge>
-                    <StatusBadge variant={a.risk === "HIGH" ? "error" : a.risk === "MEDIUM" ? "warning" : "neutral"} size="sm">
+                  {/* Reason — full width, tight */}
+                  <p className="text-[11px] text-lm-text-dim leading-snug mt-1 pl-11">{a.reason}</p>
+                  {/* Meta strip */}
+                  <div className="flex items-center gap-1.5 mt-1 pl-11">
+                    <span className="text-[9px] uppercase tracking-wide text-lm-muted">{a.exchange}</span>
+                    <span className="text-lm-border">·</span>
+                    <StatusBadge
+                      variant={a.risk === "HIGH" ? "error" : a.risk === "MEDIUM" ? "warning" : "neutral"}
+                      size="sm"
+                    >
                       {a.risk}
                     </StatusBadge>
                     <span className="num text-[10px] text-lm-muted ml-auto">{a.time}</span>
@@ -335,7 +359,7 @@ export default function DashboardPage() {
             </div>
           </Panel>
 
-          <p className="text-[10px] text-lm-muted px-1">
+          <p className="text-[10px] text-lm-muted px-1 leading-snug">
             Live per-symbol liquidity walls are shown in the Live Markets cards above
             and on the Liquidity Map.
           </p>
