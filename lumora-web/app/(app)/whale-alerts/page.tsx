@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { Badge } from "@/components/ui/Badge";
+import { useState, useMemo } from "react";
+import { Panel } from "@/components/ui/Panel";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { mockWhaleAlerts } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronUp, Filter, Zap } from "lucide-react";
@@ -10,10 +10,11 @@ import { ChevronDown, ChevronUp, Filter, Zap } from "lucide-react";
 type Risk = "ALL" | "HIGH" | "MEDIUM" | "LOW";
 type Side = "ALL" | "BUY" | "SELL";
 
-const RISK_VARIANT: Record<string, "red" | "yellow" | "muted"> = {
-  HIGH: "red",
-  MEDIUM: "yellow",
-  LOW: "muted",
+type RiskVariant = "error" | "warning" | "neutral";
+const RISK_VARIANT: Record<string, RiskVariant> = {
+  HIGH: "error",
+  MEDIUM: "warning",
+  LOW: "neutral",
 };
 
 export default function WhaleAlertsPage() {
@@ -21,147 +22,235 @@ export default function WhaleAlertsPage() {
   const [side, setSide] = useState<Side>("ALL");
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  const filtered = mockWhaleAlerts.filter(
-    (a) => (risk === "ALL" || a.risk === risk) && (side === "ALL" || a.side === side)
+  const filtered = useMemo(
+    () =>
+      mockWhaleAlerts.filter(
+        (a) => (risk === "ALL" || a.risk === risk) && (side === "ALL" || a.side === side),
+      ),
+    [risk, side],
   );
 
+  // Summary stats — derived from filtered set (read-only, no fetch impact).
+  const stats = useMemo(() => {
+    const parseUsd = (s: string) =>
+      Number.parseFloat(s.replace(/[^0-9.]/g, "")) *
+      (/B/i.test(s) ? 1_000_000_000 : /M/i.test(s) ? 1_000_000 : /K/i.test(s) ? 1_000 : 1);
+    const totalUsd = filtered.reduce((sum, a) => sum + parseUsd(a.size), 0);
+    const buys = filtered.filter((a) => a.side === "BUY").length;
+    const sells = filtered.filter((a) => a.side === "SELL").length;
+    const high = filtered.filter((a) => a.risk === "HIGH").length;
+    return { totalUsd, buys, sells, high };
+  }, [filtered]);
+
+  const fmtUsd = (n: number) =>
+    n >= 1_000_000_000 ? `$${(n / 1_000_000_000).toFixed(2)}B`
+    : n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(2)}M`
+    : n >= 1_000 ? `$${(n / 1_000).toFixed(1)}K`
+    : `$${n.toFixed(0)}`;
+
   return (
-    <div className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-lumora-text flex items-center gap-2">
-            <Zap className="h-5 w-5 text-lumora-cyan" /> Whale Alerts
+          <h1 className="text-xl font-semibold text-lm-text flex items-center gap-2">
+            <Zap className="h-4 w-4 text-lm-cyan" /> Whale Intelligence Feed
           </h1>
-          <p className="text-sm text-lumora-muted mt-0.5">Large order flow &amp; unusual activity — demo data</p>
+          <p className="text-[12px] text-lm-muted mt-0.5">
+            Large order flow &amp; unusual activity across major venues — demo data
+          </p>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse inline-block" />
-          <span className="text-lumora-green">Monitoring</span>
-          <Badge variant="green">{filtered.length} / {mockWhaleAlerts.length}</Badge>
+        <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
+          <span className="lm-live-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 text-emerald-400" />
+          Monitoring
+          <span className="text-lm-border">·</span>
+          <span className="text-lm-text">{filtered.length}</span>
+          <span className="text-lm-muted">/ {mockWhaleAlerts.length}</span>
         </div>
       </div>
 
+      {/* Summary KPI strip */}
+      <Panel flush className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-lm-border/60">
+        {[
+          { label: "Total Flow", value: fmtUsd(stats.totalUsd), tone: "text-lm-text" },
+          { label: "Buys",  value: String(stats.buys),  tone: "text-emerald-400" },
+          { label: "Sells", value: String(stats.sells), tone: "text-red-400" },
+          { label: "High Risk", value: String(stats.high), tone: "text-amber-400" },
+        ].map((s) => (
+          <div key={s.label} className="px-4 py-2.5">
+            <p className="text-[10px] uppercase tracking-widest text-lm-muted">{s.label}</p>
+            <p className={clsx("lm-price text-lg mt-0.5 leading-none", s.tone)}>{s.value}</p>
+          </div>
+        ))}
+      </Panel>
+
       {/* Filter bar */}
-      <GlassCard className="p-2.5 flex flex-wrap items-center gap-2">
-        <Filter className="h-3.5 w-3.5 text-lumora-muted ml-0.5 shrink-0" />
-        <span className="text-[11px] text-lumora-muted uppercase tracking-wide">Risk</span>
-        <div className="flex rounded-md border border-lumora-border overflow-hidden">
+      <Panel flush className="p-2 flex flex-wrap items-center gap-2">
+        <Filter className="h-3.5 w-3.5 text-lm-muted ml-0.5 shrink-0" />
+        <span className="text-[10px] uppercase tracking-widest text-lm-muted">Risk</span>
+        <div className="flex rounded-md border border-lm-border overflow-hidden">
           {(["ALL", "HIGH", "MEDIUM", "LOW"] as Risk[]).map((r) => (
             <button
               key={r}
               onClick={() => setRisk(r)}
               className={clsx(
-                "px-2.5 py-1 text-xs font-medium transition-colors",
-                risk === r ? "bg-lumora-purple text-white" : "text-lumora-muted hover:text-lumora-text bg-lumora-card"
+                "lm-segment-btn px-2.5 py-1 text-[11px] font-medium",
+                risk === r ? "lm-segment-active" : "text-lm-muted bg-lm-surface",
               )}
             >
               {r}
             </button>
           ))}
         </div>
-        <div className="h-4 w-px bg-lumora-border hidden sm:block" />
-        <span className="text-[11px] text-lumora-muted uppercase tracking-wide">Side</span>
-        <div className="flex rounded-md border border-lumora-border overflow-hidden">
+        <div className="h-4 w-px bg-lm-border hidden sm:block" />
+        <span className="text-[10px] uppercase tracking-widest text-lm-muted">Side</span>
+        <div className="flex rounded-md border border-lm-border overflow-hidden">
           {(["ALL", "BUY", "SELL"] as Side[]).map((s) => (
             <button
               key={s}
               onClick={() => setSide(s)}
               className={clsx(
-                "px-2.5 py-1 text-xs font-medium transition-colors",
-                side === s ? "bg-lumora-purple text-white" : "text-lumora-muted hover:text-lumora-text bg-lumora-card"
+                "lm-segment-btn px-2.5 py-1 text-[11px] font-medium",
+                side === s ? "lm-segment-active" : "text-lm-muted bg-lm-surface",
               )}
             >
               {s}
             </button>
           ))}
         </div>
-      </GlassCard>
+      </Panel>
 
-      {/* Alert list */}
-      <div className="space-y-1.5">
-        {filtered.map((a) => (
-          <GlassCard key={a.id} className="overflow-hidden">
-            {/* Compact row */}
-            <button
-              className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-lumora-surface/30 transition-colors"
-              onClick={() => setExpanded(expanded === a.id ? null : a.id)}
-            >
-              <Badge variant={a.side === "BUY" ? "green" : "red"} className="shrink-0 w-12 justify-center">
-                {a.side}
-              </Badge>
+      {/* Feed */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
+            Live Feed
+          </h2>
+          <span className="text-[10px] text-lm-muted num">
+            sorted by time · most recent first
+          </span>
+        </div>
 
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="num text-sm font-semibold text-lumora-text">{a.symbol}</span>
-                  <span className="text-[11px] text-lumora-muted">{a.type}</span>
-                  {a.leverage !== "1×" && (
-                    <Badge variant="yellow" className="text-[10px]">{a.leverage}</Badge>
+        <Panel flush className="overflow-hidden divide-y divide-lm-border/60">
+          {filtered.map((a) => {
+            const isOpen = expanded === a.id;
+            return (
+              <div key={a.id}>
+                <button
+                  onClick={() => setExpanded(isOpen ? null : a.id)}
+                  className={clsx(
+                    "lm-row w-full px-3 py-2 text-left grid grid-cols-[44px_44px_1fr_auto_auto_auto_14px] items-center gap-3",
+                    isOpen && "lm-row-open",
                   )}
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <Badge variant="muted" className="text-[10px]">{a.exchange}</Badge>
-                  <span className="num text-[11px] text-lumora-muted">{a.time}</span>
-                </div>
-              </div>
+                >
+                  {/* Time */}
+                  <span className="num text-[11px] text-lm-muted">{a.time}</span>
 
-              <div className="shrink-0 text-right">
-                <p className="num text-sm font-bold text-lumora-text">{a.size}</p>
-                <p className="num text-[11px] text-lumora-muted">conf. {a.confidence}%</p>
-              </div>
+                  {/* Side */}
+                  <StatusBadge
+                    variant={a.side === "BUY" ? "bid" : "ask"}
+                    size="sm"
+                    className="w-10 justify-center"
+                  >
+                    {a.side}
+                  </StatusBadge>
 
-              <Badge variant={RISK_VARIANT[a.risk] ?? "muted"} className="shrink-0 w-16 justify-center">
-                {a.risk}
-              </Badge>
-
-              {expanded === a.id
-                ? <ChevronUp className="h-4 w-4 text-lumora-muted shrink-0" />
-                : <ChevronDown className="h-4 w-4 text-lumora-muted shrink-0" />}
-            </button>
-
-            {/* Expanded detail */}
-            {expanded === a.id && (
-              <div className="border-t border-lumora-border/50 px-4 py-3 bg-lumora-surface/20 space-y-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label: "Exchange",   value: a.exchange },
-                    { label: "Order Size", value: a.size },
-                    { label: "Leverage",   value: a.leverage },
-                    { label: "Confidence", value: `${a.confidence}%` },
-                  ].map(({ label, value }) => (
-                    <div key={label}>
-                      <p className="text-[11px] text-lumora-muted mb-0.5">{label}</p>
-                      <p className="num text-sm text-lumora-text font-medium">{value}</p>
+                  {/* Symbol + type */}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="num text-[13px] font-semibold text-lm-text">{a.symbol}</span>
+                      <span className="text-[10px] uppercase tracking-wide text-lm-muted">
+                        {a.type}
+                      </span>
+                      {a.leverage !== "1×" && (
+                        <StatusBadge variant="warning" size="sm">{a.leverage}</StatusBadge>
+                      )}
                     </div>
-                  ))}
-                </div>
+                    <p className="text-[10px] text-lm-muted truncate mt-0.5">{a.exchange}</p>
+                  </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="rounded-lg bg-lumora-card border border-lumora-border/60 px-3 py-2.5">
-                    <p className="text-[11px] text-lumora-muted uppercase tracking-wide mb-1">Reason</p>
-                    <p className="text-xs text-lumora-text-dim leading-relaxed">{a.reason}</p>
+                  {/* Notional — primary read */}
+                  <div className="text-right">
+                    <p className="lm-price text-[14px] text-lm-text leading-none">{a.size}</p>
+                    <p className="num text-[10px] text-lm-muted mt-0.5">conf {a.confidence}%</p>
                   </div>
-                  <div className="rounded-lg bg-lumora-card border border-lumora-border/60 px-3 py-2.5">
-                    <p className="text-[11px] text-lumora-muted uppercase tracking-wide mb-1">Suggested Action</p>
-                    <p className="text-xs text-lumora-text-dim leading-relaxed">{a.action}</p>
+
+                  {/* Risk */}
+                  <StatusBadge
+                    variant={RISK_VARIANT[a.risk] ?? "neutral"}
+                    size="sm"
+                    className="w-14 justify-center"
+                  >
+                    {a.risk}
+                  </StatusBadge>
+
+                  {/* Confidence micro-bar */}
+                  <div className="hidden sm:block w-14">
+                    <div className="h-1 rounded-full bg-lm-border overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-lm-cyan/80"
+                        style={{ width: `${a.confidence}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
+
+                  {/* Chevron */}
+                  {isOpen
+                    ? <ChevronUp className="h-3.5 w-3.5 text-lm-muted" />
+                    : <ChevronDown className="h-3.5 w-3.5 text-lm-muted" />}
+                </button>
+
+                {/* Expanded detail */}
+                {isOpen && (
+                  <div className="px-3 pb-3 pt-1 bg-lm-surface-muted/40 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-3">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                      {[
+                        { label: "Exchange",   value: a.exchange },
+                        { label: "Order Size", value: a.size },
+                        { label: "Leverage",   value: a.leverage },
+                        { label: "Confidence", value: `${a.confidence}%` },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="contents">
+                          <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">
+                            {label}
+                          </span>
+                          <span className="num text-right text-lm-text">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-[9px] uppercase tracking-widest text-lm-muted mb-0.5">
+                          Reason
+                        </p>
+                        <p className="text-[11px] text-lm-text-dim leading-snug">{a.reason}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] uppercase tracking-widest text-lm-muted mb-0.5">
+                          Suggested Action
+                        </p>
+                        <p className="text-[11px] text-lm-text-dim leading-snug">{a.action}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </GlassCard>
-        ))}
+            );
+          })}
 
-        {filtered.length === 0 && (
-          <GlassCard className="p-10 text-center">
-            <p className="text-lumora-muted text-sm">No alerts match the current filters.</p>
-            <button
-              className="mt-3 text-xs text-lumora-purple hover:text-lumora-purple-bright transition-colors"
-              onClick={() => { setRisk("ALL"); setSide("ALL"); }}
-            >
-              Clear filters
-            </button>
-          </GlassCard>
-        )}
+          {filtered.length === 0 && (
+            <div className="px-3 py-10 text-center">
+              <p className="text-lm-muted text-[12px]">No alerts match the current filters.</p>
+              <button
+                className="mt-2 text-[11px] text-lm-cyan hover:text-cyan-300 transition-colors"
+                onClick={() => { setRisk("ALL"); setSide("ALL"); }}
+              >
+                Clear filters
+              </button>
+            </div>
+          )}
+        </Panel>
       </div>
     </div>
   );

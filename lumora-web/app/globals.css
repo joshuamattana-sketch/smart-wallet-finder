@@ -171,6 +171,12 @@ body {
   background-color: rgba(255, 255, 255, 0.02);
 }
 
+/* Expanded feed row — subtle inset highlight when open */
+.lm-row-open {
+  background-color: rgba(139, 92, 246, 0.04);
+  box-shadow: inset 2px 0 0 #8b5cf6;
+}
+
 /* Big tabular price */
 .lm-price {
   font-family: 'JetBrains Mono', monospace;
