@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { mockOrderbook } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { ChevronDown, Info, RefreshCw, AlertCircle } from "lucide-react";
@@ -18,6 +18,8 @@ import {
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "HYPEUSDT"];
 const TIMEFRAMES = ["Now", "5m", "1h"] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
+
+type LiveVariant = "live" | "stale" | "error" | "neutral";
 
 /** Terminal timeframe label → /api/heatmap timeframe ("Now" maps to 5m). */
 function apiTimeframe(tf: Timeframe): string {
@@ -92,12 +94,18 @@ export default function TerminalPage() {
   const strongestWall = payload ? heatmapStrongestWall(payload) : null;
   // Status from the route's resolvedSource (live → fixture → mock).
   const resolvedStatus = heatmapResolvedStatus(payload);
-  const liveStatus =
+  const liveStatus: { label: string; variant: LiveVariant } =
     apiError && !payload
-      ? { label: "Error", variant: "red" as const }
+      ? { label: "Error", variant: "error" }
       : !payload
-        ? { label: "—", variant: "muted" as const }
-        : { label: resolvedStatus.label, variant: resolvedStatus.variant };
+        ? { label: "—", variant: "neutral" }
+        : {
+            label: resolvedStatus.label,
+            variant:
+              resolvedStatus.variant === "green" ? "live" :
+              resolvedStatus.variant === "red"   ? "error" :
+              resolvedStatus.variant === "muted" ? "neutral" : "stale",
+          };
 
   // Depth / dominance derived purely from the live payload (no mock numbers).
   const bidWall = payload ? heatmapStrongestWall(payload, "bid") : null;
@@ -107,249 +115,254 @@ export default function TerminalPage() {
       ? lastPoint.bestAsk - lastPoint.bestBid
       : null;
   const bidPctLive = intensity ? intensity.bidPct : null;
+  const askPctLive = bidPctLive != null ? 100 - bidPctLive : null;
   const pressureText = ob.pressureSummary[timeframe];
 
   return (
-    <div className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
+    <div className="space-y-4">
       {/* Header + controls */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-end gap-3">
         <div className="mr-2">
-          <h1 className="text-xl font-semibold text-lumora-text">Pro Terminal</h1>
-          <p className="text-xs text-lumora-muted mt-0.5">Live depth via /api/heatmap (live → fixture → mock) · heatmap-derived</p>
+          <h1 className="text-xl font-semibold text-lm-text">Pro Terminal</h1>
+          <p className="text-[11px] text-lm-muted mt-0.5">
+            Live depth via /api/heatmap (live → fixture → mock)
+          </p>
         </div>
 
-        <div className="relative">
-          <select
-            className="appearance-none bg-lumora-card border border-lumora-border text-lumora-text text-sm rounded-lg px-3 py-2 pr-8 focus:outline-none focus:border-lumora-purple num cursor-pointer"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-          >
-            {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-2.5 h-4 w-4 text-lumora-muted pointer-events-none" />
-        </div>
-
-        <div className="flex rounded-lg border border-lumora-border overflow-hidden">
-          {TIMEFRAMES.map((tf) => (
-            <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
-              className={clsx(
-                "px-4 py-2 text-sm font-medium transition-colors",
-                timeframe === tf
-                  ? "bg-lumora-purple text-white"
-                  : "text-lumora-muted hover:text-lumora-text bg-lumora-card"
-              )}
+        <div className="flex items-center gap-2 ml-auto">
+          {/* Symbol */}
+          <div className="relative">
+            <select
+              className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-[12px] rounded-md px-2.5 py-1.5 pr-7 focus:outline-none focus:border-lm-purple num cursor-pointer"
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
             >
-              {tf}
-            </button>
-          ))}
-        </div>
+              {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
+          </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          {payload && resolvedStatus.isFallback && (
-            <span className="text-[10px] text-yellow-400">live unavailable</span>
-          )}
-          <Badge variant={liveStatus.variant}>{liveStatus.label}</Badge>
+          {/* Timeframe segment */}
+          <div className="flex rounded-md border border-lm-border overflow-hidden">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf)}
+                className={clsx(
+                  "lm-segment-btn px-2.5 py-1.5 text-[12px] font-medium",
+                  timeframe === tf ? "lm-segment-active" : "text-lm-muted bg-lm-surface",
+                )}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+
+          <StatusBadge variant={liveStatus.variant} dot={liveStatus.variant === "live"}>
+            {liveStatus.label}
+          </StatusBadge>
           {payload && resolvedStatus.stale && (
-            <Badge variant="yellow" className="text-[9px] px-1 py-0">Stale</Badge>
+            <StatusBadge variant="stale" size="sm">Stale</StatusBadge>
           )}
         </div>
       </div>
 
+      {/* Top KPI strip — primary operator read */}
+      <Panel flush className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-lm-border/60">
+        <div className="px-4 py-2.5">
+          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Last</p>
+          <p className="lm-price text-2xl text-lm-cyan mt-0.5 leading-none">
+            {livePrice !== null
+              ? `$${livePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+              : "—"}
+          </p>
+        </div>
+        <div className="px-4 py-2.5">
+          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Best Bid</p>
+          <p className="lm-price text-lg text-emerald-400 mt-0.5 leading-none">
+            {lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—"}
+          </p>
+        </div>
+        <div className="px-4 py-2.5">
+          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Best Ask</p>
+          <p className="lm-price text-lg text-red-400 mt-0.5 leading-none">
+            {lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—"}
+          </p>
+        </div>
+        <div className="px-4 py-2.5">
+          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Spread</p>
+          <p className="lm-price text-lg text-lm-text mt-0.5 leading-none">
+            {spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
+          </p>
+        </div>
+        <div className="px-4 py-2.5">
+          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Walls</p>
+          <p className="lm-price text-lg text-lm-text mt-0.5 leading-none">
+            {payload ? payload.meta.wallCount : "—"}
+            {strongestWall && (
+              <span className="text-[10px] text-lm-muted ml-1.5 font-normal">
+                top ${strongestWall.price_bucket.toLocaleString()}
+              </span>
+            )}
+          </p>
+        </div>
+        <div className="px-4 py-2.5">
+          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Live · Fetched</p>
+          <p className="num text-[11px] text-lm-text-dim mt-1 leading-none">
+            {fmtTime(payload?.meta.liveUpdatedAt)}
+          </p>
+          <p className="num text-[10px] text-lm-muted mt-0.5 leading-none">
+            {fmtTime(lastFetchedAt)}
+          </p>
+        </div>
+      </Panel>
+
       {/* Pressure context banner */}
-      <GlassCard className="px-4 py-2.5 flex items-start gap-2.5">
-        <Info className="h-3.5 w-3.5 text-lumora-cyan shrink-0 mt-0.5" />
-        <p className="text-xs text-lumora-text-dim leading-relaxed">
-          <span className="text-lumora-cyan font-medium">{timeframe} context: </span>
+      <Panel flush className="px-3 py-2 flex items-start gap-2.5">
+        <Info className="h-3.5 w-3.5 text-lm-cyan shrink-0 mt-0.5" />
+        <p className="text-[12px] text-lm-text-dim leading-snug">
+          <span className="text-lm-cyan font-medium uppercase tracking-wide text-[11px] mr-1.5">
+            {timeframe}
+          </span>
           {pressureText}
         </p>
-      </GlassCard>
+      </Panel>
 
-      {/* Live heatmap snapshot — shared /api/heatmap live source, 2s refresh */}
-      <GlassCard className="overflow-hidden p-0">
-        <div className="px-4 py-2 border-b border-lumora-border flex items-center justify-between gap-3">
-          <span className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-1.5">
-            <RefreshCw className="h-3 w-3 text-lumora-cyan" /> Live Heatmap
-          </span>
-          <div className="flex items-center gap-2">
-            <Badge variant={liveStatus.variant}>{liveStatus.label}</Badge>
-            <span className="text-[10px] text-lumora-muted num">
-              {symbol} · {apiTf}
-            </span>
-          </div>
+      {/* API error banner — only when no payload to display */}
+      {apiError && !payload && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-[11px]">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span>{apiError}</span>
         </div>
+      )}
 
-        {apiError && !payload ? (
-          <div className="px-4 py-3 flex items-center gap-2 text-xs text-red-400">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            <span>{apiError}</span>
-          </div>
-        ) : !payload ? (
-          <div className="px-4 py-3 text-xs text-lumora-muted">Loading live data…</div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-2 px-4 py-3">
-            <div>
-              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Current</p>
-              <p className="num text-sm font-bold text-neon-cyan">
-                {livePrice !== null
-                  ? `$${livePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Best Bid</p>
-              <p className="num text-sm font-semibold text-lumora-green">
-                {lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Best Ask</p>
-              <p className="num text-sm font-semibold text-lumora-red">
-                {lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Bid/Ask Intens</p>
-              <p className="num text-sm font-semibold text-lumora-text">
-                {intensity ? `${intensity.bid}/${intensity.ask}` : "—"}
-                <span className="text-[10px] text-lumora-muted ml-1">
-                  {intensity ? `(${intensity.bidPct}% bid)` : ""}
-                </span>
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Walls</p>
-              <p className="num text-sm font-semibold text-lumora-text">
-                {payload.meta.wallCount}
-                {strongestWall && (
-                  <span className="text-[10px] text-lumora-muted ml-1">
-                    top ${strongestWall.price_bucket.toLocaleString()}
-                  </span>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Live / Fetched</p>
-              <p className="num text-[11px] text-lumora-text-dim">
-                {fmtTime(payload.meta.liveUpdatedAt)} · {fmtTime(lastFetchedAt)}
-              </p>
-            </div>
-          </div>
-        )}
-      </GlassCard>
-
-      {/* Order flow & walls — derived from the live payload (no mock depth) */}
+      {/* Two-column: Order flow dominance | Walls list */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
 
-        {/* Dominance + spread */}
-        <GlassCard className="p-4">
-          <p className="text-[11px] text-lumora-muted uppercase tracking-widest mb-3">Order Flow Dominance</p>
+        {/* Order Flow Dominance */}
+        <Panel flush className="p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted mb-3">
+            Order Flow Dominance
+          </p>
           {!payload ? (
-            <p className="text-xs text-lumora-muted">{apiError ?? "Loading live data…"}</p>
+            <p className="text-[11px] text-lm-muted">{apiError ?? "Loading live data…"}</p>
           ) : (
             <>
-              <div className="flex justify-between text-[10px] text-lumora-muted mb-1">
-                <span>Bids {bidPctLive ?? "—"}%</span>
-                <span>{bidPctLive != null ? 100 - bidPctLive : "—"}% Asks</span>
+              {/* Pressure bar */}
+              <div className="flex justify-between text-[10px] text-lm-muted mb-1 num uppercase tracking-wide">
+                <span className="text-emerald-400">{bidPctLive ?? "—"}% Bids</span>
+                <span className="text-red-400">{askPctLive ?? "—"}% Asks</span>
               </div>
-              <div className="h-2.5 rounded-full overflow-hidden flex bg-lumora-border">
-                <div className="bg-green-500 transition-all" style={{ width: `${bidPctLive ?? 50}%` }} />
-                <div className="bg-red-500 flex-1" />
+              <div className="h-2 rounded-full overflow-hidden flex bg-lm-surface-muted border border-lm-border">
+                <div className="bg-emerald-500/80 transition-all duration-300" style={{ width: `${bidPctLive ?? 50}%` }} />
+                <div className="bg-red-500/80 flex-1" />
               </div>
 
-              <div className="mt-3 grid grid-cols-3 gap-3 text-center">
-                <div>
-                  <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Best Bid</p>
-                  <p className="num text-sm font-semibold text-lumora-green">
+              {/* Best bid / spread / best ask grid */}
+              <div className="mt-3 grid grid-cols-3 divide-x divide-lm-border/60 border border-lm-border/60 rounded-md overflow-hidden">
+                <div className="px-3 py-2">
+                  <p className="text-[10px] text-lm-muted uppercase tracking-wide">Best Bid</p>
+                  <p className="lm-price text-[13px] text-emerald-400 mt-0.5 leading-none">
                     {lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—"}
                   </p>
                 </div>
-                <div>
-                  <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Spread</p>
-                  <p className="num text-sm font-semibold text-lumora-text">
+                <div className="px-3 py-2">
+                  <p className="text-[10px] text-lm-muted uppercase tracking-wide">Spread</p>
+                  <p className="lm-price text-[13px] text-lm-text mt-0.5 leading-none">
                     {spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
                   </p>
                 </div>
-                <div>
-                  <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Best Ask</p>
-                  <p className="num text-sm font-semibold text-lumora-red">
+                <div className="px-3 py-2">
+                  <p className="text-[10px] text-lm-muted uppercase tracking-wide">Best Ask</p>
+                  <p className="lm-price text-[13px] text-red-400 mt-0.5 leading-none">
                     {lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—"}
                   </p>
                 </div>
               </div>
 
-              <Badge
-                variant={(bidPctLive ?? 50) >= 50 ? "green" : "red"}
+              {/* Dominance verdict */}
+              <StatusBadge
+                variant={(bidPctLive ?? 50) >= 50 ? "bid" : "ask"}
                 className="mt-3 w-full justify-center"
               >
-                {(bidPctLive ?? 50) >= 50 ? "Bid Dominant" : "Ask Dominant"}
-              </Badge>
+                {(bidPctLive ?? 50) >= 50 ? "BID DOMINANT" : "ASK DOMINANT"}
+              </StatusBadge>
 
-              <div className="mt-3 grid grid-cols-2 gap-3 text-center">
-                <div>
-                  <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Strongest Bid</p>
-                  <p className="num text-xs text-lumora-text">
+              {/* Strongest bid/ask */}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="lm-rail-bid relative pl-2.5">
+                  <p className="text-[10px] text-lm-muted uppercase tracking-wide">Strongest Bid</p>
+                  <p className="num text-[12px] text-lm-text mt-0.5">
                     {bidWall ? `$${bidWall.price_bucket.toLocaleString()}` : "—"}
                   </p>
-                  <p className="num text-[10px] text-lumora-muted">
+                  <p className="num text-[10px] text-lm-muted">
                     {bidWall ? `$${(bidWall.total_usd / 1_000_000).toFixed(2)}M` : ""}
                   </p>
                 </div>
-                <div>
-                  <p className="text-[10px] text-lumora-muted uppercase tracking-wide">Strongest Ask</p>
-                  <p className="num text-xs text-lumora-text">
+                <div className="lm-rail-ask relative pl-2.5">
+                  <p className="text-[10px] text-lm-muted uppercase tracking-wide">Strongest Ask</p>
+                  <p className="num text-[12px] text-lm-text mt-0.5">
                     {askWall ? `$${askWall.price_bucket.toLocaleString()}` : "—"}
                   </p>
-                  <p className="num text-[10px] text-lumora-muted">
+                  <p className="num text-[10px] text-lm-muted">
                     {askWall ? `$${(askWall.total_usd / 1_000_000).toFixed(2)}M` : ""}
                   </p>
                 </div>
               </div>
             </>
           )}
-        </GlassCard>
+        </Panel>
 
         {/* Walls list */}
-        <GlassCard className="overflow-hidden p-0">
-          <div className="px-4 py-2.5 border-b border-lumora-border flex items-center justify-between">
-            <span className="text-[11px] text-lumora-muted uppercase tracking-widest">Liquidity Walls</span>
-            <span className="num text-[10px] text-lumora-muted">
-              {payload ? `${payload.meta.wallCount} walls` : "—"}
+        <Panel flush className="overflow-hidden">
+          <div className="px-3 py-2 border-b border-lm-border flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-1.5">
+              <RefreshCw className={clsx("h-3 w-3 text-lm-cyan", payload && "animate-spin")} />
+              Liquidity Walls
+            </span>
+            <span className="num text-[10px] text-lm-muted">
+              {payload ? `${payload.meta.wallCount} total` : "—"}
             </span>
           </div>
           {!payload ? (
-            <div className="px-4 py-3 text-xs text-lumora-muted">{apiError ?? "Loading…"}</div>
+            <div className="px-3 py-3 text-[11px] text-lm-muted">{apiError ?? "Loading…"}</div>
           ) : payload.walls.length === 0 ? (
-            <div className="px-4 py-3 text-xs text-lumora-muted">No walls detected in current window.</div>
+            <div className="px-3 py-3 text-[11px] text-lm-muted">No walls detected in current window.</div>
           ) : (
-            <div className="divide-y divide-lumora-border/40 max-h-64 overflow-y-auto">
+            <div className="divide-y divide-lm-border/60 max-h-72 overflow-y-auto">
               {[...payload.walls]
                 .sort((a, b) => b.total_usd - a.total_usd)
                 .slice(0, 8)
-                .map((w) => (
-                  <div
-                    key={`${w.price_bucket}-${w.side}`}
-                    className="px-4 py-2 flex items-center gap-2.5 hover:bg-lumora-surface/40 transition-colors"
-                  >
-                    <Badge
-                      variant={w.side === "ask" ? "red" : w.side === "bid" ? "green" : "yellow"}
-                      className="text-[9px] px-1 py-0 w-10 justify-center shrink-0"
+                .map((w) => {
+                  const isAsk = w.side === "ask";
+                  return (
+                    <div
+                      key={`${w.price_bucket}-${w.side}`}
+                      className={clsx(
+                        "lm-row relative px-3 py-1.5 grid grid-cols-[36px_1fr_auto_44px] items-center gap-3",
+                        isAsk ? "lm-rail-ask pl-4" : w.side === "bid" ? "lm-rail-bid pl-4" : "",
+                      )}
                     >
-                      {w.side.toUpperCase()}
-                    </Badge>
-                    <span className="num text-xs text-lumora-text">${w.price_bucket.toLocaleString()}</span>
-                    <span className="num text-[11px] text-lumora-muted ml-auto">
-                      ${(w.total_usd / 1_000_000).toFixed(2)}M
-                    </span>
-                    <span className="num text-[11px] text-lumora-muted w-10 text-right">
-                      {Math.round(w.intensity)}%
-                    </span>
-                  </div>
-                ))}
+                      <StatusBadge
+                        variant={isAsk ? "ask" : w.side === "bid" ? "bid" : "warning"}
+                        size="sm"
+                        className="w-8 justify-center"
+                      >
+                        {w.side.toUpperCase()}
+                      </StatusBadge>
+                      <span className="num text-[12px] text-lm-text">${w.price_bucket.toLocaleString()}</span>
+                      <span className="num text-[11px] text-lm-text-dim">
+                        ${(w.total_usd / 1_000_000).toFixed(2)}M
+                      </span>
+                      <span className="num text-[11px] text-lm-muted text-right">
+                        {Math.round(w.intensity)}%
+                      </span>
+                    </div>
+                  );
+                })}
             </div>
           )}
-        </GlassCard>
+        </Panel>
       </div>
     </div>
   );
