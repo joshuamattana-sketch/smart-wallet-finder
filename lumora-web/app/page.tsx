@@ -131,7 +131,7 @@ export default function LandingPage() {
       <section className="py-12 px-4">
         <div className="mx-auto max-w-6xl">
           <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold text-lumora-text">Everything you need. Nothing you don't.</h2>
+            <h2 className="text-2xl font-bold text-lumora-text">Everything you need. Nothing you don&apos;t.</h2>
             <p className="text-lumora-muted mt-2">Built around the workflows of professional traders, not retail apps.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -160,7 +160,7 @@ export default function LandingPage() {
             <Badge variant="purple" className="mb-4">Limited Beta Access</Badge>
             <h2 className="text-2xl font-bold text-lumora-text mb-3">Get early access to Lumora</h2>
             <p className="text-lumora-muted mb-6 text-sm">
-              We're onboarding a small group of serious traders. Join the waitlist or request access via Discord.
+              We&apos;re onboarding a small group of serious traders. Join the waitlist or request access via Discord.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-lumora-purple text-white font-semibold hover:bg-purple-500 transition-colors">
@@ -184,7 +184,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-5xl">
           <div className="text-center mb-10">
             <h2 className="text-2xl font-bold text-lumora-text">Roadmap</h2>
-            <p className="text-lumora-muted mt-2">Where we're going and how fast we're getting there.</p>
+            <p className="text-lumora-muted mt-2">Where we&apos;re going and how fast we&apos;re getting there.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {roadmapItems.map((item) => (

@@ -104,9 +104,9 @@ export function HeatmapCanvas({
 
       // ── Layer 1: dark chart background ──────────────────────────────────────
       ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = "#05030f";
+      ctx.fillStyle = "#0a0a0c";
       ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = "#070512";
+      ctx.fillStyle = "#0d0d10";
       ctx.fillRect(PAD_LEFT, PAD_TOP, plotW, plotH);
 
       // ── Derive price axis from priceMin/priceMax/priceStep ──────────────────
@@ -343,7 +343,7 @@ export function HeatmapCanvas({
         // Major walls glow gently; ordinary walls stay flat and quiet.
         if (critical) {
           ctx.shadowColor = col;
-          ctx.shadowBlur = 6;
+          ctx.shadowBlur = 4;
         }
         ctx.beginPath();
         ctx.moveTo(PAD_LEFT, y);

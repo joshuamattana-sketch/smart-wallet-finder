@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
@@ -123,7 +123,7 @@ function HeatLegend() {
         <div key={v} className="flex flex-col items-center gap-0.5">
           <div className="h-3 w-5 rounded-sm" style={{ background: iColor(v) || "#0a0818" }} />
           {l
-            ? <span className="text-[8px] text-lumora-muted leading-none">{l}</span>
+            ? <span className="text-[8px] text-lm-muted leading-none">{l}</span>
             : <span className="text-[8px] leading-none opacity-0">·</span>
           }
         </div>
@@ -162,12 +162,12 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
   if (!dataStatus) {
     if (dataSource !== "live") return null;
     return (
-      <GlassCard className="p-3">
+      <Panel flush className="p-3">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">Data Status</span>
-          <span className="text-[10px] text-lumora-muted">Supabase not configured</span>
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-lm-muted">Data Status</span>
+          <span className="text-[10px] text-lm-muted">Supabase not configured</span>
         </div>
-      </GlassCard>
+      </Panel>
     );
   }
 
@@ -197,14 +197,14 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
   };
 
   return (
-    <GlassCard className="p-3">
+    <Panel flush className="p-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">Data Status</span>
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-lm-muted">Data Status</span>
           <span className={clsx("inline-block w-1.5 h-1.5 rounded-full", modeDot)} />
           <span className={clsx("text-[10px] font-medium", modeColor)}>{dataStatus.status_label}</span>
         </div>
-        <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+        <div className="h-3 w-px bg-lm-border hidden sm:block" />
         {[
           { k: "Latest", v: latestLabel, c: latestColor },
           { k: "Updated", v: fmtTime(dataStatus.latest_updated_at) },
@@ -213,12 +213,12 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
           { k: "History Rows", v: String(dataStatus.history_row_count) },
         ].map(({ k, v, c }) => (
           <div key={k} className="flex items-center gap-1">
-            <span className="text-[9px] uppercase tracking-wide text-lumora-muted">{k}</span>
-            <span className={clsx("num text-[10px] font-medium", c ?? "text-lumora-text")}>{v}</span>
+            <span className="text-[9px] uppercase tracking-wide text-lm-muted">{k}</span>
+            <span className={clsx("num text-[10px] font-medium", c ?? "text-lm-text")}>{v}</span>
           </div>
         ))}
       </div>
-    </GlassCard>
+    </Panel>
   );
 }
 
@@ -339,8 +339,8 @@ export default function LiquidityMapPage() {
   const sourceNote   = payload?.meta.sourceNote ?? getMarketSourceNote(symbol);
   const statusLabel  = getMarketStatusLabel(symbol);
   const marketStatus = payload?.meta.marketStatus ?? getMarketSource(symbol)?.status ?? "unsupported";
-  const statusVariant: "green" | "yellow" | "purple" =
-    marketStatus === "supported" ? "green" : marketStatus === "demo" ? "purple" : "yellow";
+  const statusVariant: "live" | "neutral" | "warning" =
+    marketStatus === "supported" ? "live" : marketStatus === "demo" ? "neutral" : "warning";
 
   // Key zones — use payload walls if available, otherwise static fallback
   const apiWalls = payload?.walls ?? [];
@@ -356,6 +356,11 @@ export default function LiquidityMapPage() {
   const selectionLoading = refreshing && payload != null && !payloadMatchesSelection;
   // Resolved source status (Live / Fixture Fallback / Demo Fallback) + stale.
   const resolvedStatus = heatmapResolvedStatus(payload);
+  // Map the heatmap colour variant onto the strict StatusBadge variants.
+  const resolvedBadgeVariant =
+    resolvedStatus.variant === "green" ? "live" :
+    resolvedStatus.variant === "red"   ? "error" :
+    resolvedStatus.variant === "muted" ? "neutral" : "stale";
 
   // Status indicator — never implies "empty" while a payload is on screen.
   const statusInfo =
@@ -365,73 +370,73 @@ export default function LiquidityMapPage() {
     apiError                 ? { text: "Connected · refresh failed", dot: "bg-amber-400",              txt: "text-amber-400" } :
     refreshing && payload    ? { text: "Refreshing",               dot: "bg-cyan-400 animate-pulse",   txt: "text-lumora-cyan" } :
     payload                  ? { text: "Connected",                dot: "bg-emerald-400",              txt: "text-emerald-400" } :
-                               { text: "—",                        dot: "bg-lumora-muted",             txt: "text-lumora-muted" };
+                               { text: "—",                        dot: "bg-lm-muted",             txt: "text-lm-muted" };
 
   return (
-    <div className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
+    <div className="space-y-4">
 
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-lumora-text">Liquidity Map</h1>
-          <p className="text-sm text-lumora-muted mt-0.5">
+          <h1 className="text-xl font-semibold text-lm-text">Liquidity Map</h1>
+          <p className="text-sm text-lm-muted mt-0.5">
             Spot orderbook depth over time{resolvedStatus.resolved === "mock" ? " — demo data" : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={statusVariant}>{statusLabel}</Badge>
-          {payload && <Badge variant={resolvedStatus.variant}>{resolvedStatus.label}</Badge>}
+          <StatusBadge variant={statusVariant} dot={statusVariant === "live"}>{statusLabel}</StatusBadge>
+          {payload && <StatusBadge variant={resolvedBadgeVariant} dot={resolvedBadgeVariant === "live"}>{resolvedStatus.label}</StatusBadge>}
           {payload && resolvedStatus.stale && (
-            <Badge variant="yellow">Stale</Badge>
+            <StatusBadge variant="stale">Stale</StatusBadge>
           )}
         </div>
       </div>
 
       {/* Controls */}
-      <GlassCard className="p-2.5 flex flex-wrap items-center gap-2">
+      <Panel flush className="p-2.5 flex flex-wrap items-center gap-2">
         {/* Symbol */}
         <div className="relative">
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
-            className="appearance-none bg-lumora-bg border border-lumora-border text-lumora-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple num cursor-pointer">
+            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple num cursor-pointer">
             {SYMBOLS.map(s => (
               <option key={s} value={s}>
                 {getMarketSource(s)?.displayName ?? s}
               </option>
             ))}
           </select>
-          <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lumora-muted pointer-events-none" />
+          <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
         </div>
         {/* Exchange */}
         <div className="relative">
           <select value={exchange} onChange={e => setExchange(e.target.value)}
-            className="appearance-none bg-lumora-bg border border-lumora-border text-lumora-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple cursor-pointer">
+            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple cursor-pointer">
             {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
           </select>
-          <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lumora-muted pointer-events-none" />
+          <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
         </div>
-        <div className="h-4 w-px bg-lumora-border hidden sm:block" />
+        <div className="h-4 w-px bg-lm-border hidden sm:block" />
         {/* Timeframes */}
-        <div className="flex rounded-md border border-lumora-border overflow-hidden">
+        <div className="flex rounded-md border border-lm-border overflow-hidden">
           {TIMEFRAMES.map(tf => (
             <button key={tf} onClick={() => setTimeframe(tf)}
               className={clsx("px-2.5 py-1.5 text-xs font-medium transition-colors",
                 timeframe === tf
                   ? "bg-lumora-purple text-white"
-                  : "text-lumora-muted hover:text-lumora-text bg-lumora-card")}>
+                  : "text-lm-muted hover:text-lm-text bg-lm-surface")}>
               {tf}
             </button>
           ))}
         </div>
-        <div className="h-4 w-px bg-lumora-border hidden sm:block" />
+        <div className="h-4 w-px bg-lm-border hidden sm:block" />
         {/* Data source toggle — Live (default) → Fixture → Mock. The API falls
             back live → fixture → mock server-side. */}
-        <div className="flex rounded-md border border-lumora-border overflow-hidden" title="Heatmap data source">
+        <div className="flex rounded-md border border-lm-border overflow-hidden" title="Heatmap data source">
           {(["live", "fixture", "mock"] as const).map(src => (
             <button key={src} onClick={() => setDataSource(src)}
               className={clsx("px-2.5 py-1.5 text-xs font-medium capitalize transition-colors",
                 dataSource === src
                   ? "bg-lumora-purple text-white"
-                  : "text-lumora-muted hover:text-lumora-text bg-lumora-card")}>
+                  : "text-lm-muted hover:text-lm-text bg-lm-surface")}>
               {src}
             </button>
           ))}
@@ -443,8 +448,8 @@ export default function LiquidityMapPage() {
           className={clsx(
             "px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors",
             autoRefresh
-              ? "border-lumora-purple bg-lumora-purple/15 text-lumora-text"
-              : "border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text"
+              ? "border-lumora-purple bg-lumora-purple/15 text-lm-text"
+              : "border-lm-border bg-lm-surface text-lm-muted hover:text-lm-text"
           )}
         >
           Auto {autoRefresh ? "On" : "Off"}
@@ -452,21 +457,21 @@ export default function LiquidityMapPage() {
         {/* Refresh */}
         <button onClick={() => fetchPayload()} title="Refresh"
           disabled={refreshing}
-          className="p-1.5 rounded-md border border-lumora-border bg-lumora-card text-lumora-muted hover:text-lumora-text transition-colors disabled:opacity-50">
+          className="p-1.5 rounded-md border border-lm-border bg-lm-surface text-lm-muted hover:text-lm-text transition-colors disabled:opacity-50">
           <RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />
         </button>
         {/* Legend */}
         <div className="ml-auto flex items-center gap-3">
           <HeatLegend />
-          <div className="h-4 w-px bg-lumora-border hidden md:block" />
-          <span className="flex items-center gap-1.5 text-[10px] text-lumora-muted">
+          <div className="h-4 w-px bg-lm-border hidden md:block" />
+          <span className="flex items-center gap-1.5 text-[10px] text-lm-muted">
             <span className="inline-block w-5 h-[1.5px] bg-white/60 rounded" />Price
           </span>
           <span className="flex items-center gap-1.5 text-[10px] text-lumora-cyan">
             <span className="inline-block w-2 h-2 rounded-full bg-lumora-cyan shadow-[0_0_6px_rgba(34,211,238,0.9)]" />Now
           </span>
         </div>
-      </GlassCard>
+      </Panel>
 
       {/* API error banner — only when stale data is still on screen; a fresh
           error with no payload renders inside the chart area instead. */}
@@ -484,7 +489,7 @@ export default function LiquidityMapPage() {
           className={clsx(
             "flex items-center gap-2 px-3 py-2 rounded-lg text-xs",
             marketStatus === "supported"
-              ? "border border-lumora-border bg-lumora-card text-lumora-muted"
+              ? "border border-lm-border bg-lm-surface text-lm-muted"
               : "border border-yellow-500/30 bg-yellow-500/10 text-yellow-300"
           )}
         >
@@ -498,9 +503,9 @@ export default function LiquidityMapPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_140px] gap-3 items-start">
 
         {/* Primary liquidity heatmap (Canvas) */}
-        <GlassCard className="overflow-hidden p-0">
-          <div className="px-3 py-1.5 border-b border-lumora-border flex items-center justify-between gap-3">
-            <span className="text-[11px] text-lumora-muted uppercase tracking-wide font-medium">
+        <Panel flush className="overflow-hidden p-0">
+          <div className="px-3 py-1.5 border-b border-lm-border flex items-center justify-between gap-3">
+            <span className="text-[11px] text-lm-muted uppercase tracking-wide font-medium">
               Liquidity Heatmap
             </span>
             <div className="flex items-center gap-2">
@@ -510,7 +515,7 @@ export default function LiquidityMapPage() {
                   {selectionLoading ? "new selection" : "refreshing"}
                 </span>
               )}
-              <span className="text-[10px] text-lumora-muted num">
+              <span className="text-[10px] text-lm-muted num">
                 {payload
                   ? `${payload.timeBuckets.length} frames · ${payload.meta.cellCount} cells · ${payload.meta.wallCount} walls`
                   : "—"}
@@ -518,12 +523,12 @@ export default function LiquidityMapPage() {
             </div>
           </div>
 
-          <div className="relative" style={{ height: CHART_H, background: "#05030f" }}>
+          <div className="relative" style={{ height: CHART_H, background: "#0a0a0c" }}>
             {/* Initial loading — shown only before the first payload/error.
                 Cannot be infinite: every fetch ends by setting one of them. */}
             {!payload && !apiError && (
               <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-lumora-card/80 border border-lumora-border text-lumora-muted text-xs">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-lm-surface/80 border border-lm-border text-lm-muted text-xs">
                   <RefreshCw className="h-3 w-3 animate-spin" />
                   Loading…
                 </div>
@@ -542,46 +547,46 @@ export default function LiquidityMapPage() {
 
             {/* Valid but empty payload → explicit empty state, never a spinner */}
             {payload && payload.cells.length === 0 && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center text-xs text-lumora-muted pointer-events-none">
+              <div className="absolute inset-0 z-20 flex items-center justify-center text-xs text-lm-muted pointer-events-none">
                 No liquidity data in this window
               </div>
             )}
 
             {payload && <HeatmapCanvas payload={payload} height={CHART_H} showDebug />}
           </div>
-        </GlassCard>
+        </Panel>
 
         {/* Depth rail (compact) */}
-        <GlassCard className="overflow-hidden p-0">
-          <div className="px-2.5 py-1.5 border-b border-lumora-border flex items-center justify-between">
-            <span className="text-[10px] text-lumora-muted uppercase tracking-wide font-medium">Depth</span>
+        <Panel flush className="overflow-hidden p-0">
+          <div className="px-2.5 py-1.5 border-b border-lm-border flex items-center justify-between">
+            <span className="text-[10px] text-lm-muted uppercase tracking-wide font-medium">Depth</span>
             <span className="text-[10px] text-lumora-cyan font-medium">Now</span>
           </div>
           <div className="px-1.5 py-1.5 overflow-y-auto" style={{ maxHeight: CHART_H - 60 }}>
             <DepthProfile />
           </div>
-          <div className="px-2.5 py-1.5 border-t border-lumora-border flex flex-col gap-1">
-            <div className="flex items-center gap-1.5 text-[10px] text-lumora-muted">
+          <div className="px-2.5 py-1.5 border-t border-lm-border flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-[10px] text-lm-muted">
               <div className="w-3.5 h-2 rounded-sm shrink-0" style={{ background: iColor(85) }} />Asks
             </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-lumora-muted">
+            <div className="flex items-center gap-1.5 text-[10px] text-lm-muted">
               <div className="w-3.5 h-2 rounded-sm shrink-0" style={{ background: iColor(75) }} />Bids
             </div>
           </div>
-        </GlassCard>
+        </Panel>
 
       </div>
 
       {/* Key zone cards — API walls when available, static fallback otherwise */}
       <div>
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted mb-2">Key Zones</h2>
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted mb-2">Key Zones</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {showApiWalls
             ? apiWalls.slice(0, 4).map(w => {
                 const isAsk = w.side === "ask";
                 const badge = w.intensity >= 85 ? "WALL" : isAsk ? "RES" : "SUP";
                 return (
-                  <GlassCard key={`${w.price_bucket}-${w.side}`} className="p-3 flex items-start gap-2.5">
+                  <Panel flush key={`${w.price_bucket}-${w.side}`} className="p-3 flex items-start gap-2.5">
                     <div
                       className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
                       style={{
@@ -594,26 +599,26 @@ export default function LiquidityMapPage() {
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                        <p className="num text-sm font-semibold text-lumora-text">
+                        <p className="num text-sm font-semibold text-lm-text">
                           ${w.price_bucket.toLocaleString()}
                         </p>
-                        <Badge variant={isAsk ? "red" : "green"} className="text-[9px] px-1 py-0">
+                        <StatusBadge variant={isAsk ? "ask" : "bid"} size="sm">
                           {badge}
-                        </Badge>
-                        <span className="num text-[10px] text-lumora-muted ml-auto">
+                        </StatusBadge>
+                        <span className="num text-[10px] text-lm-muted ml-auto">
                           {Math.round(w.intensity)}%
                         </span>
                       </div>
-                      <p className="text-xs font-medium text-lumora-text-dim">{w.label}</p>
-                      <p className="text-[11px] text-lumora-muted mt-0.5 leading-snug">
+                      <p className="text-xs font-medium text-lm-text-dim">{w.label}</p>
+                      <p className="text-[11px] text-lm-muted mt-0.5 leading-snug">
                         ${(w.total_usd / 1_000_000).toFixed(2)}M liquidity
                       </p>
                     </div>
-                  </GlassCard>
+                  </Panel>
                 );
               })
             : ZONES.slice(0, 4).map(z => (
-                <GlassCard key={z.price} className="p-3 flex items-start gap-2.5">
+                <Panel flush key={z.price} className="p-3 flex items-start gap-2.5">
                   <div
                     className="shrink-0 w-1.5 rounded-full self-stretch mt-0.5"
                     style={{
@@ -626,16 +631,16 @@ export default function LiquidityMapPage() {
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                      <p className="num text-sm font-semibold text-lumora-text">${z.price.toLocaleString()}</p>
-                      <Badge variant={z.side === "ASK" ? "red" : "green"} className="text-[9px] px-1 py-0">
+                      <p className="num text-sm font-semibold text-lm-text">${z.price.toLocaleString()}</p>
+                      <StatusBadge variant={z.side === "ASK" ? "ask" : "bid"} size="sm">
                         {z.badge}
-                      </Badge>
-                      <span className="num text-[10px] text-lumora-muted ml-auto">{z.intensity}%</span>
+                      </StatusBadge>
+                      <span className="num text-[10px] text-lm-muted ml-auto">{z.intensity}%</span>
                     </div>
-                    <p className="text-xs font-medium text-lumora-text-dim">{z.label}</p>
-                    <p className="text-[11px] text-lumora-muted mt-0.5 leading-snug">{z.desc}</p>
+                    <p className="text-xs font-medium text-lm-text-dim">{z.label}</p>
+                    <p className="text-[11px] text-lm-muted mt-0.5 leading-snug">{z.desc}</p>
                   </div>
-                </GlassCard>
+                </Panel>
               ))
           }
         </div>
@@ -650,20 +655,20 @@ export default function LiquidityMapPage() {
           { label: "Max Bid Intens", value: `${Math.round(summaryData?.max_bid_intensity ?? 88)}%`, sub: maxBidI, color: "text-lumora-purple-bright" },
           { label: "Max Ask Intens", value: `${Math.round(summaryData?.max_ask_intensity ?? 95)}%`, sub: maxAskI, color: "text-lumora-cyan"           },
         ].map(({ label, value, sub, color }) => (
-          <GlassCard key={label} className="p-3">
-            <p className="text-[11px] text-lumora-muted uppercase tracking-wide mb-1.5">{label}</p>
+          <Panel flush key={label} className="p-3">
+            <p className="text-[11px] text-lm-muted uppercase tracking-wide mb-1.5">{label}</p>
             <p className={clsx("num text-sm font-semibold", color)}>{value}</p>
-            <p className="text-[11px] text-lumora-muted mt-1 leading-snug">{sub}</p>
-          </GlassCard>
+            <p className="text-[11px] text-lm-muted mt-1 leading-snug">{sub}</p>
+          </Panel>
         ))}
       </div>
 
       {/* API Status Panel */}
-      <GlassCard className="p-3">
+      <Panel flush className="p-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           {/* Title + status dot */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-lumora-muted">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-lm-muted">
               API Status
             </span>
             <span className={clsx("inline-block w-1.5 h-1.5 rounded-full", statusInfo.dot)} />
@@ -672,7 +677,7 @@ export default function LiquidityMapPage() {
             </span>
           </div>
 
-          <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+          <div className="h-3 w-px bg-lm-border hidden sm:block" />
 
           {/* Key/value pairs */}
           {[
@@ -708,8 +713,8 @@ export default function LiquidityMapPage() {
             },
           ].map(({ k, v }) => (
             <div key={k} className="flex items-center gap-1">
-              <span className="text-[9px] uppercase tracking-wide text-lumora-muted">{k}</span>
-              <span className="num text-[10px] text-lumora-text font-medium">{v}</span>
+              <span className="text-[9px] uppercase tracking-wide text-lm-muted">{k}</span>
+              <span className="num text-[10px] text-lm-text font-medium">{v}</span>
             </div>
           ))}
 
@@ -717,7 +722,7 @@ export default function LiquidityMapPage() {
               lower-tier source. Last good payload (if any) stays on screen. */}
           {fixtureFallback && payload && (
             <>
-              <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+              <div className="h-3 w-px bg-lm-border hidden sm:block" />
               <span className="flex items-center gap-1 text-[10px] text-amber-400">
                 <AlertCircle className="h-3 w-3 shrink-0" />
                 Fallback → {resolvedStatus.label}
@@ -728,7 +733,7 @@ export default function LiquidityMapPage() {
           {/* Error detail — chart keeps the last good payload visible. */}
           {apiError && (
             <>
-              <div className="h-3 w-px bg-lumora-border hidden sm:block" />
+              <div className="h-3 w-px bg-lm-border hidden sm:block" />
               <span className="flex items-center gap-1 text-[10px] text-red-400">
                 <AlertCircle className="h-3 w-3 shrink-0" />
                 {apiError}
@@ -736,7 +741,7 @@ export default function LiquidityMapPage() {
             </>
           )}
         </div>
-      </GlassCard>
+      </Panel>
 
       {/* LM60B: Data Status Panel */}
       <DataStatusPanel dataStatus={payload?.dataStatus ?? null} dataSource={dataSource} />
