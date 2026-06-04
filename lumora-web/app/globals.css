@@ -4,10 +4,10 @@
 @tailwind utilities;
 
 :root {
-  --bg: #0a0812;
-  --surface: #110d1f;
-  --card: #16102a;
-  --border: #2a1f4a;
+  --bg: #0c0c0e;
+  --surface: #141416;
+  --surface-muted: #111113;
+  --border: #1e1e22;
   --purple: #8b5cf6;
   --cyan: #22d3ee;
 }
@@ -18,26 +18,41 @@
 
 body {
   background-color: var(--bg);
-  color: #e2e8f0;
+  color: #e0e0e4;
   font-family: Inter, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Subtle textured backdrop — extremely faint dot grid + corner vignette.
+   Adds depth without a hero glow. Sits behind app content. */
+.lm-app-bg {
+  background-color: #0c0c0e;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    radial-gradient(
+      ellipse 70% 50% at 50% -10%,
+      rgba(139, 92, 246, 0.05),
+      transparent 70%
+    );
+  background-size: 22px 22px, 100% 100%;
+  background-position: 0 0, 0 0;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a1f4a;
-  border-radius: 2px;
+  background: #2a2a30;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #8b5cf6;
+  background: #3a3a42;
 }
 
 /* Glass card utility */
@@ -91,10 +106,11 @@ body {
               box-shadow 150ms ease-out;
 }
 .lm-panel-hover:hover {
-  background-color: #17171a;
-  border-color: #2a2a30;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
-              0 2px 8px rgba(0, 0, 0, 0.35);
+  background-color: #161619;
+  border-color: #2c2c33;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035),
+              inset 0 0 0 1px rgba(139, 92, 246, 0.04),
+              0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
 /* Segmented-control button base */
@@ -145,10 +161,58 @@ body {
   50% { opacity: 0.55; }
 }
 
+/* ── LM61E: App shell / nav primitives ───────────────────────────────────── */
+
+/* Top nav bar — denser, terminal-like, hairline bottom border */
+.lm-topnav {
+  background-color: rgba(12, 12, 14, 0.85);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  border-bottom: 1px solid #1e1e22;
+}
+
+/* Nav link — neutral, with a precise bottom indicator on active */
+.lm-nav-link {
+  position: relative;
+  color: #a1a1a6;
+  transition: color 140ms ease-out, background-color 140ms ease-out;
+}
+.lm-nav-link:hover {
+  color: #e0e0e4;
+  background-color: rgba(255, 255, 255, 0.03);
+}
+.lm-nav-link-active {
+  color: #ffffff;
+  background-color: rgba(139, 92, 246, 0.06);
+}
+.lm-nav-link-active:hover {
+  background-color: rgba(139, 92, 246, 0.09);
+}
+.lm-nav-link-active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, #8b5cf6 0%, #22d3ee 100%);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.55),
+              0 1px 0 rgba(34, 211, 238, 0.25);
+}
+
+/* Brand wordmark — restrained, monospace-leaning */
+.lm-brand {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* Respect users who prefer reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .lm-panel-hover,
   .lm-segment-btn,
+  .lm-nav-link,
   .lm-live-dot {
     transition: none;
     animation: none;

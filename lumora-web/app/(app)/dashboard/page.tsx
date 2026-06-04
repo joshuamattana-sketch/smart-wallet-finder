@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
 import { TrendingUp, Activity, Zap, RefreshCw } from "lucide-react";
@@ -30,13 +30,19 @@ interface MarketState {
 const EMPTY_MARKET: MarketState = { payload: null, error: null, lastFetchedAt: null };
 
 // Status badge driven by the route's resolvedSource (live → fixture → mock).
+type BadgeVariant = "live" | "stale" | "error" | "neutral";
+
 function marketStatus(
   m: MarketState,
-): { label: string; variant: "green" | "yellow" | "red" | "muted"; isFallback: boolean; stale: boolean } {
-  if (m.error && !m.payload) return { label: "Error", variant: "red", isFallback: false, stale: false };
-  if (!m.payload) return { label: "—", variant: "muted", isFallback: false, stale: false };
+): { label: string; variant: BadgeVariant; isFallback: boolean; stale: boolean } {
+  if (m.error && !m.payload) return { label: "Error", variant: "error", isFallback: false, stale: false };
+  if (!m.payload) return { label: "—", variant: "neutral", isFallback: false, stale: false };
   const s = heatmapResolvedStatus(m.payload);
-  return { label: s.label, variant: s.variant, isFallback: s.isFallback, stale: s.stale };
+  const variant: BadgeVariant =
+    s.variant === "green" ? "live" :
+    s.variant === "red"   ? "error" :
+    s.variant === "muted" ? "neutral" : "stale";
+  return { label: s.label, variant, isFallback: s.isFallback, stale: s.stale };
 }
 
 function fmtTime(iso?: string | null): string {
@@ -115,18 +121,18 @@ export default function DashboardPage() {
   const headerStatus = heatmapResolvedStatus(markets[ACTIVE_SYMBOL]?.payload ?? null);
   const headerDot =
     headerStatus.resolved === "live" ? "bg-green-400" :
-    headerStatus.resolved == null ? "bg-lumora-muted" : "bg-yellow-400";
+    headerStatus.resolved == null ? "bg-lm-muted" : "bg-yellow-400";
 
   return (
-    <div className="space-y-5 animate-[fadeIn_0.4s_ease-out]">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-lumora-text">Market Dashboard</h1>
-          <p className="text-sm text-lumora-muted mt-0.5">Live markets via /api/heatmap (live → fixture → mock) · demo setups &amp; alerts below</p>
+          <h1 className="text-xl font-semibold text-lm-text">Market Dashboard</h1>
+          <p className="text-sm text-lm-muted mt-0.5">Live markets via /api/heatmap (live → fixture → mock) · demo setups &amp; alerts below</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-lumora-text-dim">
-          <span className={clsx("h-1.5 w-1.5 rounded-full inline-block", headerDot, headerStatus.resolved === "live" && "animate-pulse")} />
+        <div className="flex items-center gap-2 text-xs text-lm-text-dim num uppercase tracking-wide">
+          <span className={clsx("h-1.5 w-1.5 rounded-full inline-block", headerDot, headerStatus.resolved === "live" && "lm-live-dot text-emerald-400")} />
           {headerStatus.resolved ? headerStatus.label : "Connecting…"}
         </div>
       </div>
@@ -134,10 +140,10 @@ export default function DashboardPage() {
       {/* Live Markets — shared /api/heatmap fixture source, auto-refresh 5s */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2">
-            <Activity className="h-3.5 w-3.5 text-lumora-cyan" /> Live Markets
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2">
+            <Activity className="h-3.5 w-3.5 text-lm-cyan" /> Live Markets
           </h2>
-          <span className="flex items-center gap-1.5 text-[10px] text-lumora-muted">
+          <span className="flex items-center gap-1.5 text-[10px] text-lm-muted">
             <RefreshCw className="h-3 w-3" />
             {lastFetchedAt ? `updated ${fmtTime(lastFetchedAt)}` : "loading…"}
           </span>
@@ -152,70 +158,72 @@ export default function DashboardPage() {
             const bidWall = p ? heatmapStrongestWall(p, "bid") : null;
             const askWall = p ? heatmapStrongestWall(p, "ask") : null;
             return (
-              <GlassCard key={sym} className="p-3">
+              <Panel flush hover key={sym} className="p-3">
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="num text-sm font-semibold text-lumora-text flex items-center gap-1.5">
+                  <span className="num text-sm font-semibold text-lm-text flex items-center gap-1.5">
                     {sym}
-                    {isActive && <Badge variant="cyan" className="text-[9px] px-1 py-0">Fast</Badge>}
+                    {isActive && <StatusBadge variant="neutral" size="sm">Fast</StatusBadge>}
                   </span>
-                  <Badge variant={status.variant}>{status.label}</Badge>
+                  <StatusBadge variant={status.variant} dot={status.variant === "live"}>
+                    {status.label}
+                  </StatusBadge>
                 </div>
 
                 {!p ? (
-                  <p className="text-[11px] text-lumora-muted">
+                  <p className="text-[11px] text-lm-muted">
                     {m.error ? `Waiting (last error: ${m.error})` : "Waiting for live data…"}
                   </p>
                 ) : (
                   <>
-                    <p className="num text-lg font-bold text-neon-cyan leading-tight">
+                    <p className="num text-lg font-bold text-lm-cyan leading-tight">
                       {price !== null
                         ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                         : "—"}
                     </p>
                     {(status.isFallback || status.stale) && (
-                      <p className="text-[10px] text-yellow-400 mt-1">
+                      <p className="text-[10px] text-amber-400 mt-1">
                         {status.isFallback ? "Live unavailable — fallback" : ""}
                         {status.isFallback && status.stale ? " · " : ""}
                         {status.stale ? "Stale" : ""}
                       </p>
                     )}
                     <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-2 text-[11px]">
-                      <span className="text-lumora-muted">Cells</span>
-                      <span className="num text-right text-lumora-text">{p.meta.cellCount}</span>
-                      <span className="text-lumora-muted">Walls</span>
-                      <span className="num text-right text-lumora-text">{p.meta.wallCount}</span>
-                      <span className="text-lumora-muted">Source</span>
-                      <span className="num text-right text-lumora-text">
+                      <span className="text-lm-muted">Cells</span>
+                      <span className="num text-right text-lm-text">{p.meta.cellCount}</span>
+                      <span className="text-lm-muted">Walls</span>
+                      <span className="num text-right text-lm-text">{p.meta.wallCount}</span>
+                      <span className="text-lm-muted">Source</span>
+                      <span className="num text-right text-lm-text">
                         {p.meta.resolvedSource ?? p.meta.source ?? p.meta.dataSource ?? "—"}
                       </span>
                     </div>
                     <div className="mt-2 space-y-1">
                       {bidWall && (
                         <div className="flex items-center gap-2 text-[11px]">
-                          <Badge variant="green" className="text-[9px] px-1 py-0">BID</Badge>
-                          <span className="num text-lumora-text">${bidWall.price_bucket.toLocaleString()}</span>
-                          <span className="num text-lumora-muted ml-auto">
+                          <StatusBadge variant="bid" size="sm">BID</StatusBadge>
+                          <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
+                          <span className="num text-lm-muted ml-auto">
                             ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
                           </span>
                         </div>
                       )}
                       {askWall && (
                         <div className="flex items-center gap-2 text-[11px]">
-                          <Badge variant="red" className="text-[9px] px-1 py-0">ASK</Badge>
-                          <span className="num text-lumora-text">${askWall.price_bucket.toLocaleString()}</span>
-                          <span className="num text-lumora-muted ml-auto">
+                          <StatusBadge variant="ask" size="sm">ASK</StatusBadge>
+                          <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
+                          <span className="num text-lm-muted ml-auto">
                             ${(askWall.total_usd / 1_000_000).toFixed(2)}M
                           </span>
                         </div>
                       )}
                     </div>
-                    <p className="text-[10px] text-lumora-muted mt-2">
+                    <p className="text-[10px] text-lm-muted mt-2">
                       {p.meta.liveUpdatedAt ? `live ${fmtTime(p.meta.liveUpdatedAt)}` : "no live timestamp"}
                       {" · "}fetched {fmtTime(m.lastFetchedAt)}
                     </p>
                   </>
                 )}
-              </GlassCard>
+              </Panel>
             );
           })}
         </div>
@@ -228,33 +236,33 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 space-y-5">
           {/* Top Setups */}
           <div>
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-2 mb-2">
-              <TrendingUp className="h-3.5 w-3.5 text-lumora-purple" /> Top Market Setups
-              <Badge variant="yellow" className="text-[9px] px-1 py-0">Demo</Badge>
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2 mb-2">
+              <TrendingUp className="h-3.5 w-3.5 text-lm-purple" /> Top Market Setups
+              <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
             </h2>
             <div className="space-y-2">
               {mockSetups.map((s) => (
-                <GlassCard key={s.symbol} className="p-3">
+                <Panel flush hover key={s.symbol} className="p-3">
                   <div className="flex items-start gap-4">
                     {/* Symbol + bias */}
                     <div className="shrink-0 w-28">
-                      <p className="num text-sm font-semibold text-lumora-text">{s.symbol}</p>
-                      <Badge
-                        variant={s.bias === "LONG" ? "green" : s.bias === "SHORT" ? "red" : "muted"}
+                      <p className="num text-sm font-semibold text-lm-text">{s.symbol}</p>
+                      <StatusBadge
+                        variant={s.bias === "LONG" ? "bid" : s.bias === "SHORT" ? "ask" : "neutral"}
                         className="mt-1"
                       >
                         {s.bias}
-                      </Badge>
+                      </StatusBadge>
                     </div>
 
                     {/* Reason + tags */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-lumora-text-dim leading-relaxed">{s.reason}</p>
+                      <p className="text-xs text-lm-text-dim leading-relaxed">{s.reason}</p>
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {s.tags.map((tag) => (
                           <span
                             key={tag}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-lumora-border/50 text-lumora-muted"
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-lm-border/50 text-lm-muted"
                           >
                             {tag}
                           </span>
@@ -264,26 +272,26 @@ export default function DashboardPage() {
 
                     {/* Levels */}
                     <div className="shrink-0 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs num text-right">
-                      <span className="text-lumora-muted">Entry</span>
-                      <span className="text-lumora-text">{s.entry}</span>
-                      <span className="text-lumora-muted">Target</span>
-                      <span className="text-lumora-green">{s.target}</span>
-                      <span className="text-lumora-muted">Stop</span>
-                      <span className="text-lumora-red">{s.stop}</span>
+                      <span className="text-lm-muted">Entry</span>
+                      <span className="text-lm-text">{s.entry}</span>
+                      <span className="text-lm-muted">Target</span>
+                      <span className="text-emerald-400">{s.target}</span>
+                      <span className="text-lm-muted">Stop</span>
+                      <span className="text-red-400">{s.stop}</span>
                     </div>
 
                     {/* Confidence bar */}
                     <div className="shrink-0 w-12 text-right">
-                      <div className="h-1.5 rounded-full bg-lumora-border overflow-hidden">
+                      <div className="h-1.5 rounded-full bg-lm-border overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-lumora-purple to-lumora-cyan"
+                          className="h-full rounded-full bg-lm-cyan/80"
                           style={{ width: `${s.confidence}%` }}
                         />
                       </div>
-                      <p className="num text-[11px] text-lumora-text-dim mt-1">{s.confidence}%</p>
+                      <p className="num text-[11px] text-lm-text-dim mt-1">{s.confidence}%</p>
                     </div>
                   </div>
-                </GlassCard>
+                </Panel>
               ))}
             </div>
           </div>
@@ -293,41 +301,41 @@ export default function DashboardPage() {
         {/* Right panel */}
         <div className="space-y-4">
           {/* Whale Alerts */}
-          <GlassCard className="overflow-hidden">
-            <div className="px-3 py-2.5 border-b border-lumora-border flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-widest text-lumora-muted flex items-center gap-1.5">
-                <Zap className="h-3 w-3 text-lumora-cyan" /> Whale Alerts
+          <Panel flush className="overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-lm-border flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-1.5">
+                <Zap className="h-3 w-3 text-lm-cyan" /> Whale Alerts
               </span>
               <div className="flex items-center gap-1.5">
-                <Badge variant="yellow" className="text-[9px] px-1 py-0">Demo</Badge>
-                <Badge variant="cyan">{mockWhaleAlerts.length}</Badge>
+                <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
+                <StatusBadge variant="neutral">{mockWhaleAlerts.length}</StatusBadge>
               </div>
             </div>
-            <div className="overflow-y-auto max-h-[272px] divide-y divide-lumora-border/40">
+            <div className="overflow-y-auto max-h-[272px] divide-y divide-lm-border/40">
               {mockWhaleAlerts.map((a) => (
-                <div key={a.id} className="px-3 py-2.5 hover:bg-lumora-surface/30 transition-colors">
+                <div key={a.id} className="px-3 py-2.5 transition-colors hover:bg-white/[0.02]">
                   <div className="flex items-center gap-2 mb-1">
-                    <Badge variant={a.side === "BUY" ? "green" : "red"} className="w-10 justify-center shrink-0">
+                    <StatusBadge variant={a.side === "BUY" ? "bid" : "ask"} className="w-10 justify-center shrink-0">
                       {a.side}
-                    </Badge>
-                    <span className="num text-xs font-semibold text-lumora-text">{a.symbol}</span>
-                    <span className="text-[11px] text-lumora-muted">{a.type}</span>
-                    <span className="ml-auto num text-xs font-semibold text-lumora-text">{a.size}</span>
+                    </StatusBadge>
+                    <span className="num text-xs font-semibold text-lm-text">{a.symbol}</span>
+                    <span className="text-[11px] text-lm-muted">{a.type}</span>
+                    <span className="ml-auto num text-xs font-semibold text-lm-text">{a.size}</span>
                   </div>
-                  <p className="text-[11px] text-lumora-muted leading-snug pl-12">{a.reason}</p>
+                  <p className="text-[11px] text-lm-muted leading-snug pl-12">{a.reason}</p>
                   <div className="flex items-center gap-1.5 mt-1 pl-12">
-                    <Badge variant="muted" className="text-[10px]">{a.exchange}</Badge>
-                    <Badge variant={a.risk === "HIGH" ? "red" : a.risk === "MEDIUM" ? "yellow" : "muted"} className="text-[10px]">
+                    <StatusBadge variant="neutral" size="sm">{a.exchange}</StatusBadge>
+                    <StatusBadge variant={a.risk === "HIGH" ? "error" : a.risk === "MEDIUM" ? "warning" : "neutral"} size="sm">
                       {a.risk}
-                    </Badge>
-                    <span className="num text-[10px] text-lumora-muted ml-auto">{a.time}</span>
+                    </StatusBadge>
+                    <span className="num text-[10px] text-lm-muted ml-auto">{a.time}</span>
                   </div>
                 </div>
               ))}
             </div>
-          </GlassCard>
+          </Panel>
 
-          <p className="text-[10px] text-lumora-muted px-1">
+          <p className="text-[10px] text-lm-muted px-1">
             Live per-symbol liquidity walls are shown in the Live Markets cards above
             and on the Liquidity Map.
           </p>
