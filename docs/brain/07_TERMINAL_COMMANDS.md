@@ -119,6 +119,42 @@ Safe behaviors:
 - Invalid Binance symbols are warned and skipped.
 - `--max-events 0` disables the cap (run until Ctrl+C).
 
+## LM63D Per-Symbol Whale Thresholds (Tests + Smoke Wiring)
+
+Built-in presets (services/whale_symbol_thresholds.py):
+
+| Symbol   | min      | high     | extreme   | min_conf |
+|----------|----------|----------|-----------|----------|
+| BTCUSDT  | 250 000  | 750 000  | 2 000 000 | 0.60     |
+| ETHUSDT  |  75 000  | 250 000  | 1 000 000 | 0.60     |
+| SOLUSDT  |  50 000  | 150 000  |   500 000 | 0.60     |
+| BNBUSDT  |  75 000  | 250 000  |   750 000 | 0.60     |
+| LINKUSDT |  25 000  | 100 000  |   300 000 | 0.60     |
+| DOGEUSDT |  25 000  | 100 000  |   300 000 | 0.60     |
+| (any other) | 100 000 | 500 000 | 1 000 000 | 0.60   |
+
+Run the threshold tests:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_whale_symbol_thresholds.py tests/connectors/test_binance_trade_stream.py
+python -m compileall services scripts tests
+```
+
+Smoke CLI uses per-symbol thresholds **by default**:
+
+```powershell
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT,LINKUSDT
+```
+
+Opt out (global $250k floor for every symbol):
+
+```powershell
+python scripts/run_binance_trade_stream_smoke.py --no-use-symbol-thresholds
+```
+
+`--min-notional` and `--min-confidence` still override the per-symbol values when explicitly passed.
+
 ```
 
 ```

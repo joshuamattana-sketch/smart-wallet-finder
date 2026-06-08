@@ -380,19 +380,21 @@ class TestWhaleEngineRoundTrip:
 # never executes the smoke runner's top-level code.
 
 def _build_args(**overrides) -> "object":
-    """Return an argparse.Namespace-like object with safe defaults."""
+    """
+    Return an argparse.Namespace-like object with safe defaults that mirror
+    the LM63D CLI: per-symbol thresholds on, no explicit overrides.
+    """
     from scripts.run_binance_trade_stream_smoke import (
         DEFAULT_MAX_EVENTS,
-        DEFAULT_MIN_CONFIDENCE,
-        DEFAULT_MIN_NOTIONAL,
         DEFAULT_SYMBOLS,
     )
     import argparse
     ns = argparse.Namespace(
         symbols=DEFAULT_SYMBOLS,
-        min_notional=DEFAULT_MIN_NOTIONAL,
+        min_notional=None,            # per-symbol thresholds apply unless overridden
         max_events=DEFAULT_MAX_EVENTS,
-        min_confidence=DEFAULT_MIN_CONFIDENCE,
+        min_confidence=None,          # per-symbol thresholds apply unless overridden
+        use_symbol_thresholds=True,
         send_discord=False,
         discord_webhook_url="",
         print_payload=False,
@@ -591,3 +593,143 @@ class TestSmokeRunnerPipeline:
         assert counters["sendable"] == 1
         assert counters["sent"] == 0
         assert counters["send_failures"] == 1
+
+
+# ── LM63D: per-symbol thresholds wired into the smoke runner ─────────────────
+
+class TestSymbolThresholdsInSmokeRunner:
+    def _run(self, *, msgs, **arg_overrides):
+        from scripts.run_binance_trade_stream_smoke import run_pipeline
+        args = _build_args(**arg_overrides)
+        out_lines: list[str] = []
+        err_lines: list[str] = []
+        counters = run_pipeline(
+            args=args,
+            message_iter=iter(msgs),
+            sender=_FakeSender(),
+            print_fn=out_lines.append,
+            err_fn=err_lines.append,
+        )
+        return counters, out_lines, err_lines
+
+    def test_smoke_uses_per_symbol_threshold_passes_sol(self):
+        """
+        $60k SOL fill clears SOLUSDT's $50k preset min — should be detected.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="SOLUSDT", price=150.0, quantity=400.0,  # $60k
+        ))]
+        counters, out, _err = self._run(
+            msgs=msgs, symbols="SOLUSDT",  # use_symbol_thresholds=True by default
+        )
+        assert counters["events"] == 1
+        assert counters["below_threshold"] == 0
+        assert any("SOLUSDT" in line for line in out)
+
+    def test_smoke_uses_per_symbol_threshold_filters_btc(self):
+        """
+        Same $60k notional, but on BTCUSDT (preset min $250k) → skipped.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=60_000.0, quantity=1.0,  # $60k
+        ))]
+        counters, out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT",
+        )
+        assert counters["events"] == 0
+        assert counters["below_threshold"] == 1
+        assert out == []
+
+    def test_smoke_mixed_symbol_stream_applies_per_symbol_floors(self):
+        """
+        Same notional ($60k) on a mixed BTC/SOL stream: SOL passes, BTC skipped.
+        """
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="SOLUSDT",
+                                   price=150.0, quantity=400.0)),   # $60k → pass
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=60_000.0, quantity=1.0)),   # $60k → skip
+        ]
+        counters, out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT,SOLUSDT",
+        )
+        assert counters["events"] == 1
+        assert counters["below_threshold"] == 1
+        # Only the SOL event line should appear.
+        assert sum("SOLUSDT" in line for line in out) == 1
+        assert not any("BTCUSDT" in line for line in out)
+
+    def test_explicit_min_notional_overrides_symbol_threshold(self):
+        """
+        With explicit --min-notional=10000, a $20k BTC fill should be
+        detected even though the BTC preset floor is $250k.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=60_000.0, quantity=20.0 / 60.0,  # $20k
+        ))]
+        counters, out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=10_000.0,
+        )
+        assert counters["events"] == 1
+        assert counters["below_threshold"] == 0
+        assert any("BTCUSDT" in line for line in out)
+
+    def test_no_use_symbol_thresholds_falls_back_to_global_default(self):
+        """
+        With --no-use-symbol-thresholds, the global $250k default applies
+        to every symbol — so a $60k SOL fill should be skipped.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="SOLUSDT", price=150.0, quantity=400.0,  # $60k
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="SOLUSDT", use_symbol_thresholds=False,
+        )
+        assert counters["events"] == 0
+        assert counters["below_threshold"] == 1
+
+    def test_explicit_min_notional_overrides_even_when_thresholds_off(self):
+        """
+        Even with --no-use-symbol-thresholds, an explicit --min-notional
+        still wins over the global default.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="SOLUSDT", price=150.0, quantity=400.0,  # $60k
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="SOLUSDT",
+            use_symbol_thresholds=False, min_notional=10_000.0,
+        )
+        assert counters["events"] == 1
+        assert counters["below_threshold"] == 0
+
+    def test_min_confidence_resolves_per_symbol_by_default(self):
+        """
+        Per-symbol preset is 0.6 for BTC; engine emits 0.8 for our tx_hash-bearing
+        events → an extreme whale on BTC should sail through the filter.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000.0, quantity=40.0,  # $2.8M
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT",
+        )
+        assert counters["events"] == 1
+        assert counters["sendable"] == 1
+        assert counters["blocked_low_confidence"] == 0
+
+    def test_explicit_min_confidence_overrides_per_symbol(self):
+        """
+        --min-confidence 0.95 must override per-symbol presets and block the
+        otherwise-sendable extreme whale.
+        """
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000.0, quantity=40.0,  # $2.8M
+        ))]
+        counters, out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_confidence=0.95,
+        )
+        assert counters["events"] == 1
+        assert counters["sendable"] == 0
+        assert counters["blocked_low_confidence"] == 1
+        assert any("--min-confidence" in line for line in out)

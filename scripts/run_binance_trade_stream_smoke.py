@@ -56,12 +56,16 @@ from services.whale_alert_engine import detect_whale_events           # noqa: E4
 from services.whale_alert_filter import should_send_whale_alert       # noqa: E402
 from services.whale_discord_formatter import format_whale_discord_alert  # noqa: E402
 from services.discord_webhook_sender import send_discord_webhook      # noqa: E402
+from services.whale_symbol_thresholds import (                        # noqa: E402
+    DEFAULT_THRESHOLDS,
+    get_whale_thresholds_for_symbol,
+)
 
 
 DEFAULT_SYMBOLS       = "BTCUSDT,ETHUSDT,SOLUSDT"
-DEFAULT_MIN_NOTIONAL  = 250_000.0
+DEFAULT_MIN_NOTIONAL  = 250_000.0       # global fallback when --no-use-symbol-thresholds
 DEFAULT_MAX_EVENTS    = 10
-DEFAULT_MIN_CONFIDENCE = 0.6
+DEFAULT_MIN_CONFIDENCE = 0.6            # global fallback when --no-use-symbol-thresholds
 
 
 # ── CLI parsing ───────────────────────────────────────────────────────────────
@@ -84,10 +88,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Comma-separated symbols (default: {DEFAULT_SYMBOLS}).",
     )
     parser.add_argument(
-        "--min-notional", type=float, default=DEFAULT_MIN_NOTIONAL,
+        "--min-notional", type=float, default=None,
         dest="min_notional",
-        help=(f"Minimum trade notional in USD to qualify as a whale event "
-              f"(default: ${int(DEFAULT_MIN_NOTIONAL):,})."),
+        help=("Minimum trade notional in USD to qualify as a whale event. "
+              "When set, overrides the per-symbol threshold for every "
+              "symbol. When omitted, falls back to per-symbol thresholds "
+              "(LM63D) or the global fallback "
+              f"(${int(DEFAULT_MIN_NOTIONAL):,}) if "
+              "--no-use-symbol-thresholds is set."),
     )
     parser.add_argument(
         "--max-events", type=int, default=DEFAULT_MAX_EVENTS,
@@ -96,11 +104,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
               f"{DEFAULT_MAX_EVENTS}). 0 or negative disables the cap."),
     )
     parser.add_argument(
-        "--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE,
+        "--min-confidence", type=float, default=None,
         dest="min_confidence",
-        help=(f"Minimum event confidence in [0, 1]. Events below this are "
-              f"flagged and never sent to Discord (default: "
-              f"{DEFAULT_MIN_CONFIDENCE})."),
+        help=("Minimum event confidence in [0, 1]. Events below this are "
+              "flagged and never sent to Discord. When set, overrides "
+              "per-symbol thresholds; otherwise per-symbol values (LM63D) "
+              f"apply, or the global fallback ({DEFAULT_MIN_CONFIDENCE}) "
+              "if --no-use-symbol-thresholds."),
+    )
+    parser.add_argument(
+        "--use-symbol-thresholds", "--no-use-symbol-thresholds",
+        action=argparse.BooleanOptionalAction, default=True,
+        dest="use_symbol_thresholds",
+        help=("Apply per-symbol whale notional + confidence thresholds "
+              "from services/whale_symbol_thresholds.py (default: on). "
+              "Use --no-use-symbol-thresholds to fall back to global "
+              "defaults for every symbol."),
     )
     parser.add_argument(
         "--send-discord", action="store_true", default=False,
@@ -206,11 +225,11 @@ def run_pipeline(
         counters["stopped_reason"] = "no_valid_symbols"
         return counters
 
-    if args.min_notional < 0:
+    if args.min_notional is not None and args.min_notional < 0:
         err_fn("error: --min-notional must be >= 0")
         counters["stopped_reason"] = "bad_min_notional"
         return counters
-    if not (0.0 <= args.min_confidence <= 1.0):
+    if args.min_confidence is not None and not (0.0 <= args.min_confidence <= 1.0):
         err_fn("error: --min-confidence must be in [0, 1]")
         counters["stopped_reason"] = "bad_min_confidence"
         return counters
@@ -224,10 +243,46 @@ def run_pipeline(
 
     max_events_cap = int(args.max_events) if args.max_events and args.max_events > 0 else None
 
+    def _resolve_thresholds_for(symbol: str) -> dict:
+        """
+        Per-event threshold resolution.
+
+        Priority (highest first):
+            1. Explicit CLI override (--min-notional / --min-confidence)
+            2. Per-symbol preset from whale_symbol_thresholds (when
+               --use-symbol-thresholds is on, default)
+            3. Global fallback DEFAULT_THRESHOLDS
+        """
+        if args.use_symbol_thresholds:
+            base = get_whale_thresholds_for_symbol(symbol)
+        else:
+            base = dict(DEFAULT_THRESHOLDS)
+            base["min_notional_usd"] = DEFAULT_MIN_NOTIONAL
+            base["min_confidence"]   = DEFAULT_MIN_CONFIDENCE
+        if args.min_notional is not None:
+            base["min_notional_usd"] = float(args.min_notional)
+        if args.min_confidence is not None:
+            base["min_confidence"]   = float(args.min_confidence)
+        return base
+
+    # Startup banner: describe the threshold mode honestly.
+    if args.use_symbol_thresholds and args.min_notional is None and args.min_confidence is None:
+        threshold_label = "per-symbol thresholds (LM63D)"
+    elif args.use_symbol_thresholds:
+        overrides = []
+        if args.min_notional is not None:
+            overrides.append(f"min_notional=${args.min_notional:,.0f}")
+        if args.min_confidence is not None:
+            overrides.append(f"min_confidence={args.min_confidence:.2f}")
+        threshold_label = "per-symbol thresholds · CLI override: " + ", ".join(overrides)
+    else:
+        mn = args.min_notional if args.min_notional is not None else DEFAULT_MIN_NOTIONAL
+        mc = args.min_confidence if args.min_confidence is not None else DEFAULT_MIN_CONFIDENCE
+        threshold_label = f"global min_notional=${mn:,.0f} · min_confidence={mc:.2f}"
+
     err_fn(
         "binance aggTrade smoke runner starting "
-        f"· symbols={','.join(valid)} · min_notional=${args.min_notional:,.0f} "
-        f"· min_confidence={args.min_confidence:.2f} "
+        f"· symbols={','.join(valid)} · {threshold_label} "
         f"· max_events={max_events_cap if max_events_cap is not None else '∞'} "
         f"· send_discord={'YES' if args.send_discord else 'no'}"
     )
@@ -244,8 +299,13 @@ def run_pipeline(
             counters["seen"] += 1
             counters["parsed"] += 1
 
+            item_sym = str(item.get("symbol", ""))
+            thresholds = _resolve_thresholds_for(item_sym)
+            sym_min_notional   = float(thresholds["min_notional_usd"])
+            sym_min_confidence = float(thresholds["min_confidence"])
+
             notional = float(item.get("notional_usd", 0) or 0)
-            if notional < args.min_notional:
+            if notional < sym_min_notional:
                 counters["below_threshold"] += 1
                 continue
 
@@ -253,7 +313,7 @@ def run_pipeline(
             # is also responsible for severity classification.
             events = detect_whale_events(
                 [item],
-                options={"min_notional_usd": args.min_notional},
+                options={"min_notional_usd": sym_min_notional},
             )
             if not events:
                 # Engine rejected (e.g. allowed/blocked lists) — count as below threshold.
@@ -264,11 +324,11 @@ def run_pipeline(
                 counters["events"] += 1
 
                 filter_result = should_send_whale_alert(
-                    ev, options={"min_confidence": args.min_confidence}
+                    ev, options={"min_confidence": sym_min_confidence}
                 )
                 should_send = bool(filter_result.get("should_send"))
                 conf = float(ev.get("confidence", 0) or 0)
-                blocked_low_conf = should_send and conf < args.min_confidence
+                blocked_low_conf = should_send and conf < sym_min_confidence
                 if blocked_low_conf:
                     counters["blocked_low_confidence"] += 1
 
