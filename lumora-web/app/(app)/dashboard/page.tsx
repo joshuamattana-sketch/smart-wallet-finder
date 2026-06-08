@@ -5,6 +5,8 @@ import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageTransition } from "@/components/ui/PageTransition";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker";
+import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
 import { TrendingUp, Zap, RefreshCw } from "lucide-react";
@@ -13,15 +15,89 @@ import {
   heatmapCurrentPrice,
   heatmapStrongestWall,
   heatmapResolvedStatus,
+  heatmapIntensitySummary,
 } from "@/lib/heatmap-types";
 
-const DASH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
+// ── Trader-signal derivation ─────────────────────────────────────────────────
+// Derives bias/score/confidence/risk/action from the live heatmap payload
+// and (when available) the mock setup for this symbol. No new API calls.
+type Bias = "LONG" | "SHORT" | "NEUTRAL";
+interface TraderSignal {
+  bias: Bias;
+  score: number;       // 0–100, composite of intensity skew + wall strength
+  confidence: number;  // 0–100
+  risk: "LOW" | "MEDIUM" | "HIGH";
+  action: string;      // short action hint, ≤ ~80 chars
+}
+
+function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSignal | null {
+  if (!payload) return null;
+  const intensity = heatmapIntensitySummary(payload);
+  const bidWall = heatmapStrongestWall(payload, "bid");
+  const askWall = heatmapStrongestWall(payload, "ask");
+  const bidPct = intensity?.bidPct ?? 50;
+
+  // Skew: how far from 50/50 the book leans (0–50 → 0–100 magnitude).
+  const skew = Math.abs(bidPct - 50);
+  const skewScore = Math.min(100, skew * 2);
+  // Wall edge: dominant wall side strength.
+  const bidI = bidWall?.intensity ?? 0;
+  const askI = askWall?.intensity ?? 0;
+  const wallEdge = Math.min(100, Math.abs(bidI - askI));
+
+  // Setup lookup (mock — used only when symbol is present in mockSetups).
+  const setup = mockSetups.find((s) => s.symbol === sym);
+
+  // Resolve bias: prefer mock setup if it's there (analyst override), else
+  // derive from intensity skew.
+  let bias: Bias;
+  if (setup) {
+    bias = setup.bias as Bias;
+  } else {
+    bias = bidPct >= 55 ? "LONG" : bidPct <= 45 ? "SHORT" : "NEUTRAL";
+  }
+
+  // Composite signal score (book-derived).
+  const score = Math.round(0.6 * skewScore + 0.4 * wallEdge);
+  // Confidence: prefer setup confidence when available; else map score.
+  const confidence = setup?.confidence ?? Math.round(40 + score * 0.55);
+
+  // Risk: keep simple — wide spread or extreme wall imbalance → higher risk.
+  const wallTotal = (bidWall?.total_usd ?? 0) + (askWall?.total_usd ?? 0);
+  const wallImbalance = wallTotal > 0
+    ? Math.abs((bidWall?.total_usd ?? 0) - (askWall?.total_usd ?? 0)) / wallTotal
+    : 0;
+  const risk: TraderSignal["risk"] =
+    wallImbalance > 0.75 ? "HIGH" : wallImbalance > 0.45 ? "MEDIUM" : "LOW";
+
+  // Action hint: short pragmatic guidance per bias.
+  const action = setup
+    ? (bias === "LONG"
+        ? `Watch entry ${setup.entry} · invalidates ${setup.stop}`
+        : bias === "SHORT"
+        ? `Fade into ${setup.entry} · invalidates ${setup.stop}`
+        : "Wait for sweep · no clean edge yet")
+    : (bias === "LONG"
+        ? "Bid-side absorbing · wait for confirmed lift"
+        : bias === "SHORT"
+        ? "Ask-side dominant · fade rallies"
+        : "Book balanced · stand aside");
+
+  return { bias, score, confidence, risk, action };
+}
+
+function biasVariant(b: Bias): "bid" | "ask" | "neutral" {
+  return b === "LONG" ? "bid" : b === "SHORT" ? "ask" : "neutral";
+}
+function riskVariant(r: TraderSignal["risk"]): "live" | "warning" | "error" {
+  return r === "LOW" ? "live" : r === "MEDIUM" ? "warning" : "error";
+}
 
 // Active/primary market refreshes fast; the rest poll slowly in the background.
-const ACTIVE_SYMBOL = "BTCUSDT";
-const BACKGROUND_SYMBOLS = DASH_SYMBOLS.filter((s) => s !== ACTIVE_SYMBOL);
 const ACTIVE_REFRESH_MS = 2000;
 const BACKGROUND_REFRESH_MS = 9000;
+/** Max number of compact secondary cards shown next to the primary. */
+const MAX_SECONDARY = 2;
 
 interface MarketState {
   payload: HeatmapApiPayload | null;
@@ -56,6 +132,16 @@ function fmtTime(iso?: string | null): string {
 }
 
 export default function DashboardPage() {
+  const { primary, secondaries } = useWatchlist();
+  // The primary symbol gets the fast 2s poll. Background symbols cycle on a
+  // slower 9s poll. We cap visible secondaries to keep the layout balanced;
+  // the full watchlist is still managed via the picker.
+  const activeSymbol = primary;
+  const backgroundSymbols = secondaries.slice(0, MAX_SECONDARY);
+  const dashSymbols = [activeSymbol, ...backgroundSymbols];
+  // Stable string for effect dependency (avoids re-runs from new array refs).
+  const backgroundKey = backgroundSymbols.join(",");
+
   const [markets, setMarkets] = useState<Record<string, MarketState>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
@@ -100,15 +186,15 @@ export default function DashboardPage() {
   // On visibility restore, an immediate fetch fires so the user never sees
   // stale numbers after switching back from another tab.
   useEffect(() => {
-    DASH_SYMBOLS.forEach((sym) => { fetchSymbol(sym); });
-    const activeId = setInterval(() => fetchSymbol(ACTIVE_SYMBOL), ACTIVE_REFRESH_MS);
+    dashSymbols.forEach((sym) => { fetchSymbol(sym); });
+    const activeId = setInterval(() => fetchSymbol(activeSymbol), ACTIVE_REFRESH_MS);
     const backgroundId = setInterval(
-      () => { BACKGROUND_SYMBOLS.forEach((sym) => fetchSymbol(sym)); },
+      () => { backgroundSymbols.forEach((sym) => fetchSymbol(sym)); },
       BACKGROUND_REFRESH_MS,
     );
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        DASH_SYMBOLS.forEach((sym) => { fetchSymbol(sym); });
+        dashSymbols.forEach((sym) => { fetchSymbol(sym); });
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -117,10 +203,13 @@ export default function DashboardPage() {
       clearInterval(backgroundId);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [fetchSymbol]);
+    // backgroundKey is the stable signature of backgroundSymbols; dashSymbols
+    // is derived from activeSymbol + backgroundSymbols and tracked by both.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchSymbol, activeSymbol, backgroundKey]);
 
   // Overall header status derived from the active (primary) market.
-  const headerStatus = heatmapResolvedStatus(markets[ACTIVE_SYMBOL]?.payload ?? null);
+  const headerStatus = heatmapResolvedStatus(markets[activeSymbol]?.payload ?? null);
   const headerDot =
     headerStatus.resolved === "live" ? "bg-green-400" :
     headerStatus.resolved == null ? "bg-lm-muted" : "bg-yellow-400";
@@ -143,7 +232,7 @@ export default function DashboardPage() {
 
       {/* ── PRIMARY · Live Markets ──────────────────────────────────────────── */}
       <section>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <span className="lm-section-title">
             Live Markets
             <span className="text-lm-border">·</span>
@@ -151,23 +240,27 @@ export default function DashboardPage() {
               auto · 2s
             </span>
           </span>
-          <span className="flex items-center gap-1.5 text-[10px] text-lm-muted num">
-            <RefreshCw className="h-3 w-3" />
-            {lastFetchedAt ? `updated ${fmtTime(lastFetchedAt)}` : "loading…"}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-[10px] text-lm-muted num">
+              <RefreshCw className="h-3 w-3" />
+              {lastFetchedAt ? `updated ${fmtTime(lastFetchedAt)}` : "loading…"}
+            </span>
+            <WatchlistPriorityPicker />
+          </div>
         </div>
         {/* Command-center split: primary card spans 2/3, compacts stacked in 1/3 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
-          {/* ── Primary focal card (BTCUSDT) ─────────────────────────────── */}
+          {/* ── Primary focal card ─────────────────────────────── */}
           {(() => {
-            const sym = ACTIVE_SYMBOL;
+            const sym = activeSymbol;
             const m = markets[sym] ?? EMPTY_MARKET;
             const status = marketStatus(m);
             const p = m.payload;
             const price = p ? heatmapCurrentPrice(p) : null;
             const bidWall = p ? heatmapStrongestWall(p, "bid") : null;
             const askWall = p ? heatmapStrongestWall(p, "ask") : null;
+            const signal = deriveSignal(sym, p);
             return (
               <Panel flush hover className="lg:col-span-2 lm-accent-top-cyan lm-card-primary p-4">
                 {/* Header */}
@@ -192,7 +285,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {!p ? (
+                {!p || !signal ? (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-4">
                     <div className="space-y-2">
                       <Skeleton variant="line" height="h-10" width="w-3/4" />
@@ -209,7 +302,7 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-4">
-                    {/* Price column */}
+                    {/* Price + bias column */}
                     <div>
                       <p className="text-[10px] uppercase tracking-widest text-lm-muted">Last Price</p>
                       <p className="lm-price text-4xl text-lm-text leading-none mt-1">
@@ -217,49 +310,81 @@ export default function DashboardPage() {
                           ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                           : "—"}
                       </p>
-                      <p className="num text-[10px] text-lm-muted mt-2">
-                        {p.meta.liveUpdatedAt ? `live ${fmtTime(p.meta.liveUpdatedAt)}` : "no live timestamp"}
-                        {" · "}fetched {fmtTime(m.lastFetchedAt)}
-                      </p>
+                      <div className="flex items-center gap-2 mt-2.5">
+                        <StatusBadge variant={biasVariant(signal.bias)}>{signal.bias}</StatusBadge>
+                        <span className="num text-[10px] uppercase tracking-widest text-lm-muted">Bias</span>
+                      </div>
+                      {p.meta.liveUpdatedAt && (
+                        <p className="num text-[10px] text-lm-muted mt-2">
+                          live {fmtTime(p.meta.liveUpdatedAt)}
+                        </p>
+                      )}
                     </div>
 
-                    {/* Bid / Ask + KPIs column */}
+                    {/* Trader signal column */}
                     <div className="space-y-2.5">
-                      {bidWall && (
-                        <div className="lm-rail-bid relative pl-3 flex items-center gap-2 text-[12px]">
-                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-7">Bid</span>
-                          <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
-                          <span className="num text-lm-muted ml-auto">
-                            ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
-                          </span>
-                        </div>
-                      )}
-                      {askWall && (
-                        <div className="lm-rail-ask relative pl-3 flex items-center gap-2 text-[12px]">
-                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-7">Ask</span>
-                          <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
-                          <span className="num text-lm-muted ml-auto">
-                            ${(askWall.total_usd / 1_000_000).toFixed(2)}M
-                          </span>
-                        </div>
-                      )}
-                      <div className="lm-section-rule" />
-                      <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      {/* Setup score + Risk row */}
+                      <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <p className="text-lm-muted uppercase tracking-wide">Cells</p>
-                          <p className="num text-lm-text">{p.meta.cellCount}</p>
-                        </div>
-                        <div>
-                          <p className="text-lm-muted uppercase tracking-wide">Walls</p>
-                          <p className="num text-lm-text">{p.meta.wallCount}</p>
-                        </div>
-                        <div>
-                          <p className="text-lm-muted uppercase tracking-wide">Source</p>
-                          <p className="num text-lm-text truncate">
-                            {p.meta.resolvedSource ?? p.meta.source ?? p.meta.dataSource ?? "—"}
+                          <p className="text-[9px] uppercase tracking-widest text-lm-muted">Setup Score</p>
+                          <p className="lm-price text-2xl text-lm-text leading-none mt-0.5">
+                            {signal.score}
+                            <span className="text-[10px] text-lm-muted ml-1">/100</span>
                           </p>
                         </div>
+                        <div>
+                          <p className="text-[9px] uppercase tracking-widest text-lm-muted">Risk</p>
+                          <StatusBadge variant={riskVariant(signal.risk)} className="mt-1">
+                            {signal.risk}
+                          </StatusBadge>
+                        </div>
                       </div>
+
+                      {/* Confidence bar */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[9px] uppercase tracking-widest text-lm-muted">Confidence</span>
+                          <span className="num text-[10px] text-lm-text">{signal.confidence}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-lm-border overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-lm-cyan/80"
+                            style={{ width: `${signal.confidence}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="lm-section-rule" />
+
+                      {/* Action hint */}
+                      <div>
+                        <p className="text-[9px] uppercase tracking-widest text-lm-muted">Action</p>
+                        <p className="text-[12px] text-lm-text-dim leading-snug mt-0.5">{signal.action}</p>
+                      </div>
+
+                      {/* Compact depth (secondary) */}
+                      {(bidWall || askWall) && (
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          {bidWall && (
+                            <div className="lm-rail-bid relative pl-2 text-[10.5px]">
+                              <span className="text-[8px] uppercase tracking-widest text-lm-muted block">Top Bid</span>
+                              <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
+                              <span className="num text-lm-muted ml-1">
+                                ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
+                              </span>
+                            </div>
+                          )}
+                          {askWall && (
+                            <div className="lm-rail-ask relative pl-2 text-[10.5px]">
+                              <span className="text-[8px] uppercase tracking-widest text-lm-muted block">Top Ask</span>
+                              <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
+                              <span className="num text-lm-muted ml-1">
+                                ${(askWall.total_usd / 1_000_000).toFixed(2)}M
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -269,15 +394,22 @@ export default function DashboardPage() {
 
           {/* ── Compact secondary cards (ETH, SOL) ─────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
-            {BACKGROUND_SYMBOLS.map((sym) => {
+            {backgroundSymbols.length === 0 ? (
+              <Panel flush className="p-3 text-center">
+                <p className="text-[11px] text-lm-muted leading-snug">
+                  Add another symbol to the watchlist to compare side-by-side.
+                </p>
+              </Panel>
+            ) : null}
+            {backgroundSymbols.map((sym) => {
               const m = markets[sym] ?? EMPTY_MARKET;
               const status = marketStatus(m);
               const p = m.payload;
               const price = p ? heatmapCurrentPrice(p) : null;
-              const bidWall = p ? heatmapStrongestWall(p, "bid") : null;
-              const askWall = p ? heatmapStrongestWall(p, "ask") : null;
+              const signal = deriveSignal(sym, p);
               return (
                 <Panel flush hover key={sym} className="p-3">
+                  {/* Header: symbol + status */}
                   <div className="flex items-center justify-between">
                     <span className="num text-[11px] font-semibold uppercase tracking-widest text-lm-text">
                       {sym}
@@ -287,32 +419,42 @@ export default function DashboardPage() {
                     </StatusBadge>
                   </div>
 
-                  {!p ? (
+                  {!p || !signal ? (
                     <div className="mt-1.5 space-y-1.5">
                       <Skeleton variant="line" height="h-5" width="w-1/2" />
                       <Skeleton variant="line" width="w-3/4" />
                     </div>
                   ) : (
                     <>
+                      {/* Price */}
                       <p className="lm-price text-xl text-lm-text leading-none mt-1">
                         {price !== null
                           ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                           : "—"}
                       </p>
-                      <div className="mt-1.5 flex items-center gap-3 text-[10px] num">
-                        {bidWall && (
-                          <span className="lm-rail-bid relative pl-2 text-emerald-400">
-                            ${bidWall.price_bucket.toLocaleString()}
-                          </span>
-                        )}
-                        {askWall && (
-                          <span className="lm-rail-ask relative pl-2 text-red-400 ml-auto">
-                            ${askWall.price_bucket.toLocaleString()}
-                          </span>
-                        )}
+                      {/* Bias + Score */}
+                      <div className="mt-2 flex items-center gap-2">
+                        <StatusBadge variant={biasVariant(signal.bias)} size="sm">
+                          {signal.bias}
+                        </StatusBadge>
+                        <span className="num text-[10px] text-lm-muted uppercase tracking-wide">Score</span>
+                        <span className="num text-[12px] font-semibold text-lm-text ml-auto">
+                          {signal.score}
+                          <span className="text-[9px] text-lm-muted">/100</span>
+                        </span>
                       </div>
+                      {/* Confidence micro-bar */}
+                      <div className="mt-1.5 h-[3px] rounded-full bg-lm-border overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-lm-cyan/70"
+                          style={{ width: `${signal.confidence}%` }}
+                        />
+                      </div>
+                      {/* Freshness */}
                       <p className="text-[10px] text-lm-muted mt-1.5 num truncate">
-                        {p.meta.wallCount}w · {fmtTime(m.lastFetchedAt)}
+                        {p.meta.liveUpdatedAt
+                          ? `live ${fmtTime(p.meta.liveUpdatedAt)}`
+                          : `last ${fmtTime(m.lastFetchedAt)}`}
                       </p>
                     </>
                   )}
@@ -338,57 +480,65 @@ export default function DashboardPage() {
               <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
             </div>
             <Panel flush className="divide-y divide-lm-border/60">
-              {mockSetups.map((s) => (
-                <div key={s.symbol} className="lm-row px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[80px_1fr_136px_56px] sm:gap-3 sm:items-center">
-                  {/* Symbol + bias */}
-                  <div className="min-w-0">
-                    <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
-                    <StatusBadge
-                      variant={s.bias === "LONG" ? "bid" : s.bias === "SHORT" ? "ask" : "neutral"}
-                      size="sm"
-                      className="mt-1"
-                    >
-                      {s.bias}
-                    </StatusBadge>
-                  </div>
+              {mockSetups.map((s) => {
+                const biasVar = biasVariant(s.bias as Bias);
+                // Setup score = same confidence scale; useful as a leading metric.
+                const setupScore = s.confidence;
+                return (
+                  <div
+                    key={s.symbol}
+                    className="lm-row px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[88px_1fr_140px_60px] sm:gap-3 sm:items-center"
+                  >
+                    {/* Symbol + bias */}
+                    <div className="min-w-0">
+                      <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
+                      <StatusBadge variant={biasVar} size="sm" className="mt-1">
+                        {s.bias}
+                      </StatusBadge>
+                    </div>
 
-                  {/* Reason + tags */}
-                  <div className="min-w-0">
-                    <p className="text-[11.5px] text-lm-text-dim leading-snug line-clamp-2">{s.reason}</p>
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {s.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-lm-surface-muted text-lm-muted border border-lm-border/60"
-                        >
-                          {tag}
-                        </span>
-                      ))}
+                    {/* Reason + tags */}
+                    <div className="min-w-0">
+                      <p className="text-[11.5px] text-lm-text-dim leading-snug line-clamp-2">{s.reason}</p>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {s.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-lm-surface-muted text-lm-muted border border-lm-border/60"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Levels — Entry / Invalidation / Target */}
+                    <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] num">
+                      <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Entry</span>
+                      <span className="text-right text-lm-text">{s.entry}</span>
+                      <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Target</span>
+                      <span className="text-right text-emerald-400">{s.target}</span>
+                      <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Invalid</span>
+                      <span className="text-right text-red-400">{s.stop}</span>
+                    </div>
+
+                    {/* Setup score + confidence bar */}
+                    <div className="text-right">
+                      <p className="num text-[14px] font-semibold text-lm-text leading-none">
+                        {setupScore}
+                        <span className="text-[9px] text-lm-muted">/100</span>
+                      </p>
+                      <div className="h-1 mt-1 rounded-full bg-lm-border overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-lm-cyan/80"
+                          style={{ width: `${s.confidence}%` }}
+                        />
+                      </div>
+                      <p className="num text-[9px] text-lm-muted mt-0.5 uppercase tracking-wide">Score</p>
                     </div>
                   </div>
-
-                  {/* Levels — aligned label/value columns */}
-                  <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] num">
-                    <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Entry</span>
-                    <span className="text-right text-lm-text">{s.entry}</span>
-                    <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Target</span>
-                    <span className="text-right text-emerald-400">{s.target}</span>
-                    <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Stop</span>
-                    <span className="text-right text-red-400">{s.stop}</span>
-                  </div>
-
-                  {/* Confidence */}
-                  <div className="text-right">
-                    <div className="h-1 rounded-full bg-lm-border overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-lm-cyan/80"
-                        style={{ width: `${s.confidence}%` }}
-                      />
-                    </div>
-                    <p className="num text-[10px] text-lm-text-dim mt-1">{s.confidence}%</p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </Panel>
           </section>
 
@@ -410,27 +560,28 @@ export default function DashboardPage() {
             <div className="overflow-y-auto max-h-[340px] divide-y divide-lm-border/60">
               {mockWhaleAlerts.map((a) => (
                 <div key={a.id} className="lm-row px-3 py-2">
-                  {/* Top line: side · symbol · type · size */}
+                  {/* Top line: side · symbol · type · notional */}
                   <div className="flex items-center gap-2">
                     <StatusBadge variant={a.side === "BUY" ? "bid" : "ask"} size="sm" className="w-9 justify-center shrink-0">
                       {a.side}
                     </StatusBadge>
                     <span className="num text-[12px] font-semibold text-lm-text">{a.symbol}</span>
-                    <span className="text-[10px] text-lm-muted uppercase tracking-wide">{a.type}</span>
-                    <span className="ml-auto num text-[12px] font-semibold text-lm-text">{a.size}</span>
+                    <span className="text-[10px] text-lm-muted uppercase tracking-wide truncate">{a.type}</span>
+                    <span className="ml-auto lm-price text-[13px] text-lm-text">{a.size}</span>
                   </div>
                   {/* Reason — full width, tight */}
-                  <p className="text-[11px] text-lm-text-dim leading-snug mt-1 pl-11">{a.reason}</p>
-                  {/* Meta strip */}
+                  <p className="text-[11px] text-lm-text-dim leading-snug mt-1 pl-11 line-clamp-2">{a.reason}</p>
+                  {/* Meta strip: severity · confidence · time */}
                   <div className="flex items-center gap-1.5 mt-1 pl-11">
-                    <span className="text-[9px] uppercase tracking-wide text-lm-muted">{a.exchange}</span>
-                    <span className="text-lm-border">·</span>
                     <StatusBadge
                       variant={a.risk === "HIGH" ? "error" : a.risk === "MEDIUM" ? "warning" : "neutral"}
                       size="sm"
                     >
                       {a.risk}
                     </StatusBadge>
+                    <span className="num text-[9px] uppercase tracking-wide text-lm-muted">
+                      conf {a.confidence}%
+                    </span>
                     <span className="num text-[10px] text-lm-muted ml-auto">{a.time}</span>
                   </div>
                 </div>
