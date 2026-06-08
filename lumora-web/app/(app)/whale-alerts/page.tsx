@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageTransition } from "@/components/ui/PageTransition";
@@ -18,17 +18,84 @@ const RISK_VARIANT: Record<string, RiskVariant> = {
   LOW: "neutral",
 };
 
+// Loose shape that fits both mock and journal-derived alerts.
+interface AlertRow {
+  id:         number | string;
+  time:       string;
+  symbol:     string;
+  side:       "BUY" | "SELL";
+  size:       string;
+  exchange:   string;
+  leverage:   string;
+  type:       string;
+  risk:       "HIGH" | "MEDIUM" | "LOW";
+  confidence: number;
+  reason:     string;
+  action:     string;
+}
+
+type AlertsSource = "journal" | "mock";
+
+interface AlertsResponse {
+  data_source: AlertsSource;
+  generated_at: string;
+  journal_row_count: number;
+  alerts: AlertRow[];
+  note?: string;
+}
+
+const MOCK_FALLBACK: AlertRow[] = mockWhaleAlerts as unknown as AlertRow[];
+
 export default function WhaleAlertsPage() {
   const [risk, setRisk] = useState<Risk>("ALL");
   const [side, setSide] = useState<Side>("ALL");
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<number | string | null>(null);
+  const [alerts, setAlerts] = useState<AlertRow[]>(MOCK_FALLBACK);
+  const [source, setSource] = useState<AlertsSource>("mock");
+  const [loading, setLoading] = useState<boolean>(true);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch("/api/whale-alerts?limit=50", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          setSource("mock");
+          setAlerts(MOCK_FALLBACK);
+          setNote(`api error ${res.status}`);
+        } else {
+          const data: AlertsResponse = await res.json();
+          const incoming = Array.isArray(data.alerts) ? data.alerts : [];
+          if (incoming.length === 0) {
+            setSource("mock");
+            setAlerts(MOCK_FALLBACK);
+          } else {
+            setSource(data.data_source === "journal" ? "journal" : "mock");
+            setAlerts(incoming);
+          }
+          setNote(typeof data.note === "string" ? data.note : null);
+        }
+      } catch {
+        // Any fetch/JSON error → graceful fallback. Page is never broken.
+        setSource("mock");
+        setAlerts(MOCK_FALLBACK);
+      } finally {
+        setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   const filtered = useMemo(
     () =>
-      mockWhaleAlerts.filter(
+      alerts.filter(
         (a) => (risk === "ALL" || a.risk === risk) && (side === "ALL" || a.side === side),
       ),
-    [risk, side],
+    [alerts, risk, side],
   );
 
   // Summary stats — derived from filtered set (read-only, no fetch impact).
@@ -58,17 +125,36 @@ export default function WhaleAlertsPage() {
             <Zap className="h-4 w-4 text-lm-cyan" /> Whale Intelligence Feed
           </h1>
           <p className="text-[12px] text-lm-muted mt-0.5">
-            Large order flow &amp; unusual activity across major venues — demo data
+            {source === "journal"
+              ? "Live local journal — large order flow from Binance aggTrade detections."
+              : "Large order flow & unusual activity across major venues — demo data."}
           </p>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
-          <span className="lm-live-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 text-emerald-400" />
-          Monitoring
+          <StatusBadge
+            variant={source === "journal" ? "live" : "warning"}
+            size="sm"
+            dot={source === "journal"}
+          >
+            {source === "journal" ? "JOURNAL" : "DEMO"}
+          </StatusBadge>
           <span className="text-lm-border">·</span>
-          <span className="text-lm-text">{filtered.length}</span>
-          <span className="text-lm-muted">/ {mockWhaleAlerts.length}</span>
+          {loading ? (
+            <span className="text-lm-muted">loading…</span>
+          ) : (
+            <>
+              <span className="text-lm-text">{filtered.length}</span>
+              <span className="text-lm-muted">/ {alerts.length}</span>
+            </>
+          )}
         </div>
       </div>
+
+      {note && source === "mock" && (
+        <p className="text-[10px] text-lm-muted px-1 leading-snug -mt-2">
+          showing demo alerts · {note}
+        </p>
+      )}
 
       {/* Summary KPI strip */}
       <Panel flush className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-lm-border/60">
@@ -125,7 +211,7 @@ export default function WhaleAlertsPage() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
-            Live Feed
+            {source === "journal" ? "Live Feed" : "Demo Feed"}
           </h2>
           <span className="text-[10px] text-lm-muted num">
             sorted by time · most recent first

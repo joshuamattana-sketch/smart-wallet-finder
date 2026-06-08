@@ -193,6 +193,38 @@ Safe behaviors:
 - Parent directories are created on demand.
 - Filesystem errors are swallowed and counted as `journal_failures` — the live whale pipeline keeps running.
 
+## LM63F Whale Feed API + Website (local journal → /api/whale-alerts)
+
+Default journal location read by the website:
+
+```
+<repo_root>/data/whale_events.jsonl
+```
+
+Generate it by running the LM63E pipeline with `--journal-path`:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --journal-path data/whale_events.jsonl --max-events 0
+```
+
+Then run the website:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run dev
+```
+
+Visit `http://localhost:3000/whale-alerts` — the page will show a green `JOURNAL ●` badge when reading real local events, or an amber `DEMO` badge with mock data when the journal is missing or empty. The API itself is callable directly:
+
+```
+GET /api/whale-alerts?limit=50
+```
+
+returning JSON with `{ data_source: "journal"|"mock", journal_row_count, alerts: [...], note? }`.
+
+Vercel-safe: the API route is `dynamic = "force-dynamic"` so it never tries to pre-render at build time, and missing/unreadable journal files transparently fall back to mock — no build or runtime crash.
+
 ```
 
 ```
