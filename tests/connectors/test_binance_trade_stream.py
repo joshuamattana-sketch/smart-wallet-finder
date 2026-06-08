@@ -398,6 +398,7 @@ def _build_args(**overrides) -> "object":
         send_discord=False,
         discord_webhook_url="",
         print_payload=False,
+        journal_path="",              # LM63E — off by default
     )
     for k, v in overrides.items():
         setattr(ns, k, v)
@@ -733,3 +734,145 @@ class TestSymbolThresholdsInSmokeRunner:
         assert counters["sendable"] == 0
         assert counters["blocked_low_confidence"] == 1
         assert any("--min-confidence" in line for line in out)
+
+
+# ── LM63E: smoke runner writes the local whale event journal ─────────────────
+
+class TestSmokeRunnerJournal:
+    def _run(self, *, msgs, sender=None, **arg_overrides):
+        from scripts.run_binance_trade_stream_smoke import run_pipeline
+        args = _build_args(**arg_overrides)
+        out_lines: list[str] = []
+        err_lines: list[str] = []
+        counters = run_pipeline(
+            args=args,
+            message_iter=iter(msgs),
+            sender=sender or _FakeSender(),
+            print_fn=out_lines.append,
+            err_fn=err_lines.append,
+        )
+        return counters, out_lines, err_lines
+
+    def test_default_does_not_write_journal(self, tmp_path):
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,  # $1.4M
+        ))]
+        # Reserve a path but don't pass it. After the run, no file at that path.
+        unused = tmp_path / "whales.jsonl"
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+        )
+        assert counters["events"] == 1
+        assert counters["journaled"] == 0
+        assert not unused.exists()
+
+    def test_writes_one_row_per_event_when_path_set(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),   # $1.4M extreme
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_001, quantity=15.0)),   # $1.05M extreme
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            journal_path=str(path),
+        )
+        assert counters["events"] == 2
+        assert counters["journaled"] == 2
+        assert counters["journal_failures"] == 0
+        assert path.exists()
+
+        rows = read_whale_event_journal(path)
+        assert len(rows) == 2
+        for row in rows:
+            assert set(row) == {"event", "meta", "written_at"}
+            assert "whale_event_id" in row["event"]
+            meta = row["meta"]
+            assert isinstance(meta, dict)
+            assert "should_send" in meta
+            assert "filter_reason" in meta
+
+    def test_journal_meta_includes_send_result_when_sent(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        sender = _FakeSender()
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT", min_notional=250_000,
+            send_discord=True, discord_webhook_url="https://example.test/webhook",
+            journal_path=str(path),
+        )
+        assert counters["sent"] == 1
+        assert counters["journaled"] == 1
+
+        rows = read_whale_event_journal(path)
+        assert len(rows) == 1
+        meta = rows[0]["meta"]
+        assert meta["should_send"] is True
+        assert meta.get("sent_attempted") is True
+        assert isinstance(meta.get("send_result"), dict)
+        assert meta["send_result"].get("ok") is True
+
+    def test_journal_includes_low_confidence_block_meta(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            min_confidence=0.99,        # blocks the extreme whale
+            journal_path=str(path),
+        )
+        assert counters["events"] == 1
+        assert counters["sendable"] == 0
+        assert counters["journaled"] == 1
+
+        rows = read_whale_event_journal(path)
+        assert len(rows) == 1
+        meta = rows[0]["meta"]
+        # should_send (filter result) may still be True for an extreme severity
+        # whale, but the runner records that we blocked it.
+        assert meta["blocked_low_conf"] is True
+        assert "send_result" not in meta   # we never attempted a send
+
+    def test_below_threshold_trades_not_journaled(self, tmp_path):
+        path = tmp_path / "whales.jsonl"
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=0.001,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            journal_path=str(path),
+        )
+        assert counters["events"] == 0
+        assert counters["journaled"] == 0
+        assert not path.exists()
+
+    def test_journal_returns_newest_first(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+            json.dumps(_agg_trade(agg_id=3, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+        ]
+        self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            journal_path=str(path),
+        )
+        rows = read_whale_event_journal(path)
+        agg_ids = [r["event"]["metadata"]["agg_trade_id"] for r in rows]
+        assert agg_ids == [3, 2, 1]

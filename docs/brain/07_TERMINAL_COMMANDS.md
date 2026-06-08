@@ -155,6 +155,44 @@ python scripts/run_binance_trade_stream_smoke.py --no-use-symbol-thresholds
 
 `--min-notional` and `--min-confidence` still override the per-symbol values when explicitly passed.
 
+## LM63E Whale Event Local Journal (JSONL · append-only · off by default)
+
+Run the journal tests:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_whale_event_journal.py tests/connectors/test_binance_trade_stream.py
+python -m compileall services scripts tests
+```
+
+Stream and journal every detected event to a local file (no Discord):
+
+```powershell
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --journal-path logs/whales.jsonl
+```
+
+Journal row shape (one JSON object per line):
+
+```json
+{
+  "event": {"whale_event_id": "…", "symbol": "BTCUSDT", "side": "buy", "notional_usd": 1400000.0, "severity": "extreme", "…": "…"},
+  "meta":  {"should_send": true, "filter_reason": "extreme severity always sent", "blocked_low_conf": false, "sent_attempted": false},
+  "written_at": "2026-06-08T12:34:56.789012+00:00"
+}
+```
+
+Read newest-first programmatically:
+
+```python
+from services.whale_event_journal import read_whale_event_journal
+rows = read_whale_event_journal("logs/whales.jsonl", limit=20)
+```
+
+Safe behaviors:
+- `--journal-path` defaults to empty → **no file is written**.
+- Parent directories are created on demand.
+- Filesystem errors are swallowed and counted as `journal_failures` — the live whale pipeline keeps running.
+
 ```
 
 ```

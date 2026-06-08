@@ -60,6 +60,7 @@ from services.whale_symbol_thresholds import (                        # noqa: E4
     DEFAULT_THRESHOLDS,
     get_whale_thresholds_for_symbol,
 )
+from services.whale_event_journal import append_whale_event_journal   # noqa: E402
 
 
 DEFAULT_SYMBOLS       = "BTCUSDT,ETHUSDT,SOLUSDT"
@@ -138,6 +139,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=("Print the formatted Discord payload (JSON) after each "
               "sendable event."),
     )
+    parser.add_argument(
+        "--journal-path", default="", dest="journal_path",
+        help=("Optional path to an append-only JSONL whale-event journal. "
+              "When set, every detected whale event is recorded locally "
+              "(default: off · no journaling)."),
+    )
     return parser.parse_args(argv)
 
 
@@ -205,6 +212,8 @@ def run_pipeline(
         "sent":                   0,
         "send_failures":          0,
         "blocked_low_confidence": 0,
+        "journaled":              0,
+        "journal_failures":       0,
         "stopped_reason":         "exhausted",
     }
 
@@ -285,6 +294,7 @@ def run_pipeline(
         f"· symbols={','.join(valid)} · {threshold_label} "
         f"· max_events={max_events_cap if max_events_cap is not None else '∞'} "
         f"· send_discord={'YES' if args.send_discord else 'no'}"
+        f"· journal={args.journal_path or 'off'}"
     )
 
     try:
@@ -334,6 +344,7 @@ def run_pipeline(
 
                 print_fn(_fmt_event_line(ev, filter_result, blocked_low_conf))
 
+                send_result: dict | None = None
                 sendable = should_send and not blocked_low_conf
                 if sendable:
                     counters["sendable"] += 1
@@ -345,18 +356,36 @@ def run_pipeline(
                             print_fn(json.dumps(payload, sort_keys=True))
                         if args.send_discord:
                             try:
-                                result = sender(
+                                send_result = sender(
                                     payload, webhook_url=args.discord_webhook_url,
                                 )
                             except Exception as exc:  # pragma: no cover - defensive
                                 counters["send_failures"] += 1
                                 err_fn(f"  webhook send failed: {exc}")
+                                send_result = {"ok": False, "error": str(exc)}
                             else:
-                                if isinstance(result, dict) and result.get("ok"):
+                                if isinstance(send_result, dict) and send_result.get("ok"):
                                     counters["sent"] += 1
                                 else:
                                     counters["send_failures"] += 1
-                                    err_fn(f"  webhook send returned: {result!r}")
+                                    err_fn(f"  webhook send returned: {send_result!r}")
+
+                # Journal every detected event when --journal-path is set.
+                if args.journal_path:
+                    meta = {
+                        "should_send":      should_send,
+                        "filter_reason":    str(filter_result.get("reason") or ""),
+                        "blocked_low_conf": blocked_low_conf,
+                        "sent_attempted":   bool(args.send_discord and sendable),
+                    }
+                    if send_result is not None:
+                        meta["send_result"] = send_result
+                    ok = append_whale_event_journal(args.journal_path, ev, meta=meta)
+                    if ok:
+                        counters["journaled"] += 1
+                    else:
+                        counters["journal_failures"] += 1
+                        err_fn(f"  journal append failed for {ev.get('symbol')}")
 
                 if max_events_cap is not None and counters["events"] >= max_events_cap:
                     counters["stopped_reason"] = "max_events"
@@ -383,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
         f"sent={counters['sent']} "
         f"send_failures={counters['send_failures']} "
         f"blocked_low_conf={counters['blocked_low_confidence']} "
+        f"journaled={counters['journaled']} "
+        f"journal_failures={counters['journal_failures']} "
         f"stopped={counters['stopped_reason']}",
         file=sys.stderr,
         flush=True,
