@@ -272,6 +272,36 @@ Run the SQL block:
 
 Or paste the contents directly into the Supabase SQL editor and press Run.
 
+### LM63G fix — real UNIQUE constraint on `whale_event_id`
+
+The original LM63G schema declared `whale_event_id` uniqueness as a **partial unique index** (`WHERE whale_event_id IS NOT NULL`). PostgREST's `?on_conflict=whale_event_id` and `Prefer: resolution=*` headers require a real UNIQUE *constraint* (or a complete unique index), not a partial one, so writes from the LM63H Supabase writer fail without it.
+
+`supabase/whale_events.sql` has been updated to:
+
+1. `DROP INDEX IF EXISTS public.whale_events_whale_event_id_uidx;` (removes the old partial index from earlier deployments)
+2. Add a real unique constraint inside a `DO` block that only runs when the constraint is missing:
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1
+      from pg_constraint
+     where conname  = 'whale_events_whale_event_id_key'
+       and conrelid = 'public.whale_events'::regclass
+  ) then
+    alter table public.whale_events
+      add constraint whale_events_whale_event_id_key
+      unique (whale_event_id);
+  end if;
+end
+$$;
+```
+
+Re-running `whale_events.sql` against an already-fixed database is a safe no-op. Re-running against a fresh database creates the table, drops the (absent) partial index harmlessly, and adds the constraint.
+
+If you previously hot-fixed production with the exact same constraint name (`whale_events_whale_event_id_key`), the `IF NOT EXISTS` check leaves it untouched.
+
 ## LM63H Whale Events Supabase Writer (smoke CLI --target)
 
 Run the writer tests:
