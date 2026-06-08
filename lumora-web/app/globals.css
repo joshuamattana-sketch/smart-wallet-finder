@@ -223,6 +223,24 @@ body {
   box-shadow: 0 0 6px rgba(139, 92, 246, 0.4);
 }
 
+/* Current Read verdict block — a subtle 2px gradient rule on the leading edge
+   so the action sentence reads as the page's first directive without shouting. */
+.lm-verdict-rule {
+  position: relative;
+  padding-left: 12px;
+}
+.lm-verdict-rule::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, #8b5cf6, #22d3ee);
+  opacity: 0.7;
+}
+
 /* Primary card — subtle elevation: slightly lighter surface + inner cyan tint
    so the focal card visually separates from the compact secondaries. */
 .lm-card-primary {

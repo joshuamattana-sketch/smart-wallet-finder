@@ -22,12 +22,24 @@ import {
 // Derives bias/score/confidence/risk/action from the live heatmap payload
 // and (when available) the mock setup for this symbol. No new API calls.
 type Bias = "LONG" | "SHORT" | "NEUTRAL";
+type SetupQuality = "Weak" | "Developing" | "Strong";
 interface TraderSignal {
   bias: Bias;
   score: number;       // 0–100, composite of intensity skew + wall strength
   confidence: number;  // 0–100
+  quality: SetupQuality;
   risk: "LOW" | "MEDIUM" | "HIGH";
+  reason: string;      // one-line "why this read" summary
   action: string;      // short action hint, ≤ ~80 chars
+}
+
+function qualityTier(score: number): SetupQuality {
+  if (score >= 70) return "Strong";
+  if (score >= 40) return "Developing";
+  return "Weak";
+}
+function qualityVariant(q: SetupQuality): "live" | "warning" | "neutral" {
+  return q === "Strong" ? "live" : q === "Developing" ? "warning" : "neutral";
 }
 
 function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSignal | null {
@@ -70,8 +82,21 @@ function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSig
   const risk: TraderSignal["risk"] =
     wallImbalance > 0.75 ? "HIGH" : wallImbalance > 0.45 ? "MEDIUM" : "LOW";
 
-  // Action hint: short pragmatic guidance per bias.
-  const action = setup
+  const quality = qualityTier(score);
+
+  // Reason: prefer the analyst-authored setup reason; otherwise synthesize a
+  // short observation from the live book.
+  const reason = setup?.reason
+    ?? (bias === "LONG"
+        ? `Bid intensity ${bidPct.toFixed(0)}% vs ${(100 - bidPct).toFixed(0)}% ask — buyers leading.`
+        : bias === "SHORT"
+        ? `Ask intensity ${(100 - bidPct).toFixed(0)}% vs ${bidPct.toFixed(0)}% bid — sellers leading.`
+        : "Order book balanced near 50/50 — no clean directional edge.");
+
+  // Action hint: weak score always overrides toward monitor. Otherwise per-bias.
+  const action = quality === "Weak"
+    ? "Monitor — score too weak to commit; wait for confirmation."
+    : setup
     ? (bias === "LONG"
         ? `Watch entry ${setup.entry} · invalidates ${setup.stop}`
         : bias === "SHORT"
@@ -83,7 +108,7 @@ function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSig
         ? "Ask-side dominant · fade rallies"
         : "Book balanced · stand aside");
 
-  return { bias, score, confidence, risk, action };
+  return { bias, score, confidence, quality, risk, reason, action };
 }
 
 function biasVariant(b: Bias): "bid" | "ask" | "neutral" {
@@ -221,7 +246,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-xl font-semibold text-lm-text leading-tight">Market Dashboard</h1>
           <p className="text-[11px] text-lm-muted mt-0.5">
-            Live markets · top setups · whale intelligence
+            Current read · live markets · top setups · whale intel
           </p>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
@@ -229,6 +254,101 @@ export default function DashboardPage() {
           {headerStatus.resolved ? headerStatus.label : "Connecting…"}
         </div>
       </div>
+
+      {/* ── CURRENT READ · primary symbol verdict ──────────────────────────── */}
+      {(() => {
+        const m = markets[activeSymbol] ?? EMPTY_MARKET;
+        const p = m.payload;
+        const signal = deriveSignal(activeSymbol, p);
+        const status = marketStatus(m);
+        return (
+          <Panel flush hover className="lm-accent-top-cyan lm-card-primary p-4">
+            {/* Header row */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="lm-section-title">Current Read</span>
+                <span className="num text-[11px] font-semibold uppercase tracking-widest text-lm-text">
+                  {activeSymbol}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {signal && (
+                  <StatusBadge variant={qualityVariant(signal.quality)} size="sm">
+                    {signal.quality.toUpperCase()}
+                  </StatusBadge>
+                )}
+                <StatusBadge variant={status.variant} size="sm" dot={status.variant === "live"}>
+                  {status.label}
+                </StatusBadge>
+              </div>
+            </div>
+
+            {!signal ? (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-3">
+                <Skeleton variant="line" height="h-12" />
+                <div className="space-y-2">
+                  <Skeleton variant="line" width="w-3/4" />
+                  <Skeleton variant="line" width="w-1/2" />
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-3 items-start">
+                {/* Big bias verdict */}
+                <div>
+                  <p className="text-[9px] uppercase tracking-widest text-lm-muted">Bias</p>
+                  <p
+                    className={clsx(
+                      "lm-price text-3xl leading-none mt-0.5",
+                      signal.bias === "LONG"
+                        ? "text-emerald-400"
+                        : signal.bias === "SHORT"
+                        ? "text-red-400"
+                        : "text-lm-text-dim",
+                    )}
+                  >
+                    {signal.bias}
+                  </p>
+                  <div className="mt-2 flex items-center gap-3">
+                    <div>
+                      <p className="text-[9px] uppercase tracking-widest text-lm-muted">Score</p>
+                      <p className="num text-[15px] font-semibold text-lm-text leading-none">
+                        {signal.score}
+                        <span className="text-[10px] text-lm-muted">/100</span>
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase tracking-widest text-lm-muted">Conf</p>
+                      <p className="num text-[15px] font-semibold text-lm-text leading-none">
+                        {signal.confidence}%
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase tracking-widest text-lm-muted">Risk</p>
+                      <StatusBadge variant={riskVariant(signal.risk)} size="sm">
+                        {signal.risk}
+                      </StatusBadge>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reason + action */}
+                <div className="space-y-2.5">
+                  <div>
+                    <p className="text-[9px] uppercase tracking-widest text-lm-muted">Reason</p>
+                    <p className="text-[12px] text-lm-text-dim leading-snug mt-0.5">{signal.reason}</p>
+                  </div>
+                  <div className="lm-verdict-rule">
+                    <p className="text-[9px] uppercase tracking-widest text-lm-muted">Action</p>
+                    <p className="text-[12.5px] text-lm-text leading-snug mt-0.5 font-medium">
+                      {signal.action}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Panel>
+        );
+      })()}
 
       {/* ── PRIMARY · Live Markets ──────────────────────────────────────────── */}
       <section>
@@ -285,7 +405,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {!p || !signal ? (
+                {!p ? (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-4">
                     <div className="space-y-2">
                       <Skeleton variant="line" height="h-10" width="w-3/4" />
@@ -294,7 +414,6 @@ export default function DashboardPage() {
                     <div className="space-y-2">
                       <Skeleton variant="line" width="w-2/3" />
                       <Skeleton variant="line" width="w-1/2" />
-                      <Skeleton variant="line" width="w-3/4" />
                     </div>
                     {m.error && (
                       <p className="text-[10px] text-red-400/80 truncate sm:col-span-2">last error: {m.error}</p>
@@ -302,7 +421,7 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-4">
-                    {/* Price + bias column */}
+                    {/* Price column — execution focus */}
                     <div>
                       <p className="text-[10px] uppercase tracking-widest text-lm-muted">Last Price</p>
                       <p className="lm-price text-4xl text-lm-text leading-none mt-1">
@@ -310,10 +429,6 @@ export default function DashboardPage() {
                           ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                           : "—"}
                       </p>
-                      <div className="flex items-center gap-2 mt-2.5">
-                        <StatusBadge variant={biasVariant(signal.bias)}>{signal.bias}</StatusBadge>
-                        <span className="num text-[10px] uppercase tracking-widest text-lm-muted">Bias</span>
-                      </div>
                       {p.meta.liveUpdatedAt && (
                         <p className="num text-[10px] text-lm-muted mt-2">
                           live {fmtTime(p.meta.liveUpdatedAt)}
@@ -321,69 +436,30 @@ export default function DashboardPage() {
                       )}
                     </div>
 
-                    {/* Trader signal column */}
-                    <div className="space-y-2.5">
-                      {/* Setup score + Risk row */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[9px] uppercase tracking-widest text-lm-muted">Setup Score</p>
-                          <p className="lm-price text-2xl text-lm-text leading-none mt-0.5">
-                            {signal.score}
-                            <span className="text-[10px] text-lm-muted ml-1">/100</span>
-                          </p>
+                    {/* Depth column — top bid/ask only */}
+                    <div className="space-y-2">
+                      {bidWall && (
+                        <div className="lm-rail-bid relative pl-3 flex items-center gap-2 text-[12px]">
+                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-7">Bid</span>
+                          <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
+                          <span className="num text-lm-muted ml-auto">
+                            ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
+                          </span>
                         </div>
-                        <div>
-                          <p className="text-[9px] uppercase tracking-widest text-lm-muted">Risk</p>
-                          <StatusBadge variant={riskVariant(signal.risk)} className="mt-1">
-                            {signal.risk}
-                          </StatusBadge>
+                      )}
+                      {askWall && (
+                        <div className="lm-rail-ask relative pl-3 flex items-center gap-2 text-[12px]">
+                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-7">Ask</span>
+                          <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
+                          <span className="num text-lm-muted ml-auto">
+                            ${(askWall.total_usd / 1_000_000).toFixed(2)}M
+                          </span>
                         </div>
-                      </div>
-
-                      {/* Confidence bar */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[9px] uppercase tracking-widest text-lm-muted">Confidence</span>
-                          <span className="num text-[10px] text-lm-text">{signal.confidence}%</span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-lm-border overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-lm-cyan/80"
-                            style={{ width: `${signal.confidence}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="lm-section-rule" />
-
-                      {/* Action hint */}
-                      <div>
-                        <p className="text-[9px] uppercase tracking-widest text-lm-muted">Action</p>
-                        <p className="text-[12px] text-lm-text-dim leading-snug mt-0.5">{signal.action}</p>
-                      </div>
-
-                      {/* Compact depth (secondary) */}
-                      {(bidWall || askWall) && (
-                        <div className="grid grid-cols-2 gap-2 pt-1">
-                          {bidWall && (
-                            <div className="lm-rail-bid relative pl-2 text-[10.5px]">
-                              <span className="text-[8px] uppercase tracking-widest text-lm-muted block">Top Bid</span>
-                              <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
-                              <span className="num text-lm-muted ml-1">
-                                ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
-                              </span>
-                            </div>
-                          )}
-                          {askWall && (
-                            <div className="lm-rail-ask relative pl-2 text-[10.5px]">
-                              <span className="text-[8px] uppercase tracking-widest text-lm-muted block">Top Ask</span>
-                              <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
-                              <span className="num text-lm-muted ml-1">
-                                ${(askWall.total_usd / 1_000_000).toFixed(2)}M
-                              </span>
-                            </div>
-                          )}
-                        </div>
+                      )}
+                      {signal && (
+                        <p className="text-[10px] text-lm-muted leading-snug pt-1 num">
+                          See Current Read above for bias, score and action.
+                        </p>
                       )}
                     </div>
                   </div>
