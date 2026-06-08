@@ -400,6 +400,9 @@ def _build_args(**overrides) -> "object":
         print_payload=False,
         journal_path="",              # LM63E — off by default
         target="stdout",              # LM63H — no Supabase by default
+        forever=False,                # LM63J — worker mode off
+        heartbeat_interval=0.0,       # LM63J — quiet in tests by default
+        use_env_config=False,         # LM63J — env reader off in tests
     )
     for k, v in overrides.items():
         setattr(ns, k, v)
@@ -895,8 +898,14 @@ class _FakeSupabaseWriter:
         return self._result
 
 
+_VALID_SUPABASE_ENV = {
+    "SUPABASE_URL":              "https://test.supabase.co",
+    "SUPABASE_SERVICE_ROLE_KEY": "test-service-role-key",
+}
+
+
 class TestSmokeRunnerSupabaseWiring:
-    def _run(self, *, msgs, supabase_writer=None, **arg_overrides):
+    def _run(self, *, msgs, supabase_writer=None, env=None, **arg_overrides):
         from scripts.run_binance_trade_stream_smoke import run_pipeline
         args = _build_args(**arg_overrides)
         out_lines: list[str] = []
@@ -908,6 +917,7 @@ class TestSmokeRunnerSupabaseWiring:
             supabase_writer=supabase_writer or _FakeSupabaseWriter(),
             print_fn=out_lines.append,
             err_fn=err_lines.append,
+            env=env if env is not None else dict(_VALID_SUPABASE_ENV),
         )
         return counters, out_lines, err_lines
 
@@ -1007,3 +1017,331 @@ class TestSmokeRunnerSupabaseWiring:
         assert counters["events"] == 0
         assert writer.calls == []
         assert any("journal-path" in line for line in err)
+
+
+# ── LM63J: worker mode / env config / heartbeats ─────────────────────────────
+
+_SENTINEL = object()
+
+
+class TestSmokeRunnerWorkerMode:
+    def _run(self, *, msgs, supabase_writer=None, env=_SENTINEL,
+             now_fn=None, **arg_overrides):
+        """
+        Default env carries a valid SUPABASE_URL/SERVICE_ROLE_KEY pair so the
+        target=supabase/both env-check passes. Pass `env={}` (or any explicit
+        value) to exercise the failure path.
+        """
+        from scripts.run_binance_trade_stream_smoke import run_pipeline
+        args = _build_args(**arg_overrides)
+        out_lines: list[str] = []
+        err_lines: list[str] = []
+        kwargs: dict = {
+            "args":          args,
+            "message_iter":  iter(msgs),
+            "sender":        _FakeSender(),
+            "supabase_writer": supabase_writer or _FakeSupabaseWriter(),
+            "print_fn":      out_lines.append,
+            "err_fn":        err_lines.append,
+            "env":           dict(_VALID_SUPABASE_ENV) if env is _SENTINEL else env,
+        }
+        if now_fn is not None:
+            kwargs["now"] = now_fn
+        counters = run_pipeline(**kwargs)
+        return counters, out_lines, err_lines
+
+    def test_forever_false_respects_max_events(self):
+        # 10 fills, max_events=3 → stop at 3 even though more remain.
+        msgs = [
+            json.dumps(_agg_trade(agg_id=i, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0))
+            for i in range(1, 11)
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs,
+            symbols="BTCUSDT", min_notional=250_000,
+            forever=False, max_events=3,
+        )
+        assert counters["events"] == 3
+        assert counters["stopped_reason"] == "max_events"
+
+    def test_forever_disables_default_max_events_cap(self):
+        # max_events left at its CLI sentinel (None). --forever should turn
+        # the default cap into "no cap" so all 25 events get processed.
+        msgs = [
+            json.dumps(_agg_trade(agg_id=i, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0))
+            for i in range(1, 26)
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs,
+            symbols="BTCUSDT", min_notional=250_000,
+            forever=True, max_events=None,
+        )
+        assert counters["events"] == 25
+        assert counters["stopped_reason"] == "exhausted"
+
+    def test_forever_with_explicit_max_events_still_respects_it(self):
+        msgs = [
+            json.dumps(_agg_trade(agg_id=i, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0))
+            for i in range(1, 11)
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs,
+            symbols="BTCUSDT", min_notional=250_000,
+            forever=True, max_events=4,
+        )
+        assert counters["events"] == 4
+        assert counters["stopped_reason"] == "max_events"
+
+    def test_target_supabase_with_missing_env_safe_exit(self):
+        # Empty env dict → supabase env check fails BEFORE the stream opens.
+        writer = _FakeSupabaseWriter()
+        counters, _out, err = self._run(
+            msgs=[json.dumps(_agg_trade())],  # never processed
+            supabase_writer=writer,
+            symbols="BTCUSDT", target="supabase",
+            env={},  # critical: empty
+        )
+        assert counters["stopped_reason"] == "missing_supabase_env"
+        assert counters["events"] == 0
+        assert writer.calls == []
+        # Error line surfaces the missing env names.
+        assert any("SUPABASE_URL" in line for line in err)
+        assert any("SUPABASE_SERVICE_ROLE_KEY" in line for line in err)
+
+    def test_target_both_with_missing_env_safe_exit(self, tmp_path):
+        writer = _FakeSupabaseWriter()
+        path = tmp_path / "whales.jsonl"
+        counters, _out, err = self._run(
+            msgs=[json.dumps(_agg_trade())],
+            supabase_writer=writer,
+            symbols="BTCUSDT", target="both",
+            journal_path=str(path),
+            env={"SUPABASE_URL": "https://x.supabase.co"},  # key missing
+        )
+        assert counters["stopped_reason"] == "missing_supabase_env"
+        assert writer.calls == []
+        # Journal file should NOT have been opened either — we exit before the loop.
+        assert not path.exists()
+        assert any("SERVICE_ROLE_KEY" in line for line in err)
+
+    def test_supabase_writer_exception_does_not_crash_loop(self):
+        # A writer that raises on every call should be caught and counted
+        # — the loop must keep processing the next event cleanly.
+        class _ExplodingWriter:
+            def __init__(self):
+                self.calls = 0
+            def __call__(self, event, *, meta=None, **kwargs):
+                self.calls += 1
+                raise RuntimeError(f"db is on fire #{self.calls}")
+
+        writer = _ExplodingWriter()
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+            json.dumps(_agg_trade(agg_id=3, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+        ]
+        counters, _out, err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000, target="supabase",
+        )
+        assert counters["events"] == 3
+        assert counters["supabase_writes"] == 0
+        assert counters["supabase_failures"] == 3
+        assert writer.calls == 3
+        # Each failure should produce a stderr line.
+        assert sum("supabase write raised" in line for line in err) == 3
+
+    def test_target_both_writes_both_sinks(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        writer = _FakeSupabaseWriter()
+        msgs = [
+            json.dumps(_agg_trade(agg_id=i, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0))
+            for i in range(1, 4)
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000,
+            target="both", journal_path=str(path),
+        )
+        assert counters["events"] == 3
+        assert counters["journaled"] == 3
+        assert counters["supabase_writes"] == 3
+        rows = read_whale_event_journal(path)
+        assert len(rows) == 3
+        assert len(writer.calls) == 3
+
+    def test_heartbeat_emitted_on_interval(self):
+        # Fake monotonic clock:
+        #   call 1 — pipeline startup  (started_at = 0)
+        #   call 2 — iteration 1 begin (t = 0  → diff 0  → no heartbeat)
+        #   call 3 — iteration 2 begin (t = 12 → diff 12 → heartbeat fires)
+        ticks = iter([0.0, 0.0, 12.0, 12.0])
+        def fake_now() -> float:
+            try:
+                return next(ticks)
+            except StopIteration:
+                return 12.0
+
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),
+        ]
+        counters, _out, err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            heartbeat_interval=10.0, now_fn=fake_now,
+        )
+        assert counters["events"] == 2
+        # Exactly one heartbeat line — the second message crossed the interval.
+        heartbeats = [line for line in err if line.startswith("heartbeat")]
+        assert len(heartbeats) == 1
+        assert "uptime=12s" in heartbeats[0]
+
+
+# ── LM63J: helpers (format_heartbeat / resolve_max_events / env config) ──────
+
+class TestFormatHeartbeat:
+    def test_includes_all_counters(self):
+        from scripts.run_binance_trade_stream_smoke import format_heartbeat
+        counters = {
+            "seen": 100, "events": 7, "sendable": 5, "sent": 4,
+            "supabase_writes": 5, "supabase_duplicates": 1,
+            "supabase_failures": 0,
+            "journaled": 7, "journal_failures": 0,
+        }
+        out = format_heartbeat(counters, 42.7)
+        assert "uptime=43s" in out
+        assert "events=7" in out
+        assert "supabase_writes=5" in out
+        assert "supabase_duplicates=1" in out
+        assert "journaled=7" in out
+        assert out.startswith("heartbeat")
+
+    def test_handles_missing_keys_safely(self):
+        from scripts.run_binance_trade_stream_smoke import format_heartbeat
+        # Empty counters dict — must not raise; defaults to 0s.
+        out = format_heartbeat({}, 0.0)
+        assert "events=0" in out
+        assert "supabase_writes=0" in out
+
+
+class TestResolveMaxEvents:
+    def _ns(self, **kw):
+        import argparse
+        base = {"max_events": None, "forever": False}
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_explicit_positive_wins(self):
+        from scripts.run_binance_trade_stream_smoke import resolve_max_events
+        assert resolve_max_events(self._ns(max_events=5)) == 5
+        assert resolve_max_events(self._ns(max_events=5, forever=True)) == 5
+
+    def test_explicit_zero_or_negative_disables_cap(self):
+        from scripts.run_binance_trade_stream_smoke import resolve_max_events
+        assert resolve_max_events(self._ns(max_events=0)) is None
+        assert resolve_max_events(self._ns(max_events=-1, forever=True)) is None
+
+    def test_omitted_with_forever_disables_cap(self):
+        from scripts.run_binance_trade_stream_smoke import resolve_max_events
+        assert resolve_max_events(self._ns(max_events=None, forever=True)) is None
+
+    def test_omitted_without_forever_uses_default(self):
+        from scripts.run_binance_trade_stream_smoke import (
+            DEFAULT_MAX_EVENTS,
+            resolve_max_events,
+        )
+        assert resolve_max_events(self._ns(max_events=None)) == DEFAULT_MAX_EVENTS
+
+
+class TestApplyEnvConfig:
+    def _ns(self, **kw):
+        import argparse
+        base = dict(
+            symbols="BTCUSDT", min_notional=None, target="stdout",
+            forever=False, use_env_config=False,
+        )
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_no_op_when_disabled(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns()
+        env = {"WORKER_SYMBOLS": "ETHUSDT", "WHALE_WORKER_FOREVER": "true"}
+        apply_env_config(ns, env=env, argv=[])
+        assert ns.symbols == "BTCUSDT"
+        assert ns.forever is False
+
+    def test_env_applies_when_enabled_and_no_explicit_cli(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True)
+        env = {
+            "WORKER_SYMBOLS":             "ETHUSDT,SOLUSDT",
+            "WHALE_WORKER_MIN_NOTIONAL":  "75000",
+            "WHALE_WORKER_TARGET":        "supabase",
+            "WHALE_WORKER_FOREVER":       "true",
+        }
+        apply_env_config(ns, env=env, argv=[])
+        assert ns.symbols == "ETHUSDT,SOLUSDT"
+        assert ns.min_notional == 75_000.0
+        assert ns.target == "supabase"
+        assert ns.forever is True
+
+    def test_explicit_cli_wins_over_env(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True, symbols="BTCUSDT", target="stdout")
+        env = {"WORKER_SYMBOLS": "ETHUSDT", "WHALE_WORKER_TARGET": "supabase"}
+        # User passed --symbols and --target on the CLI explicitly.
+        apply_env_config(ns, env=env, argv=["--symbols", "BTCUSDT", "--target", "stdout"])
+        assert ns.symbols == "BTCUSDT"
+        assert ns.target == "stdout"
+
+    def test_invalid_target_in_env_ignored(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True)
+        apply_env_config(ns, env={"WHALE_WORKER_TARGET": "rabbit"}, argv=[])
+        assert ns.target == "stdout"
+
+    def test_invalid_min_notional_in_env_ignored(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True)
+        apply_env_config(ns, env={"WHALE_WORKER_MIN_NOTIONAL": "not a number"}, argv=[])
+        assert ns.min_notional is None
+
+
+class TestSupabaseEnvReady:
+    def test_returns_ok_when_both_present(self):
+        from scripts.run_binance_trade_stream_smoke import supabase_env_ready
+        ok, msg = supabase_env_ready({
+            "SUPABASE_URL": "https://x.supabase.co",
+            "SUPABASE_SERVICE_ROLE_KEY": "k",
+        })
+        assert ok is True
+        assert msg == ""
+
+    def test_returns_error_when_missing(self):
+        from scripts.run_binance_trade_stream_smoke import supabase_env_ready
+        ok, msg = supabase_env_ready({})
+        assert ok is False
+        assert "SUPABASE_URL" in msg
+        assert "SUPABASE_SERVICE_ROLE_KEY" in msg
+
+    def test_blank_values_treated_as_missing(self):
+        from scripts.run_binance_trade_stream_smoke import supabase_env_ready
+        ok, msg = supabase_env_ready({
+            "SUPABASE_URL": "  ",
+            "SUPABASE_SERVICE_ROLE_KEY": "",
+        })
+        assert ok is False
+        assert "SUPABASE_URL" in msg
+        assert "SUPABASE_SERVICE_ROLE_KEY" in msg

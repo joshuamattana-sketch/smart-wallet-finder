@@ -387,6 +387,79 @@ npm run dev
 
 Without the env vars set, the page still works (journal → mock fallback).
 
+## LM63J Whale Worker Mode (continuous Supabase writes)
+
+Run the worker tests:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/connectors/test_binance_trade_stream.py
+python -m compileall services scripts tests
+```
+
+### Local one-shot Supabase test (5 events then exit)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"   # NEVER commit
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --target supabase --max-events 5
+```
+
+### Local forever Supabase worker (heartbeat every 60s)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --target supabase --forever --heartbeat-interval 60
+```
+
+`--forever` disables the implicit `--max-events 10` cap. An explicit `--max-events N` (N > 0) still wins. `--heartbeat-interval 0` silences the periodic stderr summary.
+
+### Env-driven worker (no CLI flags)
+
+The runner reads `WORKER_SYMBOLS`, `WHALE_WORKER_MIN_NOTIONAL`, `WHALE_WORKER_TARGET`, and `WHALE_WORKER_FOREVER` when `--use-env-config` is set. Any CLI flag the user explicitly passes still wins.
+
+```powershell
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"
+$env:WORKER_SYMBOLS = "BTCUSDT,ETHUSDT,SOLUSDT"
+$env:WHALE_WORKER_MIN_NOTIONAL = "250000"
+$env:WHALE_WORKER_TARGET = "supabase"
+$env:WHALE_WORKER_FOREVER = "true"
+python scripts/run_binance_trade_stream_smoke.py --use-env-config
+```
+
+### Safe behaviors
+
+- `--target supabase|both` with missing `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` → process exits with code 2 (`stopped=missing_supabase_env`) **before** opening the websocket.
+- Supabase writes that raise an exception are caught and counted as `supabase_failures` — the loop keeps processing the next event.
+- Bad events / malformed messages are skipped via the existing parser (LM63B).
+- Ctrl+C / SIGINT exits cleanly with `stopped=interrupted` and the final summary on stderr.
+
+### Railway notes
+
+The existing `railway.worker.toml` deploys the **heatmap** worker (`scripts/run_binance_ws_heatmap_live.py`). To run the **whale worker** on Railway, deploy it as a separate service — duplicate the toml and change the `startCommand` to:
+
+```toml
+[deploy]
+startCommand = "python scripts/run_binance_trade_stream_smoke.py --use-env-config --heartbeat-interval 60"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+```
+
+Set the following Railway service env vars:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `WORKER_SYMBOLS`           e.g. `BTCUSDT,ETHUSDT,SOLUSDT,LINKUSDT`
+- `WHALE_WORKER_TARGET`      `supabase`
+- `WHALE_WORKER_FOREVER`     `true`
+- `WHALE_WORKER_MIN_NOTIONAL` (optional, overrides per-symbol thresholds)
+
+The whale worker never sends Discord by default — leave `--send-discord` off until you're ready.
+
 ```
 
 ```

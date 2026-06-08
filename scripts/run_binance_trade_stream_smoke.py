@@ -39,7 +39,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -102,10 +104,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
               "--no-use-symbol-thresholds is set."),
     )
     parser.add_argument(
-        "--max-events", type=int, default=DEFAULT_MAX_EVENTS,
+        "--max-events", type=int, default=None,
         dest="max_events",
-        help=(f"Stop after N produced whale events (default: "
-              f"{DEFAULT_MAX_EVENTS}). 0 or negative disables the cap."),
+        help=(f"Stop after N produced whale events. When not provided, the "
+              f"default is {DEFAULT_MAX_EVENTS} unless --forever is set, in "
+              f"which case the cap is disabled. 0 or negative disables the "
+              f"cap explicitly. --forever + --max-events N respects N."),
     )
     parser.add_argument(
         "--min-confidence", type=float, default=None,
@@ -158,10 +162,122 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
               "SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in the env). both: "
               "jsonl + supabase."),
     )
+    parser.add_argument(
+        "--forever", action="store_true", default=False, dest="forever",
+        help=("Worker mode: run until SIGINT/Ctrl+C. Disables the default "
+              "--max-events cap (an explicit --max-events still wins)."),
+    )
+    parser.add_argument(
+        "--heartbeat-interval", type=float, default=60.0,
+        dest="heartbeat_interval",
+        help=("Seconds between heartbeat summary lines on stderr. 0 disables "
+              "heartbeat logging (default: 60)."),
+    )
+    parser.add_argument(
+        "--use-env-config", action="store_true", default=False,
+        dest="use_env_config",
+        help=("Read worker config from environment variables: WORKER_SYMBOLS, "
+              "WHALE_WORKER_MIN_NOTIONAL, WHALE_WORKER_TARGET, "
+              "WHALE_WORKER_FOREVER. Explicit CLI flags always win."),
+    )
     return parser.parse_args(argv)
 
 
+# ── Env config loader (LM63J) ────────────────────────────────────────────────
+
+_TRUTHY = frozenset({"true", "1", "yes", "on"})
+
+
+def apply_env_config(args: argparse.Namespace, *,
+                     env: dict | None = None,
+                     argv: list[str] | None = None) -> argparse.Namespace:
+    """
+    Apply WORKER_* / WHALE_WORKER_* env vars onto an argparse Namespace,
+    but only for flags the user did NOT pass explicitly on the command line.
+
+    Returns the (possibly mutated) Namespace for convenience. No-op when
+    `args.use_env_config` is falsy.
+    """
+    if not getattr(args, "use_env_config", False):
+        return args
+    src = env if env is not None else os.environ
+    explicit = {a.lstrip("-").replace("-", "_")
+                for a in (argv if argv is not None else sys.argv[1:])
+                if a.startswith("--")}
+
+    sym = src.get("WORKER_SYMBOLS", "").strip()
+    if sym and "symbols" not in explicit:
+        args.symbols = sym
+
+    mn = src.get("WHALE_WORKER_MIN_NOTIONAL", "").strip()
+    if mn and "min_notional" not in explicit:
+        try:
+            args.min_notional = float(mn)
+        except ValueError:
+            pass  # leave default; bad env values are ignored
+
+    tgt = src.get("WHALE_WORKER_TARGET", "").strip()
+    if tgt and "target" not in explicit:
+        if tgt in ("stdout", "jsonl", "supabase", "both"):
+            args.target = tgt
+
+    forever = src.get("WHALE_WORKER_FOREVER", "").strip().lower()
+    if forever and "forever" not in explicit:
+        if forever in _TRUTHY:
+            args.forever = True
+
+    return args
+
+
 # ── Pipeline ──────────────────────────────────────────────────────────────────
+
+def supabase_env_ready(env: dict | None = None) -> tuple[bool, str]:
+    """
+    Return (ok, error_msg). `ok=True` when SUPABASE_URL and
+    SUPABASE_SERVICE_ROLE_KEY are both present and non-empty.
+    """
+    src = env if env is not None else os.environ
+    url = (src.get("SUPABASE_URL", "") or "").strip()
+    key = (src.get("SUPABASE_SERVICE_ROLE_KEY", "") or "").strip()
+    missing: list[str] = []
+    if not url: missing.append("SUPABASE_URL")
+    if not key: missing.append("SUPABASE_SERVICE_ROLE_KEY")
+    if missing:
+        return False, f"missing {', '.join(missing)}"
+    return True, ""
+
+
+def resolve_max_events(args: argparse.Namespace) -> Optional[int]:
+    """
+    Compute the effective max_events cap given --forever and --max-events.
+
+    Rules:
+      - Explicit --max-events N (N > 0) → cap = N
+      - Explicit --max-events <= 0      → cap disabled (None)
+      - Omitted + --forever             → cap disabled (None)
+      - Omitted + no --forever          → cap = DEFAULT_MAX_EVENTS (10)
+    """
+    explicit = args.max_events
+    if explicit is not None:
+        return explicit if explicit > 0 else None
+    return None if getattr(args, "forever", False) else DEFAULT_MAX_EVENTS
+
+
+def format_heartbeat(counters: dict, uptime_seconds: float) -> str:
+    """One-line summary used both by the periodic worker tick and the end log."""
+    return (
+        f"heartbeat · uptime={uptime_seconds:.0f}s · "
+        f"seen={counters.get('seen', 0)} "
+        f"events={counters.get('events', 0)} "
+        f"sendable={counters.get('sendable', 0)} "
+        f"sent={counters.get('sent', 0)} "
+        f"supabase_writes={counters.get('supabase_writes', 0)} "
+        f"supabase_duplicates={counters.get('supabase_duplicates', 0)} "
+        f"supabase_failures={counters.get('supabase_failures', 0)} "
+        f"journaled={counters.get('journaled', 0)} "
+        f"journal_failures={counters.get('journal_failures', 0)}"
+    )
+
 
 def _fmt_event_line(item: dict, filter_result: dict, blocked_low_conf: bool) -> str:
     """Build the one-line human-readable summary printed per event."""
@@ -191,6 +307,8 @@ def run_pipeline(
     supabase_writer: Callable[..., dict] = write_whale_event_to_supabase,
     print_fn: Callable[[str], None] = print,
     err_fn: Optional[Callable[[str], None]] = None,
+    env: Optional[dict] = None,
+    now: Callable[[], float] = time.monotonic,
 ) -> dict:
     """
     Drive the aggTrade → whale → filter → [Discord] pipeline.
@@ -279,7 +397,18 @@ def run_pipeline(
         counters["stopped_reason"] = "missing_journal_path"
         return counters
 
-    max_events_cap = int(args.max_events) if args.max_events and args.max_events > 0 else None
+    # LM63J: when Supabase is requested, verify env BEFORE we open a websocket.
+    if supabase_enabled:
+        ok, msg = supabase_env_ready(env)
+        if not ok:
+            err_fn(f"error: --target {target} requires {msg}")
+            counters["stopped_reason"] = "missing_supabase_env"
+            return counters
+
+    max_events_cap = resolve_max_events(args)
+    heartbeat_interval = float(getattr(args, "heartbeat_interval", 60.0) or 0.0)
+    started_at = now()
+    last_heartbeat_at: float = started_at
 
     def _resolve_thresholds_for(symbol: str) -> dict:
         """
@@ -322,6 +451,8 @@ def run_pipeline(
         "binance aggTrade smoke runner starting "
         f"· symbols={','.join(valid)} · {threshold_label} "
         f"· max_events={max_events_cap if max_events_cap is not None else '∞'} "
+        f"· forever={'YES' if getattr(args, 'forever', False) else 'no'} "
+        f"· heartbeat={heartbeat_interval:.0f}s "
         f"· send_discord={'YES' if args.send_discord else 'no'} "
         f"· target={target} "
         f"· journal={args.journal_path or 'off'} "
@@ -339,6 +470,13 @@ def run_pipeline(
         for item in stream:
             counters["seen"] += 1
             counters["parsed"] += 1
+
+            # Worker heartbeat — periodic stderr summary, never crashes the loop.
+            if heartbeat_interval > 0:
+                t = now()
+                if (t - last_heartbeat_at) >= heartbeat_interval:
+                    err_fn(format_heartbeat(counters, t - started_at))
+                    last_heartbeat_at = t
 
             item_sym = str(item.get("symbol", ""))
             thresholds = _resolve_thresholds_for(item_sym)
@@ -457,6 +595,7 @@ def run_pipeline(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    apply_env_config(args, argv=argv if argv is not None else sys.argv[1:])
     counters = run_pipeline(args=args)
 
     print(
@@ -480,6 +619,7 @@ def main(argv: list[str] | None = None) -> int:
     config_errors = {
         "no_symbols", "no_valid_symbols", "bad_min_notional",
         "bad_min_confidence", "missing_webhook", "missing_journal_path",
+        "missing_supabase_env",
     }
     return 2 if counters["stopped_reason"] in config_errors else 0
 
