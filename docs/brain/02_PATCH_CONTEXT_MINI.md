@@ -14,6 +14,7 @@
 - Whale flow starts with whale event detection, then formatter/filter/sender later.
 - Whale live pipeline: Binance aggTrade WS -> normalize -> detect_whale_events -> filter -> (Discord | JSONL journal | Supabase whale_events).
 - Whale read path: website /api/whale-alerts reads Supabase -> local JSONL journal -> mock alerts (server-side, 3-tier fallback).
+- Futures/leverage context (LM64 series, planned): Binance futures aggTrade + funding/OI poller + force-order stream feed `MarketContext` (funding_rate, oi_change_pct, derived leverage_heat) into existing whale events without claiming individual-account leverage. See `docs/brain/LM64_FUTURES_WHALE_SOURCE_DISCOVERY.md`.
 
 ## Completed patches
 
@@ -38,6 +39,7 @@
 - LM63I website Supabase tier (Supabase -> journal -> mock)
 - LM63J whale worker mode (--forever, --heartbeat-interval, env config)
 - LM63K whale worker deployment docs
+- LM64A futures whale source discovery (recommendation only)
 
 ## Rules
 
