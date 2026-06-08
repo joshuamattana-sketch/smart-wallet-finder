@@ -372,3 +372,222 @@ class TestWhaleEngineRoundTrip:
         e1 = detect_whale_events([item], options={"min_notional_usd": 250_000})
         e2 = detect_whale_events([item], options={"min_notional_usd": 250_000})
         assert e1[0]["whale_event_id"] == e2[0]["whale_event_id"]
+
+
+# ── LM63C: smoke runner pipeline (aggTrade → whale → filter → Discord) ───────
+
+# Imported lazily inside the test class so importing this test module
+# never executes the smoke runner's top-level code.
+
+def _build_args(**overrides) -> "object":
+    """Return an argparse.Namespace-like object with safe defaults."""
+    from scripts.run_binance_trade_stream_smoke import (
+        DEFAULT_MAX_EVENTS,
+        DEFAULT_MIN_CONFIDENCE,
+        DEFAULT_MIN_NOTIONAL,
+        DEFAULT_SYMBOLS,
+    )
+    import argparse
+    ns = argparse.Namespace(
+        symbols=DEFAULT_SYMBOLS,
+        min_notional=DEFAULT_MIN_NOTIONAL,
+        max_events=DEFAULT_MAX_EVENTS,
+        min_confidence=DEFAULT_MIN_CONFIDENCE,
+        send_discord=False,
+        discord_webhook_url="",
+        print_payload=False,
+    )
+    for k, v in overrides.items():
+        setattr(ns, k, v)
+    return ns
+
+
+class _FakeSender:
+    """Stand-in for `send_discord_webhook` — records every call."""
+
+    def __init__(self, ok: bool = True):
+        self.ok = ok
+        self.calls: list[dict] = []
+
+    def __call__(self, payload, webhook_url=""):
+        self.calls.append({"payload": payload, "webhook_url": webhook_url})
+        return {"ok": self.ok, "status": 204 if self.ok else 500}
+
+
+class TestSmokeRunnerPipeline:
+    def _run(self, *, msgs, sender=None, **arg_overrides):
+        """Run the pipeline once with captured stdout/stderr lines."""
+        from scripts.run_binance_trade_stream_smoke import run_pipeline
+        args = _build_args(**arg_overrides)
+        out_lines: list[str] = []
+        err_lines: list[str] = []
+        counters = run_pipeline(
+            args=args,
+            message_iter=iter(msgs),
+            sender=sender or _FakeSender(),
+            print_fn=out_lines.append,
+            err_fn=err_lines.append,
+        )
+        return counters, out_lines, err_lines
+
+    def test_default_does_not_send_discord(self):
+        """No --send-discord → sender must never be called even for valid events."""
+        sender = _FakeSender()
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0
+        ))]  # $1.4M, extreme
+        counters, out, _err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT", min_notional=250_000,
+        )
+        assert counters["events"] == 1
+        assert counters["sendable"] >= 1
+        assert counters["sent"] == 0
+        assert sender.calls == []
+        # Human-readable line printed for the event.
+        assert any("BTCUSDT" in line for line in out)
+
+    def test_send_flag_calls_mocked_webhook_sender(self):
+        sender = _FakeSender()
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),  # $1.4M
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_001, quantity=15.0)),  # $1.05M
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT", min_notional=250_000,
+            send_discord=True, discord_webhook_url="https://example.test/webhook",
+        )
+        assert counters["sent"] == 2
+        assert len(sender.calls) == 2
+        for call in sender.calls:
+            assert call["webhook_url"] == "https://example.test/webhook"
+            assert isinstance(call["payload"], dict)
+            # Discord payload shape: must carry embeds.
+            assert "embeds" in call["payload"]
+
+    def test_missing_webhook_safe_no_crash(self):
+        """--send-discord without a URL must not crash; must not call sender."""
+        sender = _FakeSender()
+        msgs = [json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                       price=70_000, quantity=20.0))]
+        counters, out, err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT",
+            send_discord=True, discord_webhook_url="",
+        )
+        assert counters["stopped_reason"] == "missing_webhook"
+        assert counters["events"] == 0     # exited before processing
+        assert counters["sent"] == 0
+        assert sender.calls == []
+        # An explanatory error line should have been emitted to err_fn.
+        assert any("missing" in line.lower() or "webhook" in line.lower() for line in err)
+
+    def test_max_events_respected(self):
+        """Loop stops at --max-events regardless of how many input msgs remain."""
+        msgs = [
+            json.dumps(_agg_trade(agg_id=i, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0))
+            for i in range(1, 11)
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs,
+            symbols="BTCUSDT", min_notional=250_000, max_events=3,
+        )
+        assert counters["events"] == 3
+        assert counters["stopped_reason"] == "max_events"
+
+    def test_below_min_notional_skipped(self):
+        # 70_000 × 0.001 = $70 → far below the 250k floor.
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=0.001)),
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_000, quantity=0.002)),
+        ]
+        counters, out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+        )
+        assert counters["events"] == 0
+        assert counters["below_threshold"] == 2
+        # Nothing should have been printed to the readable stream.
+        assert out == []
+
+    def test_filter_blocks_low_confidence(self):
+        """
+        Set --min-confidence above the engine's emitted confidence (~0.8 when
+        tx_hash is present). The filter result still passes for an extreme
+        whale, but the smoke runner must mark it blocked and skip the sender.
+        """
+        sender = _FakeSender()
+        msgs = [json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                       price=70_000, quantity=20.0))]  # $1.4M, extreme
+        counters, out, _err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT", min_notional=250_000,
+            min_confidence=0.95,
+            send_discord=True, discord_webhook_url="https://example.test/webhook",
+        )
+        assert counters["events"] == 1
+        assert counters["blocked_low_confidence"] == 1
+        assert counters["sendable"] == 0
+        assert counters["sent"] == 0
+        assert sender.calls == []
+        # The readable line should mark the block reason.
+        assert any("--min-confidence" in line for line in out)
+
+    def test_print_payload_outputs_json(self):
+        sender = _FakeSender()
+        msgs = [json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                       price=70_000, quantity=20.0))]
+        counters, out, _err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT", min_notional=250_000,
+            print_payload=True,
+        )
+        assert counters["events"] == 1
+        # One human-readable line + one JSON payload line.
+        json_lines = [line for line in out if line.startswith("{")]
+        assert len(json_lines) == 1
+        payload = json.loads(json_lines[0])
+        assert "embeds" in payload
+
+    def test_invalid_symbols_safe_exit(self):
+        sender = _FakeSender()
+        counters, _out, err = self._run(
+            msgs=[], sender=sender,
+            symbols="BTC-USDT",   # invalid Binance shape
+        )
+        assert counters["stopped_reason"] == "no_valid_symbols"
+        assert counters["events"] == 0
+        assert sender.calls == []
+        assert any("invalid" in line.lower() or "no valid" in line.lower() for line in err)
+
+    def test_bad_min_confidence_safe_exit(self):
+        counters, _out, err = self._run(
+            msgs=[], symbols="BTCUSDT", min_confidence=1.5,
+        )
+        assert counters["stopped_reason"] == "bad_min_confidence"
+        assert any("--min-confidence" in line for line in err)
+
+    def test_negative_min_notional_safe_exit(self):
+        counters, _out, err = self._run(
+            msgs=[], symbols="BTCUSDT", min_notional=-1.0,
+        )
+        assert counters["stopped_reason"] == "bad_min_notional"
+        assert any("--min-notional" in line for line in err)
+
+    def test_sender_failure_counted_not_raised(self):
+        sender = _FakeSender(ok=False)
+        msgs = [json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                       price=70_000, quantity=20.0))]
+        counters, _out, _err = self._run(
+            msgs=msgs, sender=sender,
+            symbols="BTCUSDT", min_notional=250_000,
+            send_discord=True, discord_webhook_url="https://example.test/webhook",
+        )
+        assert counters["sendable"] == 1
+        assert counters["sent"] == 0
+        assert counters["send_failures"] == 1

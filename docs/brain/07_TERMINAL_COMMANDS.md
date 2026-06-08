@@ -84,11 +84,40 @@ cd "C:\Users\Joshua\Desktop\wallet finder"
 python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --min-notional 250000
 ```
 
-Optional:
-- `--samples 5` to stop after N printed events.
-- `--pretty` for indented JSON.
-
 Requires `pip install websocket-client` for the live WS transport.
+
+## LM63C Whale Live Pipeline Smoke (aggTrade → whale → filter → Discord)
+
+Default: observe only, stops after 10 sendable events. **No Discord send.**
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --min-notional 250000 --max-events 10
+```
+
+Tune confidence floor:
+
+```powershell
+python scripts/run_binance_trade_stream_smoke.py --min-confidence 0.7
+```
+
+Inspect the Discord payload without sending:
+
+```powershell
+python scripts/run_binance_trade_stream_smoke.py --print-payload --max-events 3
+```
+
+Actually POST to Discord (need a real webhook URL — never commit it):
+
+```powershell
+$env:LUMORA_WHALE_DISCORD = "https://discord.com/api/webhooks/..."
+python scripts/run_binance_trade_stream_smoke.py --send-discord --discord-webhook-url $env:LUMORA_WHALE_DISCORD --max-events 5
+```
+
+Safe behaviors:
+- `--send-discord` without `--discord-webhook-url` exits with code 2 (no send, no crash).
+- Invalid Binance symbols are warned and skipped.
+- `--max-events 0` disables the cap (run until Ctrl+C).
 
 ```
 
