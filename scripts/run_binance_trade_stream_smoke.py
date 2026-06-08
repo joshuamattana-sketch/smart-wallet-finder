@@ -61,6 +61,9 @@ from services.whale_symbol_thresholds import (                        # noqa: E4
     get_whale_thresholds_for_symbol,
 )
 from services.whale_event_journal import append_whale_event_journal   # noqa: E402
+from services.whale_event_supabase_writer import (                    # noqa: E402
+    write_whale_event_to_supabase,
+)
 
 
 DEFAULT_SYMBOLS       = "BTCUSDT,ETHUSDT,SOLUSDT"
@@ -142,8 +145,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--journal-path", default="", dest="journal_path",
         help=("Optional path to an append-only JSONL whale-event journal. "
-              "When set, every detected whale event is recorded locally "
-              "(default: off · no journaling)."),
+              "Used when --target is jsonl or both, or as a back-compat "
+              "shortcut: any non-empty value enables JSONL writes."),
+    )
+    parser.add_argument(
+        "--target", default="stdout",
+        choices=["stdout", "jsonl", "supabase", "both"],
+        dest="target",
+        help=("Where to persist whale events. stdout (default): print only — "
+              "no journal, no Supabase. jsonl: also append to --journal-path. "
+              "supabase: also insert into the whale_events table (requires "
+              "SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in the env). both: "
+              "jsonl + supabase."),
     )
     return parser.parse_args(argv)
 
@@ -175,6 +188,7 @@ def run_pipeline(
     args: argparse.Namespace,
     message_iter: Optional[Iterable[Any]] = None,
     sender: Callable[..., dict] = send_discord_webhook,
+    supabase_writer: Callable[..., dict] = write_whale_event_to_supabase,
     print_fn: Callable[[str], None] = print,
     err_fn: Optional[Callable[[str], None]] = None,
 ) -> dict:
@@ -214,6 +228,9 @@ def run_pipeline(
         "blocked_low_confidence": 0,
         "journaled":              0,
         "journal_failures":       0,
+        "supabase_writes":        0,
+        "supabase_duplicates":    0,
+        "supabase_failures":      0,
         "stopped_reason":         "exhausted",
     }
 
@@ -248,6 +265,18 @@ def run_pipeline(
         err_fn("error: --send-discord set but --discord-webhook-url is empty; "
                "refusing to send")
         counters["stopped_reason"] = "missing_webhook"
+        return counters
+
+    # Resolve target → effective sinks. The journal-path flag alone enables
+    # journaling for back-compat with LM63E (target='stdout' + journal-path
+    # still writes JSONL). Supabase requires an explicit target.
+    target = getattr(args, "target", "stdout")
+    journal_enabled  = bool(args.journal_path) or target in ("jsonl", "both")
+    supabase_enabled = target in ("supabase", "both")
+
+    if target in ("jsonl", "both") and not args.journal_path:
+        err_fn("error: --target jsonl|both requires --journal-path")
+        counters["stopped_reason"] = "missing_journal_path"
         return counters
 
     max_events_cap = int(args.max_events) if args.max_events and args.max_events > 0 else None
@@ -293,8 +322,10 @@ def run_pipeline(
         "binance aggTrade smoke runner starting "
         f"· symbols={','.join(valid)} · {threshold_label} "
         f"· max_events={max_events_cap if max_events_cap is not None else '∞'} "
-        f"· send_discord={'YES' if args.send_discord else 'no'}"
-        f"· journal={args.journal_path or 'off'}"
+        f"· send_discord={'YES' if args.send_discord else 'no'} "
+        f"· target={target} "
+        f"· journal={args.journal_path or 'off'} "
+        f"· supabase={'on' if supabase_enabled else 'off'}"
     )
 
     try:
@@ -370,22 +401,46 @@ def run_pipeline(
                                     counters["send_failures"] += 1
                                     err_fn(f"  webhook send returned: {send_result!r}")
 
-                # Journal every detected event when --journal-path is set.
-                if args.journal_path:
-                    meta = {
-                        "should_send":      should_send,
-                        "filter_reason":    str(filter_result.get("reason") or ""),
-                        "blocked_low_conf": blocked_low_conf,
-                        "sent_attempted":   bool(args.send_discord and sendable),
-                    }
-                    if send_result is not None:
-                        meta["send_result"] = send_result
-                    ok = append_whale_event_journal(args.journal_path, ev, meta=meta)
+                # Build the journal/Supabase meta once — both sinks share it.
+                event_meta = {
+                    "should_send":      should_send,
+                    "filter_reason":    str(filter_result.get("reason") or ""),
+                    "blocked_low_conf": blocked_low_conf,
+                    "sent_attempted":   bool(args.send_discord and sendable),
+                }
+                if send_result is not None:
+                    event_meta["send_result"] = send_result
+
+                # Sink 1: JSONL journal (LM63E)
+                if journal_enabled and args.journal_path:
+                    ok = append_whale_event_journal(
+                        args.journal_path, ev, meta=event_meta,
+                    )
                     if ok:
                         counters["journaled"] += 1
                     else:
                         counters["journal_failures"] += 1
                         err_fn(f"  journal append failed for {ev.get('symbol')}")
+
+                # Sink 2: Supabase whale_events (LM63H)
+                if supabase_enabled:
+                    try:
+                        sb_result = supabase_writer(ev, meta=event_meta)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        counters["supabase_failures"] += 1
+                        err_fn(f"  supabase write raised: {exc}")
+                    else:
+                        if isinstance(sb_result, dict) and sb_result.get("ok"):
+                            if sb_result.get("duplicate"):
+                                counters["supabase_duplicates"] += 1
+                            else:
+                                counters["supabase_writes"] += 1
+                        else:
+                            counters["supabase_failures"] += 1
+                            err_fn(
+                                f"  supabase write failed for {ev.get('symbol')}: "
+                                f"{sb_result!r}"
+                            )
 
                 if max_events_cap is not None and counters["events"] >= max_events_cap:
                     counters["stopped_reason"] = "max_events"
@@ -414,6 +469,9 @@ def main(argv: list[str] | None = None) -> int:
         f"blocked_low_conf={counters['blocked_low_confidence']} "
         f"journaled={counters['journaled']} "
         f"journal_failures={counters['journal_failures']} "
+        f"supabase_writes={counters['supabase_writes']} "
+        f"supabase_duplicates={counters['supabase_duplicates']} "
+        f"supabase_failures={counters['supabase_failures']} "
         f"stopped={counters['stopped_reason']}",
         file=sys.stderr,
         flush=True,
@@ -421,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
     # Reasonable exit codes: 0 normal, 2 for config errors so CI can flag.
     config_errors = {
         "no_symbols", "no_valid_symbols", "bad_min_notional",
-        "bad_min_confidence", "missing_webhook",
+        "bad_min_confidence", "missing_webhook", "missing_journal_path",
     }
     return 2 if counters["stopped_reason"] in config_errors else 0
 

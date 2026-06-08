@@ -225,6 +225,94 @@ returning JSON with `{ data_source: "journal"|"mock", journal_row_count, alerts:
 
 Vercel-safe: the API route is `dynamic = "force-dynamic"` so it never tries to pre-render at build time, and missing/unreadable journal files transparently fall back to mock — no build or runtime crash.
 
+## LM63G Whale Events Supabase Schema (append-only)
+
+Schema file: `supabase/whale_events.sql`
+
+Apply once in the Supabase SQL editor (or via MCP migration). Re-running is safe — every statement is idempotent (`create table if not exists`, `create index if not exists`, `do $$ … $$` for RLS).
+
+After applying:
+- Writers (the Python LM63 pipeline) connect with `SUPABASE_SERVICE_ROLE_KEY` to insert rows.
+- Browsers must NEVER use the service-role key and must NEVER insert/update/delete this table directly.
+- Anon access is denied by default (RLS on, no policies). Read access for the website should land later via a dedicated `/api/whale-alerts?source=supabase` route, not by adding a permissive policy.
+
+Table summary:
+
+```
+public.whale_events
+  id              uuid primary key
+  whale_event_id  text             -- LM52A deterministic id
+  source_type     text
+  symbol          text not null
+  exchange        text
+  chain           text
+  side            text
+  amount          numeric
+  price           numeric
+  notional_usd    numeric
+  severity        text
+  confidence      numeric
+  reason          text
+  event_ts        timestamptz      -- trade time, not insert time
+  wallet          text
+  tx_hash         text
+  payload         jsonb not null default '{}'::jsonb
+  created_at      timestamptz not null default now()
+```
+
+Indexes:
+- partial unique on `whale_event_id` (when not null) — idempotent inserts
+- `(symbol, event_ts desc)` · `(exchange, event_ts desc)` · `(severity, event_ts desc)` · `(created_at desc)`
+
+Run the SQL block:
+
+```sql
+\i supabase/whale_events.sql
+```
+
+Or paste the contents directly into the Supabase SQL editor and press Run.
+
+## LM63H Whale Events Supabase Writer (smoke CLI --target)
+
+Run the writer tests:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_whale_event_supabase_writer.py tests/connectors/test_binance_trade_stream.py
+python -m compileall services scripts tests
+```
+
+The smoke CLI now has a `--target` flag that controls where events land:
+
+| `--target` | stdout | jsonl | supabase | both |
+|---|---|---|---|---|
+| stdout (default) | ✓ | — | — | — |
+| jsonl | ✓ | ✓ | — | — |
+| supabase | ✓ | — | ✓ | — |
+| both | ✓ | ✓ | ✓ | — |
+
+JSONL writes (when target ∈ {`jsonl`, `both`}, or when `--journal-path` is set as a back-compat shortcut) still go to the file path supplied via `--journal-path`. Supabase writes require `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the shell environment.
+
+Stream and persist to Supabase:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"   # NEVER commit
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --target supabase --max-events 0
+```
+
+Stream + journal + Supabase simultaneously:
+
+```powershell
+python scripts/run_binance_trade_stream_smoke.py --target both --journal-path data/whale_events.jsonl
+```
+
+Safe behaviors:
+- `--target jsonl|both` without `--journal-path` exits with code 2 (no writes, no crash).
+- Duplicate `whale_event_id` rows are caught by the partial unique index and counted as `supabase_duplicates` (not failures).
+- Missing `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` returns a safe error dict per event and increments `supabase_failures` — the pipeline keeps running for stdout/jsonl sinks.
+
 ```
 
 ```

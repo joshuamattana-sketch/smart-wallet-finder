@@ -399,6 +399,7 @@ def _build_args(**overrides) -> "object":
         discord_webhook_url="",
         print_payload=False,
         journal_path="",              # LM63E — off by default
+        target="stdout",              # LM63H — no Supabase by default
     )
     for k, v in overrides.items():
         setattr(ns, k, v)
@@ -876,3 +877,133 @@ class TestSmokeRunnerJournal:
         rows = read_whale_event_journal(path)
         agg_ids = [r["event"]["metadata"]["agg_trade_id"] for r in rows]
         assert agg_ids == [3, 2, 1]
+
+
+# ── LM63H: smoke runner wires --target supabase ──────────────────────────────
+
+class _FakeSupabaseWriter:
+    """Records every call. Default behavior returns {"ok": True}."""
+
+    def __init__(self, result=None):
+        self.calls: list[dict] = []
+        self._result = result or {"ok": True}
+
+    def __call__(self, event, *, meta=None, **kwargs):
+        self.calls.append({"event": event, "meta": meta, "kwargs": kwargs})
+        if callable(self._result):
+            return self._result(event, meta=meta)
+        return self._result
+
+
+class TestSmokeRunnerSupabaseWiring:
+    def _run(self, *, msgs, supabase_writer=None, **arg_overrides):
+        from scripts.run_binance_trade_stream_smoke import run_pipeline
+        args = _build_args(**arg_overrides)
+        out_lines: list[str] = []
+        err_lines: list[str] = []
+        counters = run_pipeline(
+            args=args,
+            message_iter=iter(msgs),
+            sender=_FakeSender(),
+            supabase_writer=supabase_writer or _FakeSupabaseWriter(),
+            print_fn=out_lines.append,
+            err_fn=err_lines.append,
+        )
+        return counters, out_lines, err_lines
+
+    def test_default_target_does_not_write_supabase(self):
+        writer = _FakeSupabaseWriter()
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000,
+            # target defaults to 'stdout'
+        )
+        assert counters["events"] == 1
+        assert counters["supabase_writes"] == 0
+        assert counters["supabase_failures"] == 0
+        assert writer.calls == []
+
+    def test_target_supabase_writes_each_event(self):
+        writer = _FakeSupabaseWriter()
+        msgs = [
+            json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT",
+                                   price=70_000, quantity=20.0)),    # $1.4M
+            json.dumps(_agg_trade(agg_id=2, symbol="BTCUSDT",
+                                   price=70_001, quantity=15.0)),    # $1.05M
+        ]
+        counters, _out, _err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000, target="supabase",
+        )
+        assert counters["events"] == 2
+        assert counters["supabase_writes"] == 2
+        assert counters["supabase_failures"] == 0
+        assert len(writer.calls) == 2
+        for call in writer.calls:
+            ev = call["event"]
+            assert ev["symbol"] == "BTCUSDT"
+            assert isinstance(call["meta"], dict)
+            assert "should_send" in call["meta"]
+
+    def test_target_supabase_records_duplicates(self):
+        writer = _FakeSupabaseWriter(
+            result={"ok": True, "duplicate": True},
+        )
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000, target="supabase",
+        )
+        assert counters["supabase_writes"] == 0
+        assert counters["supabase_duplicates"] == 1
+        assert counters["supabase_failures"] == 0
+
+    def test_target_supabase_counts_failures(self):
+        writer = _FakeSupabaseWriter(
+            result={"ok": False, "error": "boom", "status": 500},
+        )
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000, target="supabase",
+        )
+        assert counters["events"] == 1
+        assert counters["supabase_writes"] == 0
+        assert counters["supabase_failures"] == 1
+
+    def test_target_both_writes_journal_and_supabase(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        writer = _FakeSupabaseWriter()
+        path = tmp_path / "whales.jsonl"
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, supabase_writer=writer,
+            symbols="BTCUSDT", min_notional=250_000,
+            target="both", journal_path=str(path),
+        )
+        assert counters["events"] == 1
+        assert counters["supabase_writes"] == 1
+        assert counters["journaled"] == 1
+        rows = read_whale_event_journal(path)
+        assert len(rows) == 1
+
+    def test_target_jsonl_without_journal_path_safe_exit(self):
+        writer = _FakeSupabaseWriter()
+        counters, _out, err = self._run(
+            msgs=[], supabase_writer=writer,
+            symbols="BTCUSDT", target="jsonl",
+        )
+        assert counters["stopped_reason"] == "missing_journal_path"
+        assert counters["events"] == 0
+        assert writer.calls == []
+        assert any("journal-path" in line for line in err)
