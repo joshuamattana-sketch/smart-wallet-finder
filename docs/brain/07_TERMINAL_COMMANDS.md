@@ -69,6 +69,27 @@ python -m pytest tests/test_signal_journal.py
 python -m compileall services tests
 ```
 
+## LM63B Binance aggTrade Collector Tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/connectors/test_binance_trade_stream.py
+python -m compileall services scripts tests
+```
+
+## LM63B Binance aggTrade Smoke Runner (stdout only · no Supabase · no Discord)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --min-notional 250000
+```
+
+Optional:
+- `--samples 5` to stop after N printed events.
+- `--pretty` for indented JSON.
+
+Requires `pip install websocket-client` for the live WS transport.
+
 ```
 
 ```
