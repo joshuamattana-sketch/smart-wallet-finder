@@ -12,6 +12,8 @@
 - Discord logic is split into formatter, sender, and filter services.
 - Signal flow: heatmap history -> wall events -> persistence features -> setup classifier -> signal builder -> signal journal -> alerts.
 - Whale flow starts with whale event detection, then formatter/filter/sender later.
+- Whale live pipeline: Binance aggTrade WS -> normalize -> detect_whale_events -> filter -> (Discord | JSONL journal | Supabase whale_events).
+- Whale read path: website /api/whale-alerts reads Supabase -> local JSONL journal -> mock alerts (server-side, 3-tier fallback).
 
 ## Completed patches
 
@@ -25,6 +27,17 @@
 - LM51B discord webhook sender
 - LM51C discord alert filter
 - LM52A whale alert engine
+- LM63A whale source discovery (recommendation only)
+- LM63B Binance aggTrade collector
+- LM63C whale live smoke + Discord pipeline
+- LM63D per-symbol whale thresholds
+- LM63E local JSONL whale event journal
+- LM63F whale feed API + website fallback to mock
+- LM63G Supabase whale_events schema (+ unique constraint fix)
+- LM63H Supabase writer + smoke --target wiring
+- LM63I website Supabase tier (Supabase -> journal -> mock)
+- LM63J whale worker mode (--forever, --heartbeat-interval, env config)
+- LM63K whale worker deployment docs
 
 ## Rules
 

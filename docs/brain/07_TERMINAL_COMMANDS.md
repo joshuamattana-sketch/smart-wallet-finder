@@ -460,6 +460,186 @@ Set the following Railway service env vars:
 
 The whale worker never sends Discord by default — leave `--send-discord` off until you're ready.
 
+## LM63K Whale Worker Deployment Playbook
+
+This is the canonical end-to-end deployment guide for the Binance aggTrade whale worker writing into Supabase. Everything here is documentation — no new code.
+
+### Required env vars
+
+| Name | Purpose |
+|---|---|
+| `SUPABASE_URL` | Supabase project URL, e.g. `https://abc.supabase.co`. Server-only. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. **Server-only. Never expose to the browser. Never commit.** |
+
+### Optional env vars (read when `--use-env-config` is set)
+
+| Name | Default | Purpose |
+|---|---|---|
+| `WORKER_SYMBOLS` | `BTCUSDT,ETHUSDT,SOLUSDT` | Comma-separated Binance Spot symbols. |
+| `WHALE_WORKER_MIN_NOTIONAL` | per-symbol presets | Global notional override (USD). |
+| `WHALE_WORKER_TARGET` | `stdout` | One of `stdout`, `jsonl`, `supabase`, `both`. |
+| `WHALE_WORKER_FOREVER` | `false` | `true` enables continuous worker mode. |
+
+Explicit CLI flags always override env values when both are provided.
+
+### Local one-shot Supabase test (5 events then exit)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"   # NEVER commit
+python scripts/run_binance_trade_stream_smoke.py `
+    --symbols BTCUSDT,ETHUSDT,SOLUSDT `
+    --target supabase `
+    --max-events 5
+```
+
+Expected stderr lines:
+- startup banner with `target=supabase · supabase=on`
+- per-event readable lines on stdout
+- `summary: seen=… events=5 sent=0 supabase_writes=5 …`
+- exit code `0`
+
+### Local forever Supabase worker (Ctrl+C to stop)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"
+python scripts/run_binance_trade_stream_smoke.py `
+    --symbols BTCUSDT,ETHUSDT,SOLUSDT `
+    --target supabase `
+    --forever `
+    --heartbeat-interval 60
+```
+
+`--forever` removes the implicit 10-event cap. An explicit `--max-events N` still wins.
+
+### Expected heartbeat output
+
+Every `--heartbeat-interval` seconds the worker prints a single line to stderr:
+
+```
+heartbeat · uptime=120s · seen=842 events=11 sendable=11 sent=0 supabase_writes=10 supabase_duplicates=1 supabase_failures=0 journaled=0 journal_failures=0
+```
+
+Field meanings:
+- `seen`: raw aggTrades parsed from the WS feed
+- `events`: passed the per-symbol notional floor and turned into whale events
+- `sendable`: filter said send AND confidence ≥ threshold
+- `sent`: Discord HTTP 2xx (always `0` unless `--send-discord` is set)
+- `supabase_writes` / `supabase_duplicates` / `supabase_failures`: Supabase outcomes
+- `journaled` / `journal_failures`: JSONL outcomes (when `--journal-path` is set)
+
+### Safe stop (Ctrl+C)
+
+The worker traps `KeyboardInterrupt`, prints `interrupted — stopping cleanly`, emits the final summary line, and exits with code `0`. Pending Supabase writes already in flight are not aborted.
+
+### Verify rows in Supabase
+
+After the worker runs, paste either query into the Supabase SQL editor:
+
+```sql
+-- Most recent rows the worker wrote
+select symbol, side, notional_usd, severity, confidence, event_ts, created_at
+from public.whale_events
+order by created_at desc
+limit 20;
+```
+
+```sql
+-- Count by symbol over the last hour
+select symbol, count(*) as events, sum(notional_usd)::numeric(20,2) as total_usd
+from public.whale_events
+where created_at >= now() - interval '1 hour'
+group by symbol
+order by events desc;
+```
+
+```sql
+-- Verify the LM63G unique constraint is present (idempotency on whale_event_id)
+select conname, contype
+from pg_constraint
+where conrelid = 'public.whale_events'::regclass
+  and contype = 'u';
+```
+
+### Common errors and fixes
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `error: --target supabase requires missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY` (exit 2 before websocket) | Both env vars unset | Set both in the shell before running. |
+| `error: --target supabase requires missing SUPABASE_SERVICE_ROLE_KEY` | URL set but key missing | Add `SUPABASE_SERVICE_ROLE_KEY`. |
+| Heartbeat shows `supabase_writes=0 supabase_failures=N` and stderr has lines like `supabase write failed for BTCUSDT: {'ok': False, ...}` | Auth / network / RLS / schema mismatch | Re-check the key, the table name `whale_events`, and re-run `supabase/whale_events.sql`. |
+| `supabase write failed … 'error': 'there is no unique or exclusion constraint matching the ON CONFLICT specification'` | Old deployment only has the LM63G **partial** unique index | Apply the LM63G fix block — see the "Unique constraint on whale_event_id" section above. The SQL is idempotent. |
+| Heartbeat shows `events=0` after a long uptime | Notional threshold too high for the streamed symbols | Lower `--min-notional` (e.g. `--min-notional 50000`) or pass `--no-use-symbol-thresholds` to fall back to the global $250k default; or add cheaper symbols (LINKUSDT, DOGEUSDT). |
+| `supabase_duplicates` grows each restart with `supabase_writes=0` | Worker is replaying the same Binance aggTrade IDs (same `whale_event_id`); the constraint is doing its job | Expected on a single-symbol high-volume stream after a restart — let it run. To force more variety, broaden `--symbols`. |
+| `journal_failures > 0` | `--journal-path` parent dir not writable | Choose a writable path (the runner creates parent dirs but can't fix permission errors). |
+
+### Railway / VPS deployment notes
+
+**Important:** the existing `railway.worker.toml` deploys the **heatmap** worker. The whale worker should run as a **separate** Railway service (or systemd unit on a VPS) so the two can scale and restart independently.
+
+#### Railway
+
+1. Create a second Railway service in the same project.
+2. Use the same Nixpacks build settings as the heatmap worker.
+3. Set the start command:
+
+   ```
+   python scripts/run_binance_trade_stream_smoke.py --use-env-config --heartbeat-interval 60
+   ```
+
+4. Set the service env vars (Railway Variables tab):
+
+   - `SUPABASE_URL`               (your project URL)
+   - `SUPABASE_SERVICE_ROLE_KEY`  (server-only; never expose to client)
+   - `WORKER_SYMBOLS`             e.g. `BTCUSDT,ETHUSDT,SOLUSDT,LINKUSDT,BNBUSDT`
+   - `WHALE_WORKER_TARGET`        `supabase`
+   - `WHALE_WORKER_FOREVER`       `true`
+   - `WHALE_WORKER_MIN_NOTIONAL`  (optional; otherwise per-symbol thresholds apply)
+
+5. Restart policy: `ON_FAILURE` with max 10 retries.
+6. **Do NOT add `SUPABASE_SERVICE_ROLE_KEY` to the Vercel/frontend project.** Frontend uses the anon-safe API route only; the key must stay server-side.
+
+#### VPS (systemd example)
+
+```ini
+[Unit]
+Description=Lumora whale worker (Binance aggTrade -> Supabase)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/lumora
+EnvironmentFile=/etc/lumora/whale-worker.env
+ExecStart=/usr/bin/python3 scripts/run_binance_trade_stream_smoke.py --use-env-config --heartbeat-interval 60
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/lumora/whale-worker.env` (chmod 600, owned by root):
+
+```
+SUPABASE_URL=https://<your-project>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+WORKER_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,LINKUSDT,BNBUSDT
+WHALE_WORKER_TARGET=supabase
+WHALE_WORKER_FOREVER=true
+```
+
+#### Secret hygiene
+
+- **`SUPABASE_SERVICE_ROLE_KEY` is server-only.** Never put it in a frontend `.env`, `next.config`, public route, or `NEXT_PUBLIC_*` var.
+- Frontend reads via the existing `/api/whale-alerts` route, which runs server-side and never returns the key.
+- Never commit any env file (`.env*`, `*.env`, `whale-worker.env`).
+- Rotate the service-role key if it ever appears in logs / screenshots / chat threads.
+
 ```
 
 ```
