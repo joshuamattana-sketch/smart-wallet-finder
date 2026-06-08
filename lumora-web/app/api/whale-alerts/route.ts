@@ -1,13 +1,17 @@
 /**
  * lumora-web/app/api/whale-alerts/route.ts
  * -----------------------------------------
- * LM63F — Local whale alerts API.
+ * LM63F + LM63I — Whale alerts API.
  *
  * GET /api/whale-alerts
  *   Optional query: ?limit=50
  *
- * Returns the local LM63E JSONL journal when available, else falls back
- * to the in-repo mock alerts. Always JSON. Never throws.
+ * Resolves the highest-available source server-side:
+ *   1. Supabase whale_events (when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)
+ *   2. Local JSONL journal
+ *   3. Mock alerts
+ *
+ * The service-role key never leaves the server. Always JSON. Never throws.
  *
  * Marked dynamic so Next.js never tries to pre-render this at build time —
  * Vercel deploys without the local journal must still serve the route.
@@ -47,6 +51,7 @@ export async function GET(req: Request) {
       {
         data_source: "mock",
         generated_at: new Date().toISOString(),
+        row_count: 0,
         journal_row_count: 0,
         alerts: [],
         note: `route handler error: ${(err as Error).message ?? "unknown"}`,

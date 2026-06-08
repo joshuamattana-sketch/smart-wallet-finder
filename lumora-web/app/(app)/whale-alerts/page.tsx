@@ -34,12 +34,13 @@ interface AlertRow {
   action:     string;
 }
 
-type AlertsSource = "journal" | "mock";
+type AlertsSource = "supabase" | "journal" | "mock";
 
 interface AlertsResponse {
   data_source: AlertsSource;
   generated_at: string;
-  journal_row_count: number;
+  row_count?: number;
+  journal_row_count?: number;
   alerts: AlertRow[];
   note?: string;
 }
@@ -74,7 +75,10 @@ export default function WhaleAlertsPage() {
             setSource("mock");
             setAlerts(MOCK_FALLBACK);
           } else {
-            setSource(data.data_source === "journal" ? "journal" : "mock");
+            const resolved: AlertsSource =
+              data.data_source === "supabase" ? "supabase" :
+              data.data_source === "journal"  ? "journal"  : "mock";
+            setSource(resolved);
             setAlerts(incoming);
           }
           setNote(typeof data.note === "string" ? data.note : null);
@@ -125,18 +129,20 @@ export default function WhaleAlertsPage() {
             <Zap className="h-4 w-4 text-lm-cyan" /> Whale Intelligence Feed
           </h1>
           <p className="text-[12px] text-lm-muted mt-0.5">
-            {source === "journal"
+            {source === "supabase"
+              ? "Live production feed — whale_events from Supabase."
+              : source === "journal"
               ? "Live local journal — large order flow from Binance aggTrade detections."
               : "Large order flow & unusual activity across major venues — demo data."}
           </p>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
           <StatusBadge
-            variant={source === "journal" ? "live" : "warning"}
+            variant={source === "mock" ? "warning" : "live"}
             size="sm"
-            dot={source === "journal"}
+            dot={source !== "mock"}
           >
-            {source === "journal" ? "JOURNAL" : "DEMO"}
+            {source === "supabase" ? "SUPABASE" : source === "journal" ? "JOURNAL" : "DEMO"}
           </StatusBadge>
           <span className="text-lm-border">·</span>
           {loading ? (
@@ -211,7 +217,7 @@ export default function WhaleAlertsPage() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
-            {source === "journal" ? "Live Feed" : "Demo Feed"}
+            {source === "mock" ? "Demo Feed" : "Live Feed"}
           </h2>
           <span className="text-[10px] text-lm-muted num">
             sorted by time · most recent first

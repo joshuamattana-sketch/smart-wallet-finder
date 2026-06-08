@@ -343,6 +343,50 @@ Safe behaviors:
 - Duplicate `whale_event_id` rows are caught by the partial unique index and counted as `supabase_duplicates` (not failures).
 - Missing `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` returns a safe error dict per event and increments `supabase_failures` — the pipeline keeps running for stdout/jsonl sinks.
 
+## LM63I Whale Feed Supabase Loader (website)
+
+The whale-alerts page now reads from Supabase in production with a 3-tier source priority:
+
+1. **Supabase** — when both `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are present in the server-side env, fetches the latest 50 rows from `public.whale_events` ordered by `event_ts desc nullslast, created_at desc`.
+2. **Local JSONL journal** — `<repo_root>/data/whale_events.jsonl`.
+3. **Mock alerts** — built-in demo data.
+
+Header badge maps to the source:
+
+| Source | Badge |
+|---|---|
+| `supabase` | **SUPABASE ●** (green, pulsing dot) |
+| `journal`  | **JOURNAL ●** (green, pulsing dot) |
+| `mock`     | **DEMO** (amber) |
+
+Configure Vercel (or local dev) with the same env you use for the heatmap writer:
+
+```powershell
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"   # server-only · NEVER commit · NEVER expose to client
+```
+
+The service-role key never leaves the server. It is only attached to the outbound `fetch` call inside the route handler / loader, both of which run server-side. The browser only sees the normalized `WhaleAlertView[]` array.
+
+Safety:
+- Missing env → Supabase tier is skipped silently → falls through to journal → mock.
+- Network/HTTP errors, non-array responses, all-malformed rows → Supabase tier returns null → falls through.
+- Route handler still wraps the loader in a final try/catch so the API never 500s.
+- `dynamic = "force-dynamic"` + `runtime = "nodejs"` means Vercel never tries to pre-render the route at build time.
+
+Verify locally:
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+$env:SUPABASE_URL = "https://<your-project>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<service-role-key>"
+npm run dev
+# then visit http://localhost:3000/whale-alerts
+# header should display the SUPABASE badge
+```
+
+Without the env vars set, the page still works (journal → mock fallback).
+
 ```
 
 ```

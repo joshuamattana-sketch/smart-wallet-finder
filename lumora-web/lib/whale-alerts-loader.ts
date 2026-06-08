@@ -1,15 +1,16 @@
 /**
  * lumora-web/lib/whale-alerts-loader.ts
  * --------------------------------------
- * LM63F — Server-side loader for the local whale-events JSONL journal.
+ * LM63F + LM63I — Server-side loader for whale events.
  *
- * The Python LM63E pipeline writes whale events to:
- *     <repo_root>/data/whale_events.jsonl
+ * Source priority (server-side only; service-role key never leaves the server):
+ *   1. Supabase whale_events  (env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)
+ *   2. Local JSONL journal    (<repo_root>/data/whale_events.jsonl)
+ *   3. Built-in mock alerts   (`lib/mock-data`)
  *
- * From the Next.js working directory this is `../data/whale_events.jsonl`.
- *
- * Vercel-safe: if the file is missing, unreadable, or malformed, the loader
- * returns the existing mock alerts with `data_source: "mock"`. Never throws.
+ * Every tier is defensive: missing env / file / network error / malformed
+ * rows all silently fall through to the next tier. The loader never throws,
+ * so the API route and the page can never crash regardless of deploy target.
  */
 
 import { promises as fs } from "node:fs";
@@ -42,13 +43,19 @@ export interface WhaleAlertView {
   action:     string;
 }
 
-export type WhaleAlertsDataSource = "journal" | "mock";
+export type WhaleAlertsDataSource = "supabase" | "journal" | "mock";
 
 export interface WhaleAlertsResponse {
   data_source: WhaleAlertsDataSource;
   /** ISO 8601 of the loader call. */
   generated_at: string;
-  /** Total rows read from the journal (0 when source = "mock"). */
+  /** Rows obtained from whichever source actually answered. 0 when mock. */
+  row_count: number;
+  /**
+   * Back-compat: existing API consumers read `journal_row_count`. Kept
+   * alongside `row_count` and set to the journal-tier count when the
+   * journal tier answered, else 0.
+   */
   journal_row_count: number;
   alerts: WhaleAlertView[];
   /** Diagnostic note — short message about why we fell back, if applicable. */
@@ -169,10 +176,15 @@ function deriveAction(side: WhaleSide, risk: WhaleRisk): string {
   return "Monitor — single flow, low conviction.";
 }
 
-function normalizeRow(row: JournalRow, index: number): WhaleAlertView | null {
-  const event = row.event;
-  if (!event || typeof event !== "object") return null;
-
+/**
+ * Normalize a whale-event-shaped dict into the UI view. Used by both the
+ * journal tier (`row.event`) and the Supabase tier (row columns from
+ * whale_events). Returns null when the input lacks a symbol.
+ */
+function normalizeEventDict(
+  event: Record<string, unknown>,
+  index: number,
+): WhaleAlertView | null {
   const symbol = asString(event.symbol).toUpperCase();
   if (!symbol) return null;
 
@@ -203,6 +215,78 @@ function normalizeRow(row: JournalRow, index: number): WhaleAlertView | null {
   };
 }
 
+function normalizeJournalRow(row: JournalRow, index: number): WhaleAlertView | null {
+  const event = row.event;
+  if (!event || typeof event !== "object") return null;
+  return normalizeEventDict(event, index);
+}
+
+function normalizeSupabaseRow(row: unknown, index: number): WhaleAlertView | null {
+  if (!row || typeof row !== "object") return null;
+  return normalizeEventDict(row as Record<string, unknown>, index);
+}
+
+// ── Supabase tier ─────────────────────────────────────────────────────────────
+
+/**
+ * Read up to `limit` rows from public.whale_events via PostgREST.
+ *
+ * Returns `null` (no throw, no log spam) when:
+ *   - env vars are missing,
+ *   - the HTTP call errors,
+ *   - the response is not an array,
+ *   - or every returned row fails to normalize.
+ *
+ * The service-role key never leaves this function — it's only attached to
+ * the outbound server-side fetch headers.
+ */
+async function loadFromSupabase(
+  limit: number,
+): Promise<{ alerts: WhaleAlertView[]; rowCount: number } | null> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+
+  const endpoint =
+    `${url.replace(/\/$/, "")}/rest/v1/whale_events` +
+    `?select=*&order=event_ts.desc.nullslast,created_at.desc&limit=${limit}`;
+
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        apikey:        key,
+        Authorization: `Bearer ${key}`,
+        Accept:        "application/json",
+      },
+      // Always fresh — the page itself is force-dynamic and short-lived.
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
+
+  if (!res.ok) return null;
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(body)) return null;
+  if (body.length === 0) return null;
+
+  const alerts: WhaleAlertView[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const view = normalizeSupabaseRow(body[i], i);
+    if (view) alerts.push(view);
+  }
+  if (alerts.length === 0) return null;
+  return { alerts, rowCount: body.length };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /** Mock alerts already conform to `WhaleAlertView`. */
@@ -225,30 +309,27 @@ function mockResponse(note?: string): WhaleAlertsResponse {
   return {
     data_source: "mock",
     generated_at: new Date().toISOString(),
+    row_count: 0,
     journal_row_count: 0,
     alerts: MOCK_ALERTS,
     note,
   };
 }
 
-/**
- * Load whale alerts. Reads the local LM63E JSONL journal when available;
- * falls back to the in-repo mock alerts otherwise.
- *
- * Never throws. `limit` is clamped to a sane range.
- */
-export async function loadWhaleAlerts(limit = DEFAULT_LIMIT): Promise<WhaleAlertsResponse> {
-  const cap = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.trunc(limit))) : DEFAULT_LIMIT;
+// ── Local JSONL journal tier ─────────────────────────────────────────────────
 
+async function loadFromJournal(
+  cap: number,
+): Promise<{ alerts: WhaleAlertView[]; rowCount: number; note?: string } | { fallbackNote: string } | null> {
   let raw: string;
   try {
     raw = await fs.readFile(resolveJournalPath(), "utf-8");
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code ?? "";
     if (code === "ENOENT") {
-      return mockResponse("journal file not present");
+      return { fallbackNote: "journal file not present" };
     }
-    return mockResponse(`journal read error: ${code || (err as Error).message}`);
+    return { fallbackNote: `journal read error: ${code || (err as Error).message}` };
   }
 
   const lines = raw.split(/\r?\n/);
@@ -257,28 +338,72 @@ export async function loadWhaleAlerts(limit = DEFAULT_LIMIT): Promise<WhaleAlert
     const parsed = tryParseLine(line);
     if (parsed) rows.push(parsed);
   }
-
   if (rows.length === 0) {
-    return mockResponse("journal present but no valid rows");
+    return { fallbackNote: "journal present but no valid rows" };
   }
-
-  // Newest first. The journal is append-only with newest at EOF.
-  rows.reverse();
+  rows.reverse(); // newest first
 
   const alerts: WhaleAlertView[] = [];
   for (let i = 0; i < rows.length && alerts.length < cap; i++) {
-    const view = normalizeRow(rows[i], i);
+    const view = normalizeJournalRow(rows[i], i);
     if (view) alerts.push(view);
   }
-
   if (alerts.length === 0) {
-    return mockResponse("journal rows present but none normalised");
+    return { fallbackNote: "journal rows present but none normalised" };
+  }
+  return { alerts, rowCount: rows.length };
+}
+
+function isJournalSuccess(
+  out: Awaited<ReturnType<typeof loadFromJournal>>,
+): out is { alerts: WhaleAlertView[]; rowCount: number; note?: string } {
+  return out !== null && Object.prototype.hasOwnProperty.call(out, "alerts");
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Load whale alerts, walking the source priority: Supabase → JSONL → mock.
+ *
+ * Every tier is defensive — never throws. `limit` is clamped to [1, 500].
+ */
+export async function loadWhaleAlerts(limit = DEFAULT_LIMIT): Promise<WhaleAlertsResponse> {
+  const cap = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.trunc(limit))) : DEFAULT_LIMIT;
+
+  // ── Tier 1: Supabase ────────────────────────────────────────────────────
+  try {
+    const sb = await loadFromSupabase(cap);
+    if (sb) {
+      return {
+        data_source: "supabase",
+        generated_at: new Date().toISOString(),
+        row_count: sb.alerts.length,
+        journal_row_count: 0,
+        alerts: sb.alerts,
+      };
+    }
+  } catch {
+    // Loader is defensive but never trust transitive deps; swallow + fall through.
   }
 
-  return {
-    data_source: "journal",
-    generated_at: new Date().toISOString(),
-    journal_row_count: rows.length,
-    alerts,
-  };
+  // ── Tier 2: Local JSONL ─────────────────────────────────────────────────
+  const journalNotes: string[] = [];
+  try {
+    const j = await loadFromJournal(cap);
+    if (isJournalSuccess(j)) {
+      return {
+        data_source: "journal",
+        generated_at: new Date().toISOString(),
+        row_count: j.alerts.length,
+        journal_row_count: j.rowCount,
+        alerts: j.alerts,
+      };
+    }
+    if (j && "fallbackNote" in j) journalNotes.push(j.fallbackNote);
+  } catch (err) {
+    journalNotes.push(`journal exception: ${(err as Error).message ?? "unknown"}`);
+  }
+
+  // ── Tier 3: Mock ────────────────────────────────────────────────────────
+  return mockResponse(journalNotes.length > 0 ? journalNotes.join(" · ") : undefined);
 }
