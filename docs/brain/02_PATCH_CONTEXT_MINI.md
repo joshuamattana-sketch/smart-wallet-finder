@@ -50,6 +50,7 @@
 - LM68B intelligence chart mock panel (lightweight-charts, Clean/Assisted/Full Intel modes, overlay toggles, mock scene; mounted on Terminal + Liquidity Map)
 - LM68C Binance kline live candles (public REST snapshot + kline WS, REST poll fallback, demo fallback on failure; overlays still demo, derived relative to displayed candle range)
 - LM69A global visual cleanup discovery (plan only, no frontend code)
+- LM69B app shell + panel primitives (PageShell, MetricStrip, Panel levels default/focus/subtle, StatusBadge re-token with gray `demo` variant, flat app bg, TopNav UTC clock; all five app pages adopted)
 
 ## Rules
 

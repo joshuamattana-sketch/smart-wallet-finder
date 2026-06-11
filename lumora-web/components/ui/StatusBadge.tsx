@@ -1,7 +1,43 @@
 import { clsx } from "clsx";
 
-type StatusVariant = "live" | "stale" | "error" | "neutral" | "bid" | "ask" | "warning";
+// ── StatusBadge (LM69B baseline) ─────────────────────────────────────────────
+// Semantic chips, standardized app-wide:
+//   data state  → live / stale / demo / error
+//   direction   → bid / ask (and dense LONG/SHORT rows)
+//   risk        → live(green) / warning(amber) / error(red) via call sites
+//   neutral     → counts, metadata
+//
+// Color rules: amber means RISK or STALENESS only. Demo/mock/source labels
+// are gray (`demo`), never amber — demo data must not scream like risk.
+// Rendering: mono, uppercase, compact. Max ~2 chips per surface by
+// convention; if a surface needs more, the extras belong in a disclosure.
+
+type StatusVariant =
+  | "live"
+  | "stale"
+  | "error"
+  | "neutral"
+  | "demo"
+  | "bid"
+  | "ask"
+  | "warning";
 type StatusSize = "sm" | "md";
+
+const styles: Record<StatusVariant, { bg: string; text: string; dot: string; border?: string }> = {
+  live:    { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
+  stale:   { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400" },
+  error:   { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400" },
+  warning: { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400" },
+  bid:     { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
+  ask:     { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400" },
+  neutral: { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400", border: "border-zinc-700/50" },
+  demo:    { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400", border: "border-zinc-700/50" },
+};
+
+const sizes: Record<StatusSize, string> = {
+  sm: "text-[10px] px-1.5 py-px gap-1",
+  md: "text-[10.5px] px-2 py-0.5 gap-1.5",
+};
 
 interface StatusBadgeProps {
   children: React.ReactNode;
@@ -10,21 +46,6 @@ interface StatusBadgeProps {
   className?: string;
   dot?: boolean;
 }
-
-const styles: Record<StatusVariant, { bg: string; text: string; dot: string }> = {
-  live:    { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
-  stale:   { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400" },
-  error:   { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400" },
-  warning: { bg: "bg-yellow-500/10",  text: "text-yellow-400",  dot: "bg-yellow-400" },
-  bid:     { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
-  ask:     { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400" },
-  neutral: { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400" },
-};
-
-const sizes: Record<StatusSize, string> = {
-  sm: "text-[9px] px-1 py-0 gap-1",
-  md: "text-[11px] px-2 py-0.5 gap-1.5",
-};
 
 export function StatusBadge({
   children,
@@ -37,18 +58,18 @@ export function StatusBadge({
   return (
     <span
       className={clsx(
-        "inline-flex items-center rounded font-medium tracking-wide border",
+        "num inline-flex items-center rounded border font-medium uppercase tracking-wider",
         sizes[size],
         s.bg,
         s.text,
-        variant === "neutral" ? "border-zinc-700/50" : "border-transparent",
+        s.border ?? "border-transparent",
         className,
       )}
     >
       {dot && (
         <span
           className={clsx(
-            "inline-block h-1.5 w-1.5 rounded-full shrink-0",
+            "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
             s.dot,
             variant === "live" && "lm-live-dot",
           )}

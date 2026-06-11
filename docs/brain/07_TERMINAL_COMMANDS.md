@@ -820,6 +820,24 @@ Safe behaviors:
 - Overlays (heatmap bands / whale markers / pressure / read) are DEMO data until LM68D,
   derived relative to the displayed candle range so they fit any symbol/price level.
 
+## LM69B App Shell + Panel Primitives (web only · no Python)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+```
+
+Check all five app pages still load: /dashboard /terminal /liquidity-map /whale-alerts /paper-trading
+
+New shared primitives (use these instead of hand-rolling):
+- `components/ui/PageShell.tsx`  — page header (title/context/status slot) + section rhythm
+- `components/ui/MetricStrip.tsx` — the one KPI strip (label / mono value / sub)
+- `Panel level="focus"`  — the page's instrument (bordered + inset frame; max one per region)
+- `Panel level="subtle"` — supporting surfaces (recessed, NO border)
+- `StatusBadge variant="demo"` — gray; amber is reserved for risk/staleness only
+
 ## Git Rules
 
 Always check: git status
