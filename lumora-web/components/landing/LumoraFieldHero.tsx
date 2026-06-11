@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { DynamicHeadline } from "@/components/landing/DynamicHeadline";
 import { clsx } from "clsx";
 
 // ── The Lumora Field ─────────────────────────────────────────────────────────
@@ -385,14 +386,7 @@ export function LumoraFieldHero() {
             </span>
             <StatusBadge variant="neutral" size="sm">PRIVATE BETA</StatusBadge>
           </div>
-          <h1 className="mt-4 text-4xl font-semibold leading-[1.06] tracking-[-0.02em] text-lm-text sm:text-[44px] lg:text-[50px]">
-            See the{" "}
-            <span className="bg-gradient-to-r from-cyan-200 via-cyan-400 to-sky-500 bg-clip-text text-transparent">
-              pressure
-            </span>
-            <br />
-            behind the price.
-          </h1>
+          <DynamicHeadline />
           <p className="mt-4 max-w-md text-[15px] leading-relaxed text-lm-text-dim">
             Lumora turns liquidity, whale flow and futures pressure into a live market read.
           </p>
