@@ -453,7 +453,7 @@ export function IntelligenceChartPanel({
           : { variant: "warning" as const, label: "DEMO FALLBACK", dot: false };
 
   return (
-    <Panel flush className={clsx("overflow-hidden", className)}>
+    <Panel level="focus" flush className={clsx("overflow-hidden", className)}>
       {/* Layer 6: controls header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-lm-border px-3 py-2">
         <span className="lm-section-title">Intelligence Chart</span>

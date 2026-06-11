@@ -1,6 +1,7 @@
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { PageTransition } from "@/components/ui/PageTransition";
+import { PageShell } from "@/components/ui/PageShell";
+import { MetricStrip } from "@/components/ui/MetricStrip";
 import { mockPaperTrades, mockJournal } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { TrendingUp, TrendingDown, BookOpen } from "lucide-react";
@@ -17,74 +18,56 @@ export default function PaperTradingPage() {
     `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString()}`;
 
   return (
-    <PageTransition className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-lm-text flex items-center gap-2">
-            <BookOpen className="h-4 w-4 text-lm-purple" /> Paper Trading Desk
-          </h1>
-          <p className="text-[11px] text-lm-muted mt-0.5">
-            Practice with mock capital — demo data, no real funds
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
-          <span className="lm-live-dot inline-block h-1.5 w-1.5 rounded-full bg-amber-400 text-amber-400" />
-          Mock Mode
-        </div>
-      </div>
-
+    <PageShell
+      title={
+        <>
+          <BookOpen className="h-4 w-4 text-lm-purple" /> Paper Trading Desk
+        </>
+      }
+      context="Practice with mock capital — demo data, no real funds"
+      status={<StatusBadge variant="demo" size="sm">Mock Mode</StatusBadge>}
+    >
       {/* Account / portfolio KPI strip */}
-      <Panel flush className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-lm-border/60">
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Mock Equity</p>
-          <p className="lm-price text-2xl text-lm-text mt-0.5 leading-none">
-            ${equity.toLocaleString()}
-          </p>
-          <p className="text-[10px] text-lm-muted num mt-1">
-            base ${MOCK_BALANCE.toLocaleString()}
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Open P&amp;L</p>
-          <p className={clsx(
-            "lm-price text-2xl mt-0.5 leading-none",
-            totalPnl >= 0 ? "text-emerald-400" : "text-red-400",
-          )}>
-            {totalPnl >= 0 ? "+" : ""}{fmtUsd(totalPnl)}
-          </p>
-          <p className="text-[10px] text-lm-muted num mt-1">
-            unrealized
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Win Rate</p>
-          <p className="lm-price text-2xl text-lm-cyan mt-0.5 leading-none">{winRate}%</p>
-          <p className="text-[10px] text-lm-muted num mt-1">
-            {winCount} / {mockJournal.length} closed
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Open Positions</p>
-          <p className="lm-price text-2xl text-lm-text mt-0.5 leading-none">
-            {mockPaperTrades.length}
-          </p>
-          <p className="text-[10px] text-lm-muted num mt-1">
-            of {mockPaperTrades.length} max
-          </p>
-        </div>
-      </Panel>
+      <MetricStrip
+        columns={4}
+        size="lg"
+        metrics={[
+          {
+            label: "Mock Equity",
+            value: `$${equity.toLocaleString()}`,
+            sub: `base $${MOCK_BALANCE.toLocaleString()}`,
+          },
+          {
+            label: "Open P&L",
+            value: `${totalPnl >= 0 ? "+" : ""}${fmtUsd(totalPnl)}`,
+            valueClassName: clsx(
+              "text-2xl",
+              totalPnl >= 0 ? "text-emerald-400" : "text-red-400",
+            ),
+            sub: "unrealized",
+          },
+          {
+            label: "Win Rate",
+            value: `${winRate}%`,
+            valueClassName: "text-2xl text-lm-cyan",
+            sub: `${winCount} / ${mockJournal.length} closed`,
+          },
+          {
+            label: "Open Positions",
+            value: mockPaperTrades.length,
+            sub: `of ${mockPaperTrades.length} max`,
+          },
+        ]}
+      />
 
       {/* Form + positions */}
       <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-3 items-start">
 
-        {/* New trade Panel */}
-        <Panel flush className="p-3">
+        {/* New trade Panel — secondary support */}
+        <Panel level="subtle" flush className="p-3">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
-              New Paper Trade
-            </h2>
-            <StatusBadge variant="warning" size="sm">Mock Only</StatusBadge>
+            <h2 className="lm-section-title">New Paper Trade</h2>
+            <StatusBadge variant="demo" size="sm">Mock Only</StatusBadge>
           </div>
           <div className="space-y-2.5">
             {[
@@ -127,9 +110,7 @@ export default function PaperTradingPage() {
         {/* Positions */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
-              Open Positions
-            </h2>
+            <h2 className="lm-section-title">Open Positions</h2>
             <span className="text-[10px] text-lm-muted num">{mockPaperTrades.length} active</span>
           </div>
 
@@ -239,9 +220,7 @@ export default function PaperTradingPage() {
       {/* Trade Journal */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
-            Trade Journal
-          </h2>
+          <h2 className="lm-section-title">Trade Journal</h2>
           <span className="text-[10px] text-lm-muted num">
             {mockJournal.length} entries · {winCount}W / {mockJournal.length - winCount}L
           </span>
@@ -286,6 +265,6 @@ export default function PaperTradingPage() {
           })}
         </Panel>
       </div>
-    </PageTransition>
+    </PageShell>
   );
 }

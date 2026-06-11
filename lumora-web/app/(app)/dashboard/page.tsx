@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { PageTransition } from "@/components/ui/PageTransition";
+import { PageShell } from "@/components/ui/PageShell";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker";
 import { useWatchlist } from "@/lib/watchlist";
@@ -240,20 +240,16 @@ export default function DashboardPage() {
     headerStatus.resolved == null ? "bg-lm-muted" : "bg-yellow-400";
 
   return (
-    <PageTransition className="space-y-4">
-      {/* Header */}
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-lm-text leading-tight">Market Dashboard</h1>
-          <p className="text-[11px] text-lm-muted mt-0.5">
-            Current read · live markets · top setups · whale intel
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
+    <PageShell
+      title="Market Dashboard"
+      context="Current read · live markets · top setups · whale intel"
+      status={
+        <span className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
           <span className={clsx("h-1.5 w-1.5 rounded-full inline-block", headerDot, headerStatus.resolved === "live" && "lm-live-dot text-emerald-400")} />
           {headerStatus.resolved ? headerStatus.label : "Connecting…"}
-        </div>
-      </div>
+        </span>
+      }
+    >
 
       {/* ── CURRENT READ · primary symbol verdict ──────────────────────────── */}
       {(() => {
@@ -553,7 +549,7 @@ export default function DashboardPage() {
                 Top Market Setups
                 <TrendingUp className="h-3 w-3 text-lm-purple" />
               </span>
-              <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
+              <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
             </div>
             <Panel flush className="divide-y divide-lm-border/60">
               {mockSetups.map((s) => {
@@ -629,7 +625,7 @@ export default function DashboardPage() {
                 <Zap className="h-3 w-3 text-lm-cyan" />
               </span>
               <div className="flex items-center gap-1.5">
-                <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
+                <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
                 <StatusBadge variant="neutral" size="sm">{mockWhaleAlerts.length}</StatusBadge>
               </div>
             </div>
@@ -671,6 +667,6 @@ export default function DashboardPage() {
           </p>
         </aside>
       </div>
-    </PageTransition>
+    </PageShell>
   );
 }

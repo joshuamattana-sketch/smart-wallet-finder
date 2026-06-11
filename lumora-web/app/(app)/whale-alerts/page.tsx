@@ -3,7 +3,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { PageTransition } from "@/components/ui/PageTransition";
+import { PageShell } from "@/components/ui/PageShell";
+import { MetricStrip } from "@/components/ui/MetricStrip";
 import { mockWhaleAlerts } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronUp, Filter, Zap } from "lucide-react";
@@ -121,24 +122,23 @@ export default function WhaleAlertsPage() {
     : `$${n.toFixed(0)}`;
 
   return (
-    <PageTransition className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-lm-text flex items-center gap-2">
-            <Zap className="h-4 w-4 text-lm-cyan" /> Whale Intelligence Feed
-          </h1>
-          <p className="text-[12px] text-lm-muted mt-0.5">
-            {source === "supabase"
-              ? "Live production feed — whale_events from Supabase."
-              : source === "journal"
-              ? "Live local journal — large order flow from Binance aggTrade detections."
-              : "Large order flow & unusual activity across major venues — demo data."}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
+    <PageShell
+      title={
+        <>
+          <Zap className="h-4 w-4 text-lm-cyan" /> Whale Intelligence Feed
+        </>
+      }
+      context={
+        source === "supabase"
+          ? "Live production feed — whale_events from Supabase."
+          : source === "journal"
+          ? "Live local journal — large order flow from Binance aggTrade detections."
+          : "Large order flow & unusual activity across major venues — demo data."
+      }
+      status={
+        <span className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
           <StatusBadge
-            variant={source === "mock" ? "warning" : "live"}
+            variant={source === "mock" ? "demo" : "live"}
             size="sm"
             dot={source !== "mock"}
           >
@@ -153,34 +153,30 @@ export default function WhaleAlertsPage() {
               <span className="text-lm-muted">/ {alerts.length}</span>
             </>
           )}
-        </div>
-      </div>
-
+        </span>
+      }
+    >
       {note && source === "mock" && (
-        <p className="text-[10px] text-lm-muted px-1 leading-snug -mt-2">
+        <p className="text-[10px] text-lm-muted px-1 leading-snug">
           showing demo alerts · {note}
         </p>
       )}
 
       {/* Summary KPI strip */}
-      <Panel flush className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-lm-border/60">
-        {[
-          { label: "Total Flow", value: fmtUsd(stats.totalUsd), tone: "text-lm-text" },
-          { label: "Buys",  value: String(stats.buys),  tone: "text-emerald-400" },
-          { label: "Sells", value: String(stats.sells), tone: "text-red-400" },
-          { label: "High Risk", value: String(stats.high), tone: "text-amber-400" },
-        ].map((s) => (
-          <div key={s.label} className="px-4 py-2.5">
-            <p className="text-[10px] uppercase tracking-widest text-lm-muted">{s.label}</p>
-            <p className={clsx("lm-price text-lg mt-0.5 leading-none", s.tone)}>{s.value}</p>
-          </div>
-        ))}
-      </Panel>
+      <MetricStrip
+        columns={4}
+        metrics={[
+          { label: "Total Flow", value: fmtUsd(stats.totalUsd) },
+          { label: "Buys", value: String(stats.buys), valueClassName: "text-lg text-emerald-400" },
+          { label: "Sells", value: String(stats.sells), valueClassName: "text-lg text-red-400" },
+          { label: "High Risk", value: String(stats.high), valueClassName: "text-lg text-amber-400" },
+        ]}
+      />
 
-      {/* Filter bar */}
-      <Panel flush className="p-2 flex flex-wrap items-center gap-2">
+      {/* Filter bar — quiet toolbar, not a competing surface */}
+      <Panel level="subtle" flush className="p-2 flex flex-wrap items-center gap-2">
         <Filter className="h-3.5 w-3.5 text-lm-muted ml-0.5 shrink-0" />
-        <span className="text-[10px] uppercase tracking-widest text-lm-muted">Risk</span>
+        <span className="num text-[10px] uppercase tracking-widest text-lm-muted">Risk</span>
         <div className="flex rounded-md border border-lm-border overflow-hidden">
           {(["ALL", "HIGH", "MEDIUM", "LOW"] as Risk[]).map((r) => (
             <button
@@ -196,7 +192,7 @@ export default function WhaleAlertsPage() {
           ))}
         </div>
         <div className="h-4 w-px bg-lm-border hidden sm:block" />
-        <span className="text-[10px] uppercase tracking-widest text-lm-muted">Side</span>
+        <span className="num text-[10px] uppercase tracking-widest text-lm-muted">Side</span>
         <div className="flex rounded-md border border-lm-border overflow-hidden">
           {(["ALL", "BUY", "SELL"] as Side[]).map((s) => (
             <button
@@ -216,7 +212,7 @@ export default function WhaleAlertsPage() {
       {/* Feed */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted">
+          <h2 className="lm-section-title">
             {source === "mock" ? "Demo Feed" : "Live Feed"}
           </h2>
           <span className="text-[10px] text-lm-muted num">
@@ -345,6 +341,6 @@ export default function WhaleAlertsPage() {
           )}
         </Panel>
       </div>
-    </PageTransition>
+    </PageShell>
   );
 }

@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { PageTransition } from "@/components/ui/PageTransition";
+import { PageShell } from "@/components/ui/PageShell";
+import { MetricStrip } from "@/components/ui/MetricStrip";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import { mockOrderbook } from "@/lib/mock-data";
@@ -122,21 +123,15 @@ export default function TerminalPage() {
   const pressureText = ob.pressureSummary[timeframe];
 
   return (
-    <PageTransition className="space-y-4">
-      {/* Header + controls */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="mr-2">
-          <h1 className="text-xl font-semibold text-lm-text">Pro Terminal</h1>
-          <p className="text-[11px] text-lm-muted mt-0.5">
-            Live depth via /api/heatmap (live → fixture → mock)
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 ml-auto">
+    <PageShell
+      title="Pro Terminal"
+      context="Live order book depth · live feed with fixture/demo fallback"
+      status={
+        <>
           {/* Symbol */}
           <div className="relative">
             <select
-              className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-[12px] rounded-md px-2.5 py-1.5 pr-7 focus:outline-none focus:border-lm-purple num cursor-pointer"
+              className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-[12px] rounded-md px-2.5 py-1.5 pr-7 focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-cyan-400/60 focus:border-zinc-600 num cursor-pointer"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
             >
@@ -167,64 +162,57 @@ export default function TerminalPage() {
           {payload && resolvedStatus.stale && (
             <StatusBadge variant="stale" size="sm">Stale</StatusBadge>
           )}
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {/* Top KPI strip — primary operator read */}
-      <Panel flush className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-lm-border/60">
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Last</p>
-          <p className="lm-price text-2xl text-lm-cyan mt-0.5 leading-none">
-            {livePrice !== null
+      <MetricStrip
+        columns={6}
+        metrics={[
+          {
+            label: "Last",
+            value: livePrice !== null
               ? `$${livePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-              : "—"}
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Best Bid</p>
-          <p className="lm-price text-lg text-emerald-400 mt-0.5 leading-none">
-            {lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—"}
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Best Ask</p>
-          <p className="lm-price text-lg text-red-400 mt-0.5 leading-none">
-            {lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—"}
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Spread</p>
-          <p className="lm-price text-lg text-lm-text mt-0.5 leading-none">
-            {spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Walls</p>
-          <p className="lm-price text-lg text-lm-text mt-0.5 leading-none">
-            {payload ? payload.meta.wallCount : "—"}
-            {strongestWall && (
-              <span className="text-[10px] text-lm-muted ml-1.5 font-normal">
-                top ${strongestWall.price_bucket.toLocaleString()}
-              </span>
-            )}
-          </p>
-        </div>
-        <div className="px-4 py-2.5">
-          <p className="text-[10px] uppercase tracking-widest text-lm-muted">Live · Fetched</p>
-          <p className="num text-[11px] text-lm-text-dim mt-1 leading-none">
-            {fmtTime(payload?.meta.liveUpdatedAt)}
-          </p>
-          <p className="num text-[10px] text-lm-muted mt-0.5 leading-none">
-            {fmtTime(lastFetchedAt)}
-          </p>
-        </div>
-      </Panel>
+              : "—",
+            valueClassName: "text-2xl text-lm-cyan",
+          },
+          {
+            label: "Best Bid",
+            value: lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—",
+            valueClassName: "text-lg text-emerald-400",
+          },
+          {
+            label: "Best Ask",
+            value: lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—",
+            valueClassName: "text-lg text-red-400",
+          },
+          {
+            label: "Spread",
+            value: spread != null
+              ? spread.toLocaleString(undefined, { maximumFractionDigits: 2 })
+              : "—",
+          },
+          {
+            label: "Walls",
+            value: payload ? payload.meta.wallCount : "—",
+            sub: strongestWall
+              ? `top $${strongestWall.price_bucket.toLocaleString()}`
+              : undefined,
+          },
+          {
+            label: "Live · Fetched",
+            value: fmtTime(payload?.meta.liveUpdatedAt),
+            valueClassName: "num text-[12px] text-lm-text-dim",
+            sub: fmtTime(lastFetchedAt),
+          },
+        ]}
+      />
 
-      {/* Pressure context banner */}
-      <Panel flush className="px-3 py-2 flex items-start gap-2.5">
+      {/* Pressure context — quiet caption, not a competing surface */}
+      <Panel level="subtle" flush className="px-3 py-2 flex items-start gap-2.5">
         <Info className="h-3.5 w-3.5 text-lm-cyan shrink-0 mt-0.5" />
         <p className="text-[12px] text-lm-text-dim leading-snug">
-          <span className="text-lm-cyan font-medium uppercase tracking-wide text-[11px] mr-1.5">
+          <span className="num text-lm-cyan font-medium uppercase tracking-wide text-[11px] mr-1.5">
             {timeframe}
           </span>
           {pressureText}
@@ -246,11 +234,9 @@ export default function TerminalPage() {
       {/* Two-column: Order flow dominance | Walls list */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
 
-        {/* Order Flow Dominance */}
-        <Panel flush className="p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted mb-3">
-            Order Flow Dominance
-          </p>
+        {/* Order Flow Dominance — secondary support zone */}
+        <Panel level="subtle" flush className="p-3">
+          <p className="lm-section-title mb-3">Order Flow Dominance</p>
           {!payload ? (
             <div className="space-y-2">
               <Skeleton variant="line" height="h-2" />
@@ -330,11 +316,11 @@ export default function TerminalPage() {
           )}
         </Panel>
 
-        {/* Walls list */}
-        <Panel flush className="overflow-hidden">
+        {/* Walls list — secondary support zone */}
+        <Panel level="subtle" flush className="overflow-hidden">
           <div className="px-3 py-2 border-b border-lm-border flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-1.5">
-              <RefreshCw className={clsx("h-3 w-3 text-lm-cyan", payload && "animate-spin")} />
+            <span className="lm-section-title">
+              <RefreshCw className="h-3 w-3 text-lm-cyan" />
               Liquidity Walls
             </span>
             <span className="num text-[10px] text-lm-muted">
@@ -388,6 +374,6 @@ export default function TerminalPage() {
           )}
         </Panel>
       </div>
-    </PageTransition>
+    </PageShell>
   );
 }

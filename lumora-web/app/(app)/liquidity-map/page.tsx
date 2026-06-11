@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { PageTransition } from "@/components/ui/PageTransition";
+import { PageShell } from "@/components/ui/PageShell";
+import { MetricStrip } from "@/components/ui/MetricStrip";
 import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker";
 import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
@@ -78,7 +79,7 @@ function DepthBar({ price, intensity, maxI }: { price: number; intensity: number
       <span
         className={clsx(
           "absolute right-1 num text-[9px] leading-none select-none z-10",
-          isCur ? "text-lumora-cyan font-bold" : intensity > 60 ? "text-white/80" : "text-white/40"
+          isCur ? "text-lm-cyan font-bold" : intensity > 60 ? "text-white/80" : "text-white/40"
         )}
       >
         {isCur ? "▶" : ""}{(price / 1000).toFixed(1)}k
@@ -166,7 +167,7 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
   if (!dataStatus) {
     if (dataSource !== "live") return null;
     return (
-      <Panel flush className="p-3">
+      <Panel level="subtle" flush className="p-3">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-widest text-lm-muted">Data Status</span>
           <span className="text-[10px] text-lm-muted">Supabase not configured</span>
@@ -201,7 +202,7 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
   };
 
   return (
-    <Panel flush className="p-3">
+    <Panel level="subtle" flush className="p-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-[10px] font-semibold uppercase tracking-widest text-lm-muted">Data Status</span>
@@ -386,38 +387,32 @@ export default function LiquidityMapPage() {
   const statusInfo =
     !payload && !apiError    ? { text: "Loading",                  dot: "bg-yellow-400 animate-pulse", txt: "text-yellow-400" } :
     !payload && apiError     ? { text: "Error",                    dot: "bg-red-400",                  txt: "text-red-400" } :
-    selectionLoading         ? { text: "Loading new selection",    dot: "bg-cyan-400 animate-pulse",   txt: "text-lumora-cyan" } :
+    selectionLoading         ? { text: "Loading new selection",    dot: "bg-cyan-400 animate-pulse",   txt: "text-lm-cyan" } :
     apiError                 ? { text: "Connected · refresh failed", dot: "bg-amber-400",              txt: "text-amber-400" } :
-    refreshing && payload    ? { text: "Refreshing",               dot: "bg-cyan-400 animate-pulse",   txt: "text-lumora-cyan" } :
+    refreshing && payload    ? { text: "Refreshing",               dot: "bg-cyan-400 animate-pulse",   txt: "text-lm-cyan" } :
     payload                  ? { text: "Connected",                dot: "bg-emerald-400",              txt: "text-emerald-400" } :
                                { text: "—",                        dot: "bg-lm-muted",             txt: "text-lm-muted" };
 
   return (
-    <PageTransition className="space-y-4">
-
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-lm-text">Liquidity Map</h1>
-          <p className="text-sm text-lm-muted mt-0.5">
-            Spot orderbook depth over time{resolvedStatus.resolved === "mock" ? " — demo data" : ""}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageShell
+      title="Liquidity Map"
+      context={`Spot orderbook depth over time${resolvedStatus.resolved === "mock" ? " — demo data" : ""}`}
+      status={
+        <>
           <StatusBadge variant={statusVariant} dot={statusVariant === "live"}>{statusLabel}</StatusBadge>
           {payload && <StatusBadge variant={resolvedBadgeVariant} dot={resolvedBadgeVariant === "live"}>{resolvedStatus.label}</StatusBadge>}
           {payload && resolvedStatus.stale && (
             <StatusBadge variant="stale">Stale</StatusBadge>
           )}
-        </div>
-      </div>
-
-      {/* Controls */}
-      <Panel flush className="p-2.5 flex flex-wrap items-center gap-2">
+        </>
+      }
+    >
+      {/* Controls — quiet toolbar */}
+      <Panel level="subtle" flush className="p-2.5 flex flex-wrap items-center gap-2">
         {/* Symbol — watchlist entries appear first, marked with a star */}
         <div className="relative">
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
-            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple num cursor-pointer">
+            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-zinc-600 num cursor-pointer">
             {orderedSymbols.map(s => {
               const inWatch = watchSet.has(s);
               const label = getMarketSource(s)?.displayName ?? s;
@@ -434,7 +429,7 @@ export default function LiquidityMapPage() {
         {/* Exchange */}
         <div className="relative">
           <select value={exchange} onChange={e => setExchange(e.target.value)}
-            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple cursor-pointer">
+            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-zinc-600 cursor-pointer">
             {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
           </select>
           <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
@@ -492,8 +487,8 @@ export default function LiquidityMapPage() {
           <span className="flex items-center gap-1.5 text-[10px] text-lm-muted">
             <span className="inline-block w-5 h-[1.5px] bg-white/60 rounded" />Price
           </span>
-          <span className="flex items-center gap-1.5 text-[10px] text-lumora-cyan">
-            <span className="lm-now-dot inline-block w-2 h-2 rounded-full bg-lumora-cyan" />Now
+          <span className="flex items-center gap-1.5 text-[10px] text-lm-cyan">
+            <span className="lm-now-dot inline-block w-2 h-2 rounded-full bg-lm-cyan" />Now
           </span>
         </div>
       </Panel>
@@ -527,15 +522,15 @@ export default function LiquidityMapPage() {
           + compact depth rail. */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_140px] gap-3 items-start">
 
-        {/* Primary liquidity heatmap (Canvas) */}
-        <Panel flush className="overflow-hidden p-0">
+        {/* Primary liquidity heatmap (Canvas) — the page's instrument */}
+        <Panel level="focus" flush className="overflow-hidden p-0">
           <div className="px-3 py-1.5 border-b border-lm-border flex items-center justify-between gap-3">
             <span className="text-[11px] text-lm-muted uppercase tracking-wide font-medium">
               Liquidity Heatmap
             </span>
             <div className="flex items-center gap-2">
               {(selectionLoading || (refreshing && payload)) && (
-                <span className="flex items-center gap-1 text-[9px] text-lumora-cyan">
+                <span className="flex items-center gap-1 text-[9px] text-lm-cyan">
                   <RefreshCw className="h-2.5 w-2.5 animate-spin" />
                   {selectionLoading ? "new selection" : "refreshing"}
                 </span>
@@ -585,7 +580,7 @@ export default function LiquidityMapPage() {
         <Panel flush className="overflow-hidden p-0">
           <div className="px-2.5 py-1.5 border-b border-lm-border flex items-center justify-between">
             <span className="text-[10px] text-lm-muted uppercase tracking-wide font-medium">Depth</span>
-            <span className="text-[10px] text-lumora-cyan font-medium">Now</span>
+            <span className="text-[10px] text-lm-cyan font-medium">Now</span>
           </div>
           <div className="px-1.5 py-1.5 overflow-y-auto" style={{ maxHeight: CHART_H - 60 }}>
             <DepthProfile />
@@ -606,9 +601,7 @@ export default function LiquidityMapPage() {
           overlays. Collapsed by default so the heatmap stays primary. */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2">
-            Intelligence Chart · Preview
-          </h2>
+          <h2 className="lm-section-title">Intelligence Chart · Preview</h2>
           <button
             onClick={() => setShowChartPreview((v) => !v)}
             className="lm-segment-btn flex items-center gap-1.5 rounded-md border border-lm-border bg-lm-surface px-2.5 py-1 text-[11px] text-lm-muted"
@@ -624,7 +617,7 @@ export default function LiquidityMapPage() {
 
       {/* Key zone cards — API walls when available, static fallback otherwise */}
       <div>
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted mb-2">Key Zones</h2>
+        <h2 className="lm-section-title mb-2">Key Zones</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {showApiWalls
             ? apiWalls.slice(0, 4).map(w => {
@@ -637,9 +630,7 @@ export default function LiquidityMapPage() {
                       style={{
                         background: isAsk
                           ? "linear-gradient(180deg,#f87171,#ef4444)"
-                          : w.intensity > 80
-                          ? "linear-gradient(180deg,#c084fc,#8b5cf6)"
-                          : "linear-gradient(180deg,#22d3ee,#0891b2)",
+                          : "linear-gradient(180deg,#4ade80,#22c55e)",
                       }}
                     />
                     <div className="flex-1 min-w-0">
@@ -669,9 +660,7 @@ export default function LiquidityMapPage() {
                     style={{
                       background: z.side === "ASK"
                         ? "linear-gradient(180deg,#f87171,#ef4444)"
-                        : z.intensity > 80
-                        ? "linear-gradient(180deg,#c084fc,#8b5cf6)"
-                        : "linear-gradient(180deg,#22d3ee,#0891b2)",
+                        : "linear-gradient(180deg,#4ade80,#22c55e)",
                     }}
                   />
                   <div className="flex-1 min-w-0">
@@ -691,25 +680,20 @@ export default function LiquidityMapPage() {
         </div>
       </div>
 
-      {/* Summary stat cards — values from API payload */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {[
-          { label: "Strongest Bid",  value: bidWallLabel,                   sub: bidWallSub,   color: "text-lumora-green"         },
-          { label: "Strongest Ask",  value: askWallLabel,                   sub: askWallSub,   color: "text-lumora-red"           },
-          { label: "Price Range",    value: priceRangeLabel,                sub: frameCountSub, color: "text-yellow-400"          },
-          { label: "Max Bid Intens", value: `${Math.round(summaryData?.max_bid_intensity ?? 88)}%`, sub: maxBidI, color: "text-lumora-purple-bright" },
-          { label: "Max Ask Intens", value: `${Math.round(summaryData?.max_ask_intensity ?? 95)}%`, sub: maxAskI, color: "text-lumora-cyan"           },
-        ].map(({ label, value, sub, color }) => (
-          <Panel flush key={label} className="p-3">
-            <p className="text-[11px] text-lm-muted uppercase tracking-wide mb-1.5">{label}</p>
-            <p className={clsx("num text-sm font-semibold", color)}>{value}</p>
-            <p className="text-[11px] text-lm-muted mt-1 leading-snug">{sub}</p>
-          </Panel>
-        ))}
-      </div>
+      {/* Summary metric strip — values from API payload */}
+      <MetricStrip
+        columns={5}
+        metrics={[
+          { label: "Strongest Bid", value: bidWallLabel, sub: bidWallSub, valueClassName: "text-lg text-emerald-400" },
+          { label: "Strongest Ask", value: askWallLabel, sub: askWallSub, valueClassName: "text-lg text-red-400" },
+          { label: "Price Range", value: priceRangeLabel, sub: frameCountSub, valueClassName: "text-[15px] text-lm-text" },
+          { label: "Max Bid Intens", value: `${Math.round(summaryData?.max_bid_intensity ?? 88)}%`, sub: maxBidI },
+          { label: "Max Ask Intens", value: `${Math.round(summaryData?.max_ask_intensity ?? 95)}%`, sub: maxAskI },
+        ]}
+      />
 
-      {/* API Status Panel */}
-      <Panel flush className="p-3">
+      {/* API Status Panel — system telemetry, demoted to a quiet surface */}
+      <Panel level="subtle" flush className="p-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           {/* Title + status dot */}
           <div className="flex items-center gap-1.5 shrink-0">
@@ -791,6 +775,6 @@ export default function LiquidityMapPage() {
       {/* LM60B: Data Status Panel */}
       <DataStatusPanel dataStatus={payload?.dataStatus ?? null} dataSource={dataSource} />
 
-    </PageTransition>
+    </PageShell>
   );
 }
