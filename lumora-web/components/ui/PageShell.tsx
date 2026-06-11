@@ -22,7 +22,7 @@ interface PageShellProps {
 export function PageShell({ title, context, status, children }: PageShellProps) {
   return (
     <PageTransition className="space-y-3">
-      <header className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
+      <header className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-b border-lm-border/60 pb-3">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-lg font-semibold leading-tight tracking-tight text-lm-text">
             {title}

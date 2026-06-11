@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import { mockOrderbook } from "@/lib/mock-data";
 import { clsx } from "clsx";
-import { ChevronDown, Info, RefreshCw, AlertCircle } from "lucide-react";
+import { ChevronDown, Info, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
 import {
   heatmapCurrentPrice,
@@ -131,7 +131,7 @@ export default function TerminalPage() {
           {/* Symbol */}
           <div className="relative">
             <select
-              className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-[12px] rounded-md px-2.5 py-1.5 pr-7 focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-cyan-400/60 focus:border-zinc-600 num cursor-pointer"
+              className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-[12px] rounded-md px-2.5 py-1.5 pr-7 transition-colors duration-150 hover:border-zinc-600 focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-cyan-400/60 focus:border-zinc-600 num cursor-pointer"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
             >
@@ -146,8 +146,9 @@ export default function TerminalPage() {
               <button
                 key={tf}
                 onClick={() => setTimeframe(tf)}
+                aria-pressed={timeframe === tf}
                 className={clsx(
-                  "lm-segment-btn px-2.5 py-1.5 text-[12px] font-medium",
+                  "lm-segment-btn px-2.5 py-1.5 text-[12px] font-medium focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-cyan-400/60",
                   timeframe === tf ? "lm-segment-active" : "text-lm-muted bg-lm-surface",
                 )}
               >
@@ -208,8 +209,8 @@ export default function TerminalPage() {
         ]}
       />
 
-      {/* Pressure context — quiet caption, not a competing surface */}
-      <Panel level="subtle" flush className="px-3 py-2 flex items-start gap-2.5">
+      {/* Pressure context — quiet caption with a cyan live edge */}
+      <Panel level="subtle" flush className="border-l-2 border-l-cyan-400/30 px-3 py-2 flex items-start gap-2.5">
         <Info className="h-3.5 w-3.5 text-lm-cyan shrink-0 mt-0.5" />
         <p className="text-[12px] text-lm-text-dim leading-snug">
           <span className="num text-lm-cyan font-medium uppercase tracking-wide text-[11px] mr-1.5">
@@ -319,10 +320,7 @@ export default function TerminalPage() {
         {/* Walls list — secondary support zone */}
         <Panel level="subtle" flush className="overflow-hidden">
           <div className="px-3 py-2 border-b border-lm-border flex items-center justify-between">
-            <span className="lm-section-title">
-              <RefreshCw className="h-3 w-3 text-lm-cyan" />
-              Liquidity Walls
-            </span>
+            <span className="lm-section-title">Liquidity Walls</span>
             <span className="num text-[10px] text-lm-muted">
               {payload ? `${payload.meta.wallCount} total` : "—"}
             </span>

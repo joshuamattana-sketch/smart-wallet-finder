@@ -46,11 +46,11 @@ export function MetricStrip({
   return (
     <Panel
       flush
-      className={clsx("grid divide-x divide-lm-border/60 overflow-hidden", cols, className)}
+      className={clsx("grid divide-x divide-lm-border/50 overflow-hidden", cols, className)}
     >
       {metrics.map((m) => (
-        <div key={m.label} className="min-w-0 px-3.5 py-2.5">
-          <p className="num text-[10px] uppercase tracking-[0.14em] text-lm-muted">{m.label}</p>
+        <div key={m.label} className="min-w-0 px-3.5 py-3">
+          <p className="num text-[10px] uppercase tracking-[0.16em] text-lm-muted">{m.label}</p>
           <p className={clsx("lm-price mt-1 leading-none", m.valueClassName ?? defaultValue)}>
             {m.value}
           </p>
