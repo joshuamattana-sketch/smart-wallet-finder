@@ -790,6 +790,36 @@ python scripts/run_local_status_check.py
 python scripts/run_local_status_check.py --json
 ```
 
+## LM68C Intelligence Chart — Live Binance Candles (web only · no Python)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+```
+
+Then open:
+- http://localhost:3000/terminal       (chart section near the top)
+- http://localhost:3000/liquidity-map  (collapsed "Intelligence Chart · Preview" — click "Show preview")
+
+Data source (public, no keys, read-only):
+- REST snapshot: `https://api.binance.com/api/v3/klines` (300 bars)
+- Live updates:  `wss://stream.binance.com:9443/ws/<symbol>@kline_<interval>`
+- Symbols: BTCUSDT, ETHUSDT, SOLUSDT · Intervals: 1m, 5m, 15m
+
+Status badge states on the panel header:
+- `CONNECTING…`     initial REST snapshot in flight
+- `LIVE · BINANCE`  live data flowing (`· WS` or `· REST` shows the transport)
+- `STALE`           no tick for 30s
+- `DEMO FALLBACK`   snapshot failed twice → deterministic mock session shown
+
+Safe behaviors:
+- WS blocked/closed → automatic REST polling every 8s (no crash, no spinner lock).
+- Binance fully unreachable → mock candles + DEMO FALLBACK badge; page keeps working.
+- Overlays (heatmap bands / whale markers / pressure / read) are DEMO data until LM68D,
+  derived relative to the displayed candle range so they fit any symbol/price level.
+
 ## Git Rules
 
 Always check: git status

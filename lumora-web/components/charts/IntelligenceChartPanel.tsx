@@ -1,25 +1,29 @@
 "use client";
 
 // components/charts/IntelligenceChartPanel.tsx
-// LM68B — Unified Intelligence Chart (mock panel).
+// LM68B/LM68C — Unified Intelligence Chart.
 //
-// A lightweight-charts candlestick base with optional Lumora intelligence
-// overlays, evolving The Lumora Field hero into real product UI: candles
-// instead of the hero price path, optional heatmap signal bands instead of
-// staged ask/bid walls, whale markers, futures pressure context and the
-// current read — all togglable through three view modes.
+// Base candle layer is now LIVE: public Binance REST klines for the initial
+// snapshot + the public kline WebSocket for per-tick updates (REST polling
+// fallback when the WS can't run). If Binance is unreachable, the chart
+// keeps the deterministic mock session and shows a DEMO FALLBACK badge —
+// the page never crashes.
 //
-// Layering:
+// Intelligence overlays (heatmap bands, whale markers, pressure, read)
+// remain DEMO data in this patch, derived relative to whatever candles are
+// displayed so they stay meaningful at any price level. Live overlay wiring
+// lands in LM68D.
+//
+// Layering (unchanged from LM68B):
 //   1–2. candles + volume      → lightweight-charts series
-//   3.   zones + sweep bands   → absolutely-positioned overlay <canvas>,
-//        redrawn on pan/zoom via series.priceToCoordinate (pointer-events:
-//        none, so the chart stays fully interactive)
+//   3.   zones + sweep bands   → overlay <canvas>, synced via priceToCoordinate
 //   4.   whale markers         → series.setMarkers()
 //   5.   read chip / pressure  → DOM overlays
 //   6.   controls              → React header; toggles never rebuild the chart
 //
-// Mock only: no API calls, no live data. Calm by design — no animation loops,
-// so prefers-reduced-motion is trivially respected.
+// Per-tick candle updates go straight to series.update() through refs — no
+// React re-render per tick. No animation loops, so prefers-reduced-motion
+// is trivially respected.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -38,13 +42,23 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { clsx } from "clsx";
 import {
   MODE_PRESETS,
-  MOCK_SCENE,
+  MOCK_CANDLES,
+  MOCK_FUTURES,
+  MOCK_READ,
+  deriveMockOverlays,
   isImportantWhale,
   isKeyZone,
   matchedMode,
+  type ChartCandle,
   type OverlayState,
   type ViewMode,
 } from "@/components/charts/mock-intelligence-chart-data";
+import {
+  BINANCE_CHART_SYMBOLS,
+  BINANCE_INTERVALS,
+  type BinanceInterval,
+} from "@/lib/binance-klines";
+import { useBinanceKlines } from "@/components/charts/useBinanceKlines";
 
 interface IntelligenceChartPanelProps {
   /** Chart pane height in CSS px (header/footer come on top). */
@@ -62,23 +76,57 @@ const MODE_LABELS: Record<ViewMode, string> = {
 
 const OVERLAY_KEYS = ["heatmap", "whales", "pressure", "read"] as const;
 
+function toBar(c: ChartCandle) {
+  return {
+    time: c.time as UTCTimestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+  };
+}
+
+function toVol(c: ChartCandle) {
+  return {
+    time: c.time as UTCTimestamp,
+    value: c.volume,
+    color: c.close >= c.open ? "rgba(34,197,94,0.22)" : "rgba(239,68,68,0.22)",
+  };
+}
+
+function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export function IntelligenceChartPanel({
   height = 400,
   defaultMode = "assisted",
   className,
 }: IntelligenceChartPanelProps) {
-  const scene = MOCK_SCENE;
-
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [interval, setInterval] = useState<BinanceInterval>("5m");
   const [mode, setMode] = useState<ViewMode>(defaultMode);
   const [overlays, setOverlays] = useState<OverlayState>(MODE_PRESETS[defaultMode]);
+  const [usingMock, setUsingMock] = useState(true);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const anchorRef = useRef<ISeriesApi<"Line"> | null>(null);
   const hatchRef = useRef<CanvasPattern | null>(null);
   const rafRef = useRef(0);
+  const usingMockRef = useRef(true);
+
+  // Current candle set + demo overlays derived from it. Mutated through
+  // refs so live ticks never re-render the component.
+  const candlesRef = useRef<ChartCandle[]>(MOCK_CANDLES);
+  const overlayDataRef = useRef(deriveMockOverlays(MOCK_CANDLES));
 
   // Density: which preset shapes zone/whale filtering. Custom toggle combos
   // keep the density of the last preset the user selected.
@@ -112,8 +160,9 @@ export function IntelligenceChartPanel({
     const { overlays: ov, density: dens } = stateRef.current;
     if (!ov.heatmap) return;
 
+    const data = overlayDataRef.current;
     const mono = "600 9px 'JetBrains Mono', monospace";
-    const zones = dens === "full" ? scene.zones : scene.zones.filter(isKeyZone);
+    const zones = dens === "full" ? data.zones : data.zones.filter(isKeyZone);
 
     for (const z of zones) {
       const yA = series.priceToCoordinate(z.priceMax);
@@ -158,7 +207,7 @@ export function IntelligenceChartPanel({
           hatchRef.current = ctx.createPattern(pc, "repeat");
         }
       }
-      for (const s of scene.sweeps) {
+      for (const s of data.sweeps) {
         const yA = series.priceToCoordinate(s.priceMax);
         const yB = series.priceToCoordinate(s.priceMin);
         if (yA == null || yB == null) continue;
@@ -184,14 +233,112 @@ export function IntelligenceChartPanel({
         ctx.fillText(s.label, 8, Math.min(Math.max(top + 11, 11), paneH - 4));
       }
     }
-  }, [scene]);
+  }, []);
 
   const scheduleDraw = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(drawOverlay);
   }, [drawOverlay]);
 
-  // ── Chart creation (once per height change) ─────────────────────────────────
+  // ── Layer 4 + autoscale anchor sync — no chart rebuild ─────────────────────
+  const syncOverlays = useCallback(() => {
+    const candles = candleRef.current;
+    const anchor = anchorRef.current;
+    if (!candles || !anchor) return;
+
+    const { overlays: ov, density: dens } = stateRef.current;
+    const data = overlayDataRef.current;
+    const bars = candlesRef.current;
+
+    const whales = ov.whales
+      ? dens === "full"
+        ? data.whales
+        : data.whales.filter(isImportantWhale)
+      : [];
+    const markers: SeriesMarker<Time>[] = whales.map((w) => ({
+      time: w.time as UTCTimestamp,
+      position: w.side === "BUY" ? "belowBar" : "aboveBar",
+      color: w.side === "BUY" ? "#22c55e" : "#ef4444",
+      shape: w.side === "BUY" ? "arrowUp" : "arrowDown",
+      text: w.label,
+      size: w.risk === "HIGH" ? 2 : 1,
+    }));
+    candles.setMarkers(markers);
+
+    // Invisible autoscale anchor so visible bands fit in the viewport.
+    if (ov.heatmap && bars.length > 0) {
+      const zones = dens === "full" ? data.zones : data.zones.filter(isKeyZone);
+      const lows = zones.map((z) => z.priceMin);
+      const highs = zones.map((z) => z.priceMax);
+      if (dens === "full") {
+        for (const s of data.sweeps) {
+          lows.push(s.priceMin);
+          highs.push(s.priceMax);
+        }
+      }
+      if (lows.length > 0) {
+        anchor.setData([
+          { time: bars[0].time as UTCTimestamp, value: Math.min(...lows) },
+          { time: bars[bars.length - 1].time as UTCTimestamp, value: Math.max(...highs) },
+        ]);
+      } else {
+        anchor.setData([]);
+      }
+    } else {
+      anchor.setData([]);
+    }
+
+    scheduleDraw();
+  }, [scheduleDraw]);
+
+  // ── Candle data application (snapshot + per-tick update) ───────────────────
+  const applySnapshot = useCallback(
+    (candles: ChartCandle[], mock: boolean) => {
+      candlesRef.current = candles;
+      overlayDataRef.current = deriveMockOverlays(candles);
+      usingMockRef.current = mock;
+      setUsingMock(mock);
+
+      const series = candleRef.current;
+      const vol = volumeRef.current;
+      if (series) series.setData(candles.map(toBar));
+      if (vol) vol.setData(candles.map(toVol));
+      chartRef.current?.timeScale().fitContent();
+      syncOverlays();
+    },
+    [syncOverlays],
+  );
+
+  const applyUpdate = useCallback((c: ChartCandle) => {
+    const series = candleRef.current;
+    const vol = volumeRef.current;
+    if (!series || !vol) return;
+
+    // Guard against out-of-order ticks (e.g. around a symbol switch).
+    const bars = candlesRef.current;
+    const last = bars[bars.length - 1];
+    if (last && c.time < last.time) return;
+    if (last && c.time === last.time) bars[bars.length - 1] = c;
+    else bars.push(c);
+
+    series.update(toBar(c));
+    vol.update(toVol(c));
+  }, []);
+
+  // ── Live Binance feed (REST snapshot + WS updates + fallbacks) ─────────────
+  const { status, transport, lastUpdateMs } = useBinanceKlines({
+    symbol,
+    interval,
+    onSnapshot: (candles) => applySnapshot(candles, false),
+    onUpdate: applyUpdate,
+  });
+
+  // Snapshot failed twice → keep the product alive on the mock session.
+  useEffect(() => {
+    if (status === "error") applySnapshot(MOCK_CANDLES, true);
+  }, [status, applySnapshot]);
+
+  // ── Chart creation (once) ───────────────────────────────────────────────────
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -231,15 +378,6 @@ export function IntelligenceChartPanel({
       priceLineStyle: LineStyle.Dashed,
       priceLineWidth: 1,
     });
-    candles.setData(
-      scene.candles.map((c) => ({
-        time: c.time as UTCTimestamp,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
 
     const volume = chart.addHistogramSeries({
       priceScaleId: "",
@@ -248,14 +386,6 @@ export function IntelligenceChartPanel({
       priceLineVisible: false,
     });
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    volume.setData(
-      scene.candles.map((c) => ({
-        time: c.time as UTCTimestamp,
-        value: c.volume,
-        color:
-          c.close >= c.open ? "rgba(34,197,94,0.22)" : "rgba(239,68,68,0.22)",
-      })),
-    );
 
     // Invisible autoscale anchor — extends the price range so toggled-on
     // zone/sweep bands fit inside the viewport. Empty data = no effect.
@@ -266,12 +396,16 @@ export function IntelligenceChartPanel({
       crosshairMarkerVisible: false,
     });
 
-    chart.timeScale().fitContent();
     chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleDraw);
 
     chartRef.current = chart;
     candleRef.current = candles;
+    volumeRef.current = volume;
     anchorRef.current = anchor;
+
+    // Seed with whatever the candle ref currently holds (mock until the
+    // first Binance snapshot replaces it).
+    applySnapshot(candlesRef.current, usingMockRef.current);
 
     const ro = new ResizeObserver(scheduleDraw);
     ro.observe(el);
@@ -282,55 +416,15 @@ export function IntelligenceChartPanel({
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;
+      volumeRef.current = null;
       anchorRef.current = null;
     };
-  }, [scene, scheduleDraw]);
+  }, [applySnapshot, scheduleDraw]);
 
-  // ── Overlay sync: markers, autoscale anchor, canvas — no chart rebuild ─────
+  // ── Overlay/mode changes — resync layers only ───────────────────────────────
   useEffect(() => {
-    const candles = candleRef.current;
-    const anchor = anchorRef.current;
-    if (!candles || !anchor) return;
-
-    // Layer 4: whale markers.
-    const whales = overlays.whales
-      ? density === "full"
-        ? scene.whales
-        : scene.whales.filter(isImportantWhale)
-      : [];
-    const markers: SeriesMarker<Time>[] = whales.map((w) => ({
-      time: w.time as UTCTimestamp,
-      position: w.side === "BUY" ? "belowBar" : "aboveBar",
-      color: w.side === "BUY" ? "#22c55e" : "#ef4444",
-      shape: w.side === "BUY" ? "arrowUp" : "arrowDown",
-      text: w.label,
-      size: w.risk === "HIGH" ? 2 : 1,
-    }));
-    candles.setMarkers(markers);
-
-    // Autoscale anchor so visible bands fit in the viewport.
-    if (overlays.heatmap) {
-      const zones = density === "full" ? scene.zones : scene.zones.filter(isKeyZone);
-      const lows = zones.map((z) => z.priceMin);
-      const highs = zones.map((z) => z.priceMax);
-      if (density === "full") {
-        for (const s of scene.sweeps) {
-          lows.push(s.priceMin);
-          highs.push(s.priceMax);
-        }
-      }
-      const first = scene.candles[0].time as UTCTimestamp;
-      const last = scene.candles[scene.candles.length - 1].time as UTCTimestamp;
-      anchor.setData([
-        { time: first, value: Math.min(...lows) - 30 },
-        { time: last, value: Math.max(...highs) + 30 },
-      ]);
-    } else {
-      anchor.setData([]);
-    }
-
-    scheduleDraw();
-  }, [overlays, density, scene, scheduleDraw]);
+    syncOverlays();
+  }, [overlays, density, syncOverlays]);
 
   // ── Controls ────────────────────────────────────────────────────────────────
   const selectMode = (m: ViewMode) => {
@@ -342,21 +436,67 @@ export function IntelligenceChartPanel({
   };
   const activePreset = matchedMode(overlays);
 
-  const fut = scene.futures;
-  const read = scene.read;
+  const fut = MOCK_FUTURES;
+  const read = MOCK_READ;
+
+  // Source/status badge: live → stale → connecting → demo fallback.
+  const sourceBadge = usingMock
+    ? status === "loading"
+      ? { variant: "neutral" as const, label: "CONNECTING…", dot: false }
+      : { variant: "warning" as const, label: "DEMO FALLBACK", dot: false }
+    : status === "live"
+      ? { variant: "live" as const, label: "LIVE · BINANCE", dot: true }
+      : status === "stale"
+        ? { variant: "stale" as const, label: "STALE", dot: false }
+        : status === "loading"
+          ? { variant: "neutral" as const, label: "CONNECTING…", dot: false }
+          : { variant: "warning" as const, label: "DEMO FALLBACK", dot: false };
 
   return (
     <Panel flush className={clsx("overflow-hidden", className)}>
       {/* Layer 6: controls header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-lm-border px-3 py-2">
         <span className="lm-section-title">Intelligence Chart</span>
-        <span className="num text-[10px] font-semibold uppercase tracking-widest text-lm-text">
-          {scene.symbol}
-        </span>
-        <span className="num text-[9px] uppercase tracking-wider text-lm-muted">
-          {scene.timeframe}
-        </span>
-        <StatusBadge variant="warning" size="sm">DEMO</StatusBadge>
+
+        {/* Symbol */}
+        <select
+          value={symbol}
+          onChange={(e) => setSymbol(e.target.value)}
+          className="num cursor-pointer appearance-none rounded-md border border-lm-border bg-lm-bg px-2 py-1 text-[11px] text-lm-text focus:border-lm-purple focus:outline-none"
+        >
+          {BINANCE_CHART_SYMBOLS.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+
+        {/* Interval */}
+        <div className="flex overflow-hidden rounded-md border border-lm-border">
+          {BINANCE_INTERVALS.map((iv) => (
+            <button
+              key={iv}
+              onClick={() => setInterval(iv)}
+              className={clsx(
+                "lm-segment-btn px-2 py-1 text-[11px] font-medium",
+                interval === iv ? "lm-segment-active" : "bg-lm-surface text-lm-muted",
+              )}
+            >
+              {iv}
+            </button>
+          ))}
+        </div>
+
+        {/* Source / status */}
+        <StatusBadge variant={sourceBadge.variant} size="sm" dot={sourceBadge.dot}>
+          {sourceBadge.label}
+        </StatusBadge>
+        {lastUpdateMs !== null && !usingMock && (
+          <span className="num hidden text-[9px] uppercase tracking-wider text-lm-muted sm:inline">
+            UPD {fmtClock(lastUpdateMs)}
+            {transport === "ws" ? " · WS" : transport === "rest" ? " · REST" : ""}
+          </span>
+        )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* View mode presets */}
@@ -382,7 +522,7 @@ export function IntelligenceChartPanel({
               <button
                 key={k}
                 onClick={() => toggleOverlay(k)}
-                title={`Toggle ${k} overlay`}
+                title={`Toggle ${k} overlay (demo data)`}
                 className={clsx(
                   "lm-segment-btn rounded-md border px-2 py-1 text-[10px] font-medium capitalize",
                   overlays[k]
@@ -406,11 +546,11 @@ export function IntelligenceChartPanel({
           aria-hidden
         />
 
-        {/* Layer 5: current read chip — same language as the app's Current Read */}
+        {/* Layer 5: current read chip — demo data until LM68D */}
         {overlays.read && (
           <div className="pointer-events-none absolute right-16 top-2.5 z-10 rounded-md border border-lm-border bg-lm-surface/95 px-2.5 py-1.5">
             <p className="num text-[7.5px] uppercase tracking-[0.2em] text-lm-muted">
-              Current read
+              Current read · demo
             </p>
             <div className="mt-0.5 flex items-baseline gap-1.5">
               <span
@@ -453,7 +593,7 @@ export function IntelligenceChartPanel({
         )}
       </div>
 
-      {/* Layer 5: futures pressure strip */}
+      {/* Layer 5: futures pressure strip — demo data until LM68D */}
       {overlays.pressure && (
         <div className="lm-no-scrollbar flex items-center justify-between gap-3 overflow-x-auto border-t border-lm-border bg-lm-surface-muted/80 px-3 py-1.5">
           <div className="num flex items-center gap-3.5 whitespace-nowrap text-[9px] uppercase tracking-wider text-lm-muted">
@@ -499,8 +639,8 @@ export function IntelligenceChartPanel({
                 {fut.leverageHeat.toUpperCase()}
               </span>
             </span>
-            {density === "full" && scene.sweeps.length > 0 && (
-              <span className="text-amber-400">POSSIBLE SWEEP BELOW 66.9K</span>
+            {density === "full" && (
+              <span className="text-amber-400">POSSIBLE SWEEP BELOW RANGE LOWS</span>
             )}
           </div>
           <span className="num hidden whitespace-nowrap text-[9px] text-lm-muted sm:inline">
@@ -512,7 +652,8 @@ export function IntelligenceChartPanel({
       {/* Honesty footer */}
       <div className="border-t border-lm-border px-3 py-1.5">
         <p className="num text-[8.5px] uppercase tracking-[0.15em] text-lm-muted">
-          Mock preview · demo data, not live · informational context only — not
+          Candles · Binance public market data (demo fallback when unavailable) ·
+          Overlays · demo until LM68D · informational context only — not
           financial advice
         </p>
       </div>

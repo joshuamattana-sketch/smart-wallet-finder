@@ -231,8 +231,8 @@ export default function TerminalPage() {
         </p>
       </Panel>
 
-      {/* LM68B: Unified Intelligence Chart (mock) — candles + optional
-          Lumora overlays. Demo scene only; live wiring lands in LM68C. */}
+      {/* LM68C: Unified Intelligence Chart — live Binance candles (public
+          REST + WS, demo fallback) with demo overlays until LM68D. */}
       <IntelligenceChartPanel height={420} />
 
       {/* API error banner — only when no payload to display */}

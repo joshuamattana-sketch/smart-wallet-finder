@@ -181,54 +181,82 @@ function buildCandles(): ChartCandle[] {
 
 export const MOCK_CANDLES: ChartCandle[] = buildCandles();
 
-// ── Intelligence layers ──────────────────────────────────────────────────────
+// ── Intelligence layers (demo, derived from displayed candles) ──────────────
+// LM68C: the base candles can now be live Binance data at any price level
+// (BTC vs ETH vs SOL), so the demo overlays are derived RELATIVE to the
+// displayed candle range instead of being pinned to the original 67k mock
+// scene. Same narrative (a strong ask band above, a strong bid band below,
+// a sweep zone under the lows, four whale prints), valid at any scale.
 
-export const MOCK_ZONES: LiquidityZone[] = [
-  { id: "z-ask-38m", side: "ask", priceMin: 67_980, priceMax: 68_120, strength: 92, notionalUsd: 38_000_000, label: "ASK · $38M" },
-  { id: "z-ask-12m", side: "ask", priceMin: 67_750, priceMax: 67_820, strength: 58, notionalUsd: 12_000_000, label: "ASK · $12M" },
-  { id: "z-bid-26m", side: "bid", priceMin: 67_300, priceMax: 67_390, strength: 84, notionalUsd: 26_000_000, label: "BID · $26M" },
-  { id: "z-bid-9m",  side: "bid", priceMin: 66_980, priceMax: 67_060, strength: 46, notionalUsd: 9_000_000,  label: "BID · $9M" },
+export interface MockOverlays {
+  zones: LiquidityZone[];
+  sweeps: SweepZone[];
+  whales: WhaleChartEvent[];
+}
+
+/** Whale template: [position in session 0–1, side, notional, risk]. */
+const WHALE_TEMPLATE: Array<
+  [number, "BUY" | "SELL", number, WhaleChartEvent["risk"]]
+> = [
+  [0.3, "SELL", 7_100_000, "HIGH"],
+  [0.47, "BUY", 4_200_000, "MEDIUM"],
+  [0.7, "BUY", 2_800_000, "MEDIUM"],
+  [0.85, "SELL", 1_600_000, "LOW"],
 ];
+
+export function deriveMockOverlays(candles: ChartCandle[]): MockOverlays {
+  if (candles.length === 0) return { zones: [], sweeps: [], whales: [] };
+
+  let hi = -Infinity;
+  let lo = Infinity;
+  for (const c of candles) {
+    if (c.high > hi) hi = c.high;
+    if (c.low < lo) lo = c.low;
+  }
+  const range = Math.max(hi - lo, hi * 0.002);
+  const dp = hi >= 1000 ? 0 : hi >= 10 ? 2 : 4;
+  const r = (p: number) => Number(p.toFixed(dp));
+
+  const zones: LiquidityZone[] = [
+    { id: "z-ask-38m", side: "ask", priceMin: r(hi + range * 0.03), priceMax: r(hi + range * 0.09), strength: 92, notionalUsd: 38_000_000, label: "ASK · $38M" },
+    { id: "z-ask-12m", side: "ask", priceMin: r(hi + range * 0.14), priceMax: r(hi + range * 0.18), strength: 58, notionalUsd: 12_000_000, label: "ASK · $12M" },
+    { id: "z-bid-26m", side: "bid", priceMin: r(lo - range * 0.09), priceMax: r(lo - range * 0.03), strength: 84, notionalUsd: 26_000_000, label: "BID · $26M" },
+    { id: "z-bid-9m",  side: "bid", priceMin: r(lo - range * 0.18), priceMax: r(lo - range * 0.14), strength: 46, notionalUsd: 9_000_000,  label: "BID · $9M" },
+  ];
+
+  const sweeps: SweepZone[] = [
+    {
+      id: "sweep-low",
+      priceMin: r(lo - range * 0.3),
+      priceMax: r(lo - range * 0.24),
+      severity: "watch",
+      label: "SWEEP RISK · POSSIBLE FLUSH",
+    },
+  ];
+
+  const whales: WhaleChartEvent[] = WHALE_TEMPLATE.map(
+    ([frac, side, notionalUsd, risk], i) => {
+      const candle =
+        candles[Math.min(candles.length - 1, Math.floor(candles.length * frac))];
+      return {
+        id: `whale-${i}`,
+        time: candle.time,
+        price: candle.close,
+        side,
+        notionalUsd,
+        risk,
+        label: `$${(notionalUsd / 1_000_000).toFixed(1)}M`,
+      };
+    },
+  );
+
+  return { zones, sweeps, whales };
+}
 
 /** Assisted mode shows only the zones that matter. */
 export function isKeyZone(z: LiquidityZone): boolean {
   return z.strength >= 70;
 }
-
-export const MOCK_SWEEPS: SweepZone[] = [
-  {
-    id: "sweep-66k8",
-    priceMin: 66_780,
-    priceMax: 66_900,
-    severity: "watch",
-    label: "SWEEP RISK · POSSIBLE FLUSH",
-  },
-];
-
-function whaleAt(
-  bar: number,
-  side: "BUY" | "SELL",
-  notionalUsd: number,
-  risk: WhaleChartEvent["risk"],
-): WhaleChartEvent {
-  const candle = MOCK_CANDLES[bar];
-  return {
-    id: `whale-${bar}`,
-    time: candle.time,
-    price: candle.close,
-    side,
-    notionalUsd,
-    risk,
-    label: `$${(notionalUsd / 1_000_000).toFixed(1)}M`,
-  };
-}
-
-export const MOCK_WHALES: WhaleChartEvent[] = [
-  whaleAt(36, "SELL", 7_100_000, "HIGH"),
-  whaleAt(56, "BUY", 4_200_000, "MEDIUM"),
-  whaleAt(84, "BUY", 2_800_000, "MEDIUM"),
-  whaleAt(102, "SELL", 1_600_000, "LOW"),
-];
 
 /** Assisted mode shows only impactful whale prints. */
 export function isImportantWhale(w: WhaleChartEvent): boolean {
@@ -251,13 +279,15 @@ export const MOCK_READ: CurrentRead = {
   action: "Watch reclaim of 67,500 · read invalidates below 66,800.",
 };
 
+const MOCK_OVERLAYS = deriveMockOverlays(MOCK_CANDLES);
+
 export const MOCK_SCENE: IntelligenceChartScene = {
   symbol: "BTCUSDT",
   timeframe: "5m",
   candles: MOCK_CANDLES,
-  zones: MOCK_ZONES,
-  sweeps: MOCK_SWEEPS,
-  whales: MOCK_WHALES,
+  zones: MOCK_OVERLAYS.zones,
+  sweeps: MOCK_OVERLAYS.sweeps,
+  whales: MOCK_OVERLAYS.whales,
   futures: MOCK_FUTURES,
   read: MOCK_READ,
 };

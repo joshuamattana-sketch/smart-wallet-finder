@@ -602,13 +602,12 @@ export default function LiquidityMapPage() {
 
       </div>
 
-      {/* LM68B: Intelligence Chart preview (mock) — optional candle view with
-          Lumora overlays. Collapsed by default so the heatmap stays primary. */}
+      {/* LM68C: Intelligence Chart preview — live Binance candles with demo
+          overlays. Collapsed by default so the heatmap stays primary. */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2">
             Intelligence Chart · Preview
-            <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
           </h2>
           <button
             onClick={() => setShowChartPreview((v) => !v)}

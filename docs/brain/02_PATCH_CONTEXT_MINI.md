@@ -16,7 +16,7 @@
 - Whale read path: website /api/whale-alerts reads Supabase -> local JSONL journal -> mock alerts (server-side, 3-tier fallback).
 - Futures/leverage context (LM64 series, planned): Binance futures aggTrade + funding/OI poller + force-order stream feed `MarketContext` (funding_rate, oi_change_pct, derived leverage_heat) into existing whale events without claiming individual-account leverage. See `docs/brain/LM64_FUTURES_WHALE_SOURCE_DISCOVERY.md`.
 - Landing page redesign (LM67 series, planned): signature hero "The Lumora Field" — a 2.5D SVG/CSS market pressure visualization (price path, liquidity bands, whale pulses, futures drift, sweep zones, Current Read badge) replacing the generic hero; new sections on Panel/lm-* design language. See `docs/brain/LM67_LANDING_PAGE_DISCOVERY.md`.
-- Unified Intelligence Chart (LM68 series, planned): lightweight-charts candlestick base with optional Lumora overlays (liquidity zones, whale markers, futures context, current read, sweep risk) behind three view modes Clean/Assisted/Full Intel; layered architecture + data contracts in `docs/brain/LM68_UNIFIED_INTELLIGENCE_CHART_DISCOVERY.md`. LM68B = mock panel, LM68C = live candles/zones, LM68D = read/futures integration.
+- Unified Intelligence Chart (LM68 series): lightweight-charts candlestick base with optional Lumora overlays (liquidity zones, whale markers, futures context, current read, sweep risk) behind three view modes Clean/Assisted/Full Intel; layered architecture + data contracts in `docs/brain/LM68_UNIFIED_INTELLIGENCE_CHART_DISCOVERY.md`. LM68B (mock panel) and LM68C (live Binance candles via public REST klines + kline WS in `lumora-web/lib/binance-klines.ts` + `useBinanceKlines`, with REST-poll and demo fallbacks) are done; LM68D = live overlays (heatmap zones / whale events / read).
 
 ## Completed patches
 
@@ -46,6 +46,8 @@
 - LM67A landing page discovery — The Lumora Field (plan only, no frontend code)
 - LM67B–LM67F landing page implementation — Lumora Field hero, signal tape, feature grid, cinematic polish, dynamic headline (framer-motion)
 - LM68A unified intelligence chart discovery (plan only, no frontend code)
+- LM68B intelligence chart mock panel (lightweight-charts, Clean/Assisted/Full Intel modes, overlay toggles, mock scene; mounted on Terminal + Liquidity Map)
+- LM68C Binance kline live candles (public REST snapshot + kline WS, REST poll fallback, demo fallback on failure; overlays still demo, derived relative to displayed candle range)
 
 ## Rules
 
