@@ -11,6 +11,7 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "framer-motion": "^12.40.0",
+    "lightweight-charts": "^4.2.3",
     "lucide-react": "^0.395.0",
     "next": "14.2.5",
     "react": "^18",

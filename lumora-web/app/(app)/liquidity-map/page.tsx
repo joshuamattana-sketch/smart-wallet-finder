@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageTransition } from "@/components/ui/PageTransition";
+import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker";
+import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
 import { heatmapResolvedStatus } from "@/lib/heatmap-types";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
+import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import {
   MARKET_SOURCES,
   getMarketSource,
@@ -23,7 +26,7 @@ const MIN_PRICE = 65_000;
 const MAX_PRICE = 69_500;
 const CURRENT_PRICE = 67_420;
 
-const SYMBOLS    = MARKET_SOURCES.map(m => m.symbol);
+const ALL_SYMBOLS = MARKET_SOURCES.map(m => m.symbol);
 const EXCHANGES  = ["Binance Spot", "Bybit Spot", "OKX Spot"];
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 
@@ -225,11 +228,27 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function LiquidityMapPage() {
+  const { list: watchlist } = useWatchlist();
   const [symbol,    setSymbol]    = useState("BTCUSDT");
   const [exchange,  setExchange]  = useState("Binance Spot");
   const [timeframe, setTimeframe] = useState<string>("15m");
   const [dataSource, setDataSource] = useState<DataSource>("live");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // LM68B: optional Intelligence Chart preview (mock) — collapsed by default.
+  const [showChartPreview, setShowChartPreview] = useState(false);
+
+  // Symbol options: watchlist entries (in priority order) first, then the rest
+  // of the supported MARKET_SOURCES. The currently-selected symbol always
+  // remains a valid option even if it's not in either group.
+  const orderedSymbols = useMemo<string[]>(() => {
+    const all: string[] = [...ALL_SYMBOLS];
+    const inWatch = watchlist.filter((s) => all.includes(s));
+    const inWatchSet = new Set<string>(inWatch);
+    const rest = all.filter((s) => !inWatchSet.has(s));
+    const merged = [...inWatch, ...rest];
+    return merged.includes(symbol) ? merged : [symbol, ...merged];
+  }, [watchlist, symbol]);
+  const watchSet = useMemo(() => new Set<string>(watchlist), [watchlist]);
 
   // Initialise from the last-good cache so a remount (app tab switch) shows the
   // previous chart immediately instead of an empty frame.
@@ -395,18 +414,23 @@ export default function LiquidityMapPage() {
 
       {/* Controls */}
       <Panel flush className="p-2.5 flex flex-wrap items-center gap-2">
-        {/* Symbol */}
+        {/* Symbol — watchlist entries appear first, marked with a star */}
         <div className="relative">
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
             className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-lumora-purple num cursor-pointer">
-            {SYMBOLS.map(s => (
-              <option key={s} value={s}>
-                {getMarketSource(s)?.displayName ?? s}
-              </option>
-            ))}
+            {orderedSymbols.map(s => {
+              const inWatch = watchSet.has(s);
+              const label = getMarketSource(s)?.displayName ?? s;
+              return (
+                <option key={s} value={s}>
+                  {inWatch ? "★ " : ""}{label}
+                </option>
+              );
+            })}
           </select>
           <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
         </div>
+        <WatchlistPriorityPicker />
         {/* Exchange */}
         <div className="relative">
           <select value={exchange} onChange={e => setExchange(e.target.value)}
@@ -576,6 +600,27 @@ export default function LiquidityMapPage() {
           </div>
         </Panel>
 
+      </div>
+
+      {/* LM68B: Intelligence Chart preview (mock) — optional candle view with
+          Lumora overlays. Collapsed by default so the heatmap stays primary. */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-lm-muted flex items-center gap-2">
+            Intelligence Chart · Preview
+            <StatusBadge variant="warning" size="sm">Demo</StatusBadge>
+          </h2>
+          <button
+            onClick={() => setShowChartPreview((v) => !v)}
+            className="lm-segment-btn flex items-center gap-1.5 rounded-md border border-lm-border bg-lm-surface px-2.5 py-1 text-[11px] text-lm-muted"
+          >
+            {showChartPreview ? "Hide preview" : "Show preview"}
+            <ChevronDown
+              className={clsx("h-3 w-3 transition-transform", showChartPreview && "rotate-180")}
+            />
+          </button>
+        </div>
+        {showChartPreview && <IntelligenceChartPanel height={400} />}
       </div>
 
       {/* Key zone cards — API walls when available, static fallback otherwise */}

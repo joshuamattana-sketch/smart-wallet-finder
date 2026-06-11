@@ -5,6 +5,7 @@ import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageTransition } from "@/components/ui/PageTransition";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import { mockOrderbook } from "@/lib/mock-data";
 import { clsx } from "clsx";
 import { ChevronDown, Info, RefreshCw, AlertCircle } from "lucide-react";
@@ -229,6 +230,10 @@ export default function TerminalPage() {
           {pressureText}
         </p>
       </Panel>
+
+      {/* LM68B: Unified Intelligence Chart (mock) — candles + optional
+          Lumora overlays. Demo scene only; live wiring lands in LM68C. */}
+      <IntelligenceChartPanel height={420} />
 
       {/* API error banner — only when no payload to display */}
       {apiError && !payload && (
