@@ -51,6 +51,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from services.connectors.binance_trade_stream import (  # noqa: E402
+    VALID_MARKETS,
     is_valid_binance_symbol,
     iter_binance_aggtrades,
 )
@@ -72,6 +73,7 @@ DEFAULT_SYMBOLS       = "BTCUSDT,ETHUSDT,SOLUSDT"
 DEFAULT_MIN_NOTIONAL  = 250_000.0       # global fallback when --no-use-symbol-thresholds
 DEFAULT_MAX_EVENTS    = 10
 DEFAULT_MIN_CONFIDENCE = 0.6            # global fallback when --no-use-symbol-thresholds
+DEFAULT_MARKET        = "spot"          # LM64B
 
 
 # ── CLI parsing ───────────────────────────────────────────────────────────────
@@ -178,7 +180,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="use_env_config",
         help=("Read worker config from environment variables: WORKER_SYMBOLS, "
               "WHALE_WORKER_MIN_NOTIONAL, WHALE_WORKER_TARGET, "
-              "WHALE_WORKER_FOREVER. Explicit CLI flags always win."),
+              "WHALE_WORKER_FOREVER, WHALE_WORKER_MARKET. Explicit CLI "
+              "flags always win."),
+    )
+    parser.add_argument(
+        "--market", default=DEFAULT_MARKET,
+        choices=list(VALID_MARKETS),
+        dest="market",
+        help=(f"Which Binance aggTrade venue to subscribe to: spot "
+              f"(default; wss://stream.binance.com:9443) or futures "
+              f"(USD-M perpetuals; wss://fstream.binance.com). Each event's "
+              f"source_type + exchange + metadata.market reflect this choice."),
     )
     return parser.parse_args(argv)
 
@@ -225,6 +237,11 @@ def apply_env_config(args: argparse.Namespace, *,
     if forever and "forever" not in explicit:
         if forever in _TRUTHY:
             args.forever = True
+
+    mkt = src.get("WHALE_WORKER_MARKET", "").strip().lower()
+    if mkt and "market" not in explicit:
+        if mkt in VALID_MARKETS:
+            args.market = mkt
 
     return args
 
@@ -449,6 +466,7 @@ def run_pipeline(
 
     err_fn(
         "binance aggTrade smoke runner starting "
+        f"· market={getattr(args, 'market', DEFAULT_MARKET)} "
         f"· symbols={','.join(valid)} · {threshold_label} "
         f"· max_events={max_events_cap if max_events_cap is not None else '∞'} "
         f"· forever={'YES' if getattr(args, 'forever', False) else 'no'} "
@@ -460,7 +478,12 @@ def run_pipeline(
     )
 
     try:
-        stream = iter_binance_aggtrades(valid, message_iter=message_iter, progress=err_fn)
+        stream = iter_binance_aggtrades(
+            valid,
+            message_iter=message_iter,
+            market=getattr(args, "market", DEFAULT_MARKET),
+            progress=err_fn,
+        )
     except (ValueError, RuntimeError) as exc:
         err_fn(f"error: {exc}")
         counters["stopped_reason"] = "stream_error"

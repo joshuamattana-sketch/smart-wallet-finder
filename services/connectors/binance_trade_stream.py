@@ -54,10 +54,20 @@ from typing import Any, Callable, Iterable, Iterator
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_WS_URL_SINGLE   = "wss://stream.binance.com:9443/ws/{stream}"
-_WS_URL_COMBINED = "wss://stream.binance.com:9443/stream?streams={streams}"
+# Binance Spot endpoints (default).
+_SPOT_WS_URL_SINGLE   = "wss://stream.binance.com:9443/ws/{stream}"
+_SPOT_WS_URL_COMBINED = "wss://stream.binance.com:9443/stream?streams={streams}"
 
-# Binance Spot symbols: 3–12 alphanumeric chars, no separators.
+# Binance USD-M Futures endpoints (LM64B).
+_FUTURES_WS_URL_SINGLE   = "wss://fstream.binance.com/ws/{stream}"
+_FUTURES_WS_URL_COMBINED = "wss://fstream.binance.com/stream?streams={streams}"
+
+# Back-compat aliases — keep the LM63B exported names pointing at spot.
+_WS_URL_SINGLE   = _SPOT_WS_URL_SINGLE
+_WS_URL_COMBINED = _SPOT_WS_URL_COMBINED
+
+# Binance Spot symbols: 3–12 alphanumeric chars, no separators. The same
+# regex matches USD-M futures perpetual symbols (BTCUSDT, ETHUSDT, …).
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,12}$")
 
 # Reconnect backoff bounds (used by the lazy real-network iterator).
@@ -65,8 +75,50 @@ _MIN_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 30.0
 _WS_RECV_TIMEOUT_S = 0.5
 
+# Default (spot) tagging — preserved as module-level constants for LM63B
+# callers. The market-aware helpers below pick the right values per call.
 SOURCE_TYPE = "exchange_trade"
 EXCHANGE_TAG = "binance_spot"
+
+# Per-market source_type + exchange tags. The URL templates pick spot vs
+# futures endpoints. `metadata.market` carries the explicit label so any
+# downstream consumer can filter without parsing the `exchange` string.
+VALID_MARKETS: tuple[str, ...] = ("spot", "futures")
+
+_MARKET_CONFIG: dict[str, dict[str, str]] = {
+    "spot": {
+        "source_type":  "exchange_trade",
+        "exchange":     "binance_spot",
+        "ws_single":    _SPOT_WS_URL_SINGLE,
+        "ws_combined":  _SPOT_WS_URL_COMBINED,
+    },
+    "futures": {
+        "source_type":  "futures_trade",
+        "exchange":     "binance_futures",
+        "ws_single":    _FUTURES_WS_URL_SINGLE,
+        "ws_combined":  _FUTURES_WS_URL_COMBINED,
+    },
+}
+
+
+def _require_market(market: str | None) -> dict[str, str]:
+    """
+    Strict market lookup. Raises ValueError with a clear message for unknown
+    or non-string inputs. Used by all public LM64B-aware functions to keep
+    every code path on a single source of truth for the venue.
+    """
+    if not isinstance(market, str) or market.strip().lower() not in _MARKET_CONFIG:
+        raise ValueError(
+            f"unsupported market {market!r} — must be one of "
+            f"{sorted(_MARKET_CONFIG)}"
+        )
+    return _MARKET_CONFIG[market.strip().lower()]
+
+
+# Back-compat alias: callers from earlier LM64B drafts may still import the
+# soft-fallback name. Keep it pointing at the strict resolver so behavior is
+# consistent — silent fallbacks are the bug we are fixing in LM64B-fix.
+_resolve_market = _require_market
 
 
 # ── Symbol helpers ────────────────────────────────────────────────────────────
@@ -95,23 +147,32 @@ def _clean_symbols(symbols: Iterable[Any]) -> list[str]:
 
 # ── URL builder ───────────────────────────────────────────────────────────────
 
-def build_binance_aggtrade_ws_url(symbols: Iterable[str]) -> str:
+def build_binance_aggtrade_ws_url(
+    symbols: Iterable[str],
+    market: str = "spot",
+) -> str:
     """
-    Build the public Binance Spot aggTrade WS URL for one or many symbols.
+    Build the public Binance aggTrade WS URL for one or many symbols.
 
-    One symbol  → `…/ws/{symbol}@aggTrade`
+    `market="spot"`    → `wss://stream.binance.com:9443/...`
+    `market="futures"` → `wss://fstream.binance.com/...` (USD-M perpetuals)
+
+    One symbol   → `…/ws/{symbol}@aggTrade`
     Many symbols → `…/stream?streams=sym1@aggTrade/sym2@aggTrade/…`
 
     Raises:
-        ValueError: if no valid symbols are supplied.
+        ValueError: if no valid symbols are supplied, OR if `market` is not
+                    one of the supported venues. Silent fallback to spot
+                    was removed in LM64B-fix — bad values are now an error.
     """
+    cfg = _require_market(market)
     cleaned = _clean_symbols(symbols)
     if not cleaned:
         raise ValueError("at least one valid Binance symbol is required")
     if len(cleaned) == 1:
-        return _WS_URL_SINGLE.format(stream=f"{cleaned[0].lower()}@aggTrade")
+        return cfg["ws_single"].format(stream=f"{cleaned[0].lower()}@aggTrade")
     streams = "/".join(f"{s.lower()}@aggTrade" for s in cleaned)
-    return _WS_URL_COMBINED.format(streams=streams)
+    return cfg["ws_combined"].format(streams=streams)
 
 
 # ── Message parsing ───────────────────────────────────────────────────────────
@@ -193,17 +254,28 @@ def _iso_from_ms(ts_ms: int) -> str:
         return datetime.now(timezone.utc).isoformat()
 
 
-def normalize_agg_trade_to_whale_input(parsed: dict) -> dict:
+def normalize_agg_trade_to_whale_input(
+    parsed: dict,
+    market: str = "spot",
+) -> dict:
     """
     Convert a `parse_agg_trade_message` result into a dict matching the
     `detect_whale_events` v2 item schema.
 
+    `market` controls `source_type` and `exchange`:
+        spot    → "exchange_trade" / "binance_spot"     (LM63B, default)
+        futures → "futures_trade"  / "binance_futures"  (LM64B)
+
+    Unknown markets fall back to spot semantics. The chosen label is also
+    stamped into `metadata.market` so consumers can filter without parsing
+    the `exchange` string.
+
     Returns:
         {
-          source_type:   "exchange_trade",
+          source_type:   "exchange_trade" | "futures_trade",
           symbol:        "BTCUSDT",
           chain:         "",
-          exchange:      "binance_spot",
+          exchange:      "binance_spot" | "binance_futures",
           side:          "buy" | "sell",
           amount:        float,
           price:         float,
@@ -212,7 +284,8 @@ def normalize_agg_trade_to_whale_input(parsed: dict) -> dict:
           tx_hash:       "agg:{symbol}:{agg_id}",
           event_ts:      ISO 8601 UTC,
           metadata: { "agg_trade_id": int, "source": "binance_aggtrade",
-                      "trade_ts_ms": int, "is_maker": bool },
+                      "trade_ts_ms": int, "is_maker": bool,
+                      "market": "spot" | "futures" },
         }
 
     Raises:
@@ -221,6 +294,9 @@ def normalize_agg_trade_to_whale_input(parsed: dict) -> dict:
     """
     if not isinstance(parsed, dict):
         raise TypeError(f"parsed must be a dict, got {type(parsed).__name__}")
+
+    cfg = _require_market(market)
+    market_label = "futures" if cfg is _MARKET_CONFIG["futures"] else "spot"
 
     agg_id      = int(parsed["agg_id"])
     symbol      = str(parsed["symbol"]).strip().upper()
@@ -233,10 +309,10 @@ def normalize_agg_trade_to_whale_input(parsed: dict) -> dict:
     notional_usd = round(price * quantity, 8)
 
     return {
-        "source_type":  SOURCE_TYPE,
+        "source_type":  cfg["source_type"],
         "symbol":       symbol,
         "chain":        "",
-        "exchange":     EXCHANGE_TAG,
+        "exchange":     cfg["exchange"],
         "side":         side,
         "amount":       quantity,
         "price":        price,
@@ -249,6 +325,7 @@ def normalize_agg_trade_to_whale_input(parsed: dict) -> dict:
             "source":       "binance_aggtrade",
             "trade_ts_ms":  trade_ts_ms,
             "is_maker":     is_maker,
+            "market":       market_label,
         },
     }
 
@@ -259,11 +336,16 @@ def iter_binance_aggtrades(
     symbols: Iterable[str],
     message_iter: Iterable[Any] | None = None,
     *,
+    market: str = "spot",
     symbol_filter: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> Iterator[dict]:
     """
-    Yield whale-engine v2 input dicts from a Binance Spot aggTrade WS feed.
+    Yield whale-engine v2 input dicts from a Binance aggTrade WS feed.
+
+    `market` selects the Spot or USD-M Futures endpoint and tag:
+        "spot"    → wss://stream.binance.com:9443/...   (default)
+        "futures" → wss://fstream.binance.com/...        (LM64B)
 
     When `message_iter` is None the real public WebSocket is opened via
     a lazy `websocket-client` import and the iterator stays alive across
@@ -272,11 +354,13 @@ def iter_binance_aggtrades(
     a file).
 
     Args:
-        symbols:        Iterable of Binance Spot symbols. Invalid entries
+        symbols:        Iterable of Binance symbols. Invalid entries
                         are skipped without raising.
         message_iter:   Optional pre-supplied iterable of raw WS frames
                         (str/bytes/dict). When None, a real WS connection
                         is opened.
+        market:         "spot" (default) or "futures". Unknown values fall
+                        back to spot to preserve LM63B behavior.
         symbol_filter:  When True (default), normalized records whose
                         `symbol` is not in the cleaned symbol set are
                         dropped. Set False to pass everything through.
@@ -291,13 +375,17 @@ def iter_binance_aggtrades(
         RuntimeError: if real WS is requested but `websocket-client` is
                       not installed.
     """
+    # Validate the market UP-FRONT so a bad value never silently degrades to
+    # the spot endpoint partway through the loop.
+    _require_market(market)
+
     cleaned = _clean_symbols(symbols)
     if not cleaned:
         raise ValueError("at least one valid Binance symbol is required")
     allowed: set[str] = set(cleaned)
 
     if message_iter is None:
-        url = build_binance_aggtrade_ws_url(cleaned)
+        url = build_binance_aggtrade_ws_url(cleaned, market=market)
         message_iter = _default_ws_messages_with_reconnect(url, progress=progress)
 
     for raw in message_iter:
@@ -311,7 +399,7 @@ def iter_binance_aggtrades(
         if symbol_filter and parsed["symbol"] not in allowed:
             continue
         try:
-            yield normalize_agg_trade_to_whale_input(parsed)
+            yield normalize_agg_trade_to_whale_input(parsed, market=market)
         except (TypeError, KeyError, ValueError):
             # Defensive: never let one malformed message kill the stream.
             continue
@@ -379,6 +467,7 @@ __all__ = [
     "normalize_agg_trade_to_whale_input",
     "iter_binance_aggtrades",
     "is_valid_binance_symbol",
+    "VALID_MARKETS",
     "SOURCE_TYPE",
     "EXCHANGE_TAG",
 ]

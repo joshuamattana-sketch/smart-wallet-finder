@@ -403,6 +403,7 @@ def _build_args(**overrides) -> "object":
         forever=False,                # LM63J — worker mode off
         heartbeat_interval=0.0,       # LM63J — quiet in tests by default
         use_env_config=False,         # LM63J — env reader off in tests
+        market="spot",                # LM64B — spot default
     )
     for k, v in overrides.items():
         setattr(ns, k, v)
@@ -1345,3 +1346,291 @@ class TestSupabaseEnvReady:
         assert ok is False
         assert "SUPABASE_URL" in msg
         assert "SUPABASE_SERVICE_ROLE_KEY" in msg
+
+
+# ── LM64B: Binance Futures aggTrade support ──────────────────────────────────
+
+class TestFuturesUrlBuilder:
+    def test_single_symbol_futures_endpoint(self):
+        url = build_binance_aggtrade_ws_url(["BTCUSDT"], market="futures")
+        assert url == "wss://fstream.binance.com/ws/btcusdt@aggTrade"
+
+    def test_multi_symbol_futures_combined_endpoint(self):
+        url = build_binance_aggtrade_ws_url(
+            ["BTCUSDT", "ETHUSDT"], market="futures",
+        )
+        assert url.startswith("wss://fstream.binance.com/stream?streams=")
+        assert "btcusdt@aggTrade" in url
+        assert "ethusdt@aggTrade" in url
+
+    def test_default_market_is_spot(self):
+        # LM63B back-compat — explicit assertion that the no-market call
+        # still routes to the spot endpoint.
+        url = build_binance_aggtrade_ws_url(["BTCUSDT"])
+        assert url == "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+
+    def test_unknown_market_raises_clear_error(self):
+        # LM64B-fix: silent fallback removed. A bad market must error out
+        # before we open a websocket to the wrong venue.
+        with pytest.raises(ValueError) as exc_info:
+            build_binance_aggtrade_ws_url(["BTCUSDT"], market="bogus")
+        msg = str(exc_info.value)
+        assert "unsupported market" in msg
+        assert "spot" in msg
+        assert "futures" in msg
+
+    def test_non_string_market_raises(self):
+        with pytest.raises(ValueError):
+            build_binance_aggtrade_ws_url(["BTCUSDT"], market=None)  # type: ignore[arg-type]
+        with pytest.raises(ValueError):
+            build_binance_aggtrade_ws_url(["BTCUSDT"], market=42)    # type: ignore[arg-type]
+
+    def test_no_valid_symbols_still_raises(self):
+        with pytest.raises(ValueError):
+            build_binance_aggtrade_ws_url([], market="futures")
+
+    def test_spot_url_uses_stream_binance_com_base(self):
+        url = build_binance_aggtrade_ws_url(["BTCUSDT", "ETHUSDT"], market="spot")
+        assert url.startswith("wss://stream.binance.com:9443/")
+        assert "fstream.binance.com" not in url
+
+    def test_futures_url_uses_fstream_binance_com_base(self):
+        url = build_binance_aggtrade_ws_url(["BTCUSDT", "ETHUSDT"], market="futures")
+        assert url.startswith("wss://fstream.binance.com/")
+        assert "stream.binance.com:9443" not in url
+
+
+class TestFuturesNormalization:
+    def test_source_type_and_exchange_for_futures(self):
+        parsed = parse_agg_trade_message(_agg_trade(agg_id=1, symbol="BTCUSDT"))
+        assert parsed is not None
+        out = normalize_agg_trade_to_whale_input(parsed, market="futures")
+        assert out["source_type"] == "futures_trade"
+        assert out["exchange"]    == "binance_futures"
+        assert out["metadata"]["market"] == "futures"
+
+    def test_source_type_and_exchange_for_spot_default(self):
+        parsed = parse_agg_trade_message(_agg_trade(agg_id=1, symbol="BTCUSDT"))
+        assert parsed is not None
+        out = normalize_agg_trade_to_whale_input(parsed)  # default
+        assert out["source_type"] == "exchange_trade"
+        assert out["exchange"]    == "binance_spot"
+        assert out["metadata"]["market"] == "spot"
+
+    def test_unknown_market_raises_in_normalize(self):
+        parsed = parse_agg_trade_message(_agg_trade(agg_id=2, symbol="BTCUSDT"))
+        assert parsed is not None
+        with pytest.raises(ValueError) as exc_info:
+            normalize_agg_trade_to_whale_input(parsed, market="lol")
+        assert "unsupported market" in str(exc_info.value)
+
+    def test_side_mapping_identical_across_markets(self):
+        # Maker flag → SELL aggressor on both venues.
+        for market in ("spot", "futures"):
+            parsed = parse_agg_trade_message(
+                _agg_trade(agg_id=99, symbol="BTCUSDT", is_maker=True),
+            )
+            assert parsed is not None
+            out = normalize_agg_trade_to_whale_input(parsed, market=market)
+            assert out["side"] == "sell", f"market={market}"
+
+    def test_notional_math_identical_across_markets(self):
+        for market in ("spot", "futures"):
+            parsed = parse_agg_trade_message(
+                _agg_trade(agg_id=1, symbol="BTCUSDT",
+                           price=1234.5, quantity=2.0),
+            )
+            assert parsed is not None
+            out = normalize_agg_trade_to_whale_input(parsed, market=market)
+            assert out["notional_usd"] == pytest.approx(2469.0), \
+                f"market={market}"
+
+
+class TestFuturesIterator:
+    def test_yields_futures_normalised_records(self):
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        out = list(iter_binance_aggtrades(
+            ["BTCUSDT"], message_iter=iter(msgs), market="futures",
+        ))
+        assert len(out) == 1
+        assert out[0]["source_type"] == "futures_trade"
+        assert out[0]["exchange"]    == "binance_futures"
+        assert out[0]["metadata"]["market"] == "futures"
+
+    def test_default_market_yields_spot_records(self):
+        msgs = [json.dumps(_agg_trade(agg_id=1, symbol="BTCUSDT"))]
+        out = list(iter_binance_aggtrades(["BTCUSDT"], message_iter=iter(msgs)))
+        assert out[0]["exchange"] == "binance_spot"
+
+    def test_iterator_validates_market_up_front(self):
+        # Bad market must raise BEFORE any websocket is opened or any
+        # message is consumed.
+        with pytest.raises(ValueError):
+            # Wrap the generator in list() to force the entry/setup phase.
+            list(iter_binance_aggtrades(
+                ["BTCUSDT"], message_iter=iter([]), market="oops",
+            ))
+
+
+class TestFuturesIteratorTransportUrl:
+    """
+    Guard against the LM64B-fix regression: when `message_iter is None`,
+    the iterator must hand the *futures* base URL to the WS transport for
+    `market="futures"`. Spot must keep the spot base URL.
+    """
+
+    def _capture_url(self, market: str) -> str:
+        """Monkey-patch the real-network transport, return the URL it saw."""
+        import services.connectors.binance_trade_stream as bts
+        captured: list[str] = []
+        original = bts._default_ws_messages_with_reconnect
+
+        def fake(url, progress=None):
+            captured.append(url)
+            return iter([])
+
+        bts._default_ws_messages_with_reconnect = fake  # type: ignore[assignment]
+        try:
+            # message_iter=None → iterator builds a URL and hands it to the
+            # (now mocked) transport. The generator exits immediately.
+            list(bts.iter_binance_aggtrades(
+                ["BTCUSDT", "ETHUSDT"], market=market,
+            ))
+        finally:
+            bts._default_ws_messages_with_reconnect = original  # type: ignore[assignment]
+        assert len(captured) == 1, f"expected one URL, got {captured!r}"
+        return captured[0]
+
+    def test_futures_iterator_opens_fstream_url(self):
+        url = self._capture_url("futures")
+        assert url.startswith("wss://fstream.binance.com/"), (
+            f"futures must use fstream.binance.com but got {url!r}"
+        )
+        assert "stream.binance.com:9443" not in url
+
+    def test_spot_iterator_opens_stream_url(self):
+        url = self._capture_url("spot")
+        assert url.startswith("wss://stream.binance.com:9443/"), (
+            f"spot must use stream.binance.com:9443 but got {url!r}"
+        )
+        assert "fstream.binance.com" not in url
+
+
+class TestSupabaseRowCarriesMarket:
+    def test_futures_row_preserves_source_type_and_exchange(self):
+        from services.whale_event_supabase_writer import (
+            build_whale_event_supabase_row,
+        )
+        parsed = parse_agg_trade_message(_agg_trade(
+            agg_id=42, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))
+        assert parsed is not None
+        ev = normalize_agg_trade_to_whale_input(parsed, market="futures")
+        row = build_whale_event_supabase_row(ev)
+        assert row is not None
+        assert row["source_type"] == "futures_trade"
+        assert row["exchange"]    == "binance_futures"
+        # payload also keeps the event verbatim, including metadata.market.
+        assert row["payload"]["event"]["metadata"]["market"] == "futures"
+
+
+class TestSmokeRunnerMarketFlag:
+    def _run(self, *, msgs, **arg_overrides):
+        from scripts.run_binance_trade_stream_smoke import run_pipeline
+        args = _build_args(**arg_overrides)
+        out_lines: list[str] = []
+        err_lines: list[str] = []
+        counters = run_pipeline(
+            args=args,
+            message_iter=iter(msgs),
+            sender=_FakeSender(),
+            supabase_writer=_FakeSupabaseWriter(),
+            print_fn=out_lines.append,
+            err_fn=err_lines.append,
+            env=dict(_VALID_SUPABASE_ENV),
+        )
+        return counters, out_lines, err_lines
+
+    def test_market_futures_writes_futures_source_type(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            target="jsonl", journal_path=str(path),
+            market="futures",
+        )
+        assert counters["events"] == 1
+        assert counters["journaled"] == 1
+
+        rows = read_whale_event_journal(path)
+        assert len(rows) == 1
+        event = rows[0]["event"]
+        assert event["source_type"] == "futures_trade"
+        assert event["exchange"]    == "binance_futures"
+        assert event["metadata"]["market"] == "futures"
+
+    def test_default_market_remains_spot(self, tmp_path):
+        from services.whale_event_journal import read_whale_event_journal
+
+        path = tmp_path / "whales.jsonl"
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        counters, _out, _err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            target="jsonl", journal_path=str(path),
+            # market omitted → spot
+        )
+        assert counters["events"] == 1
+        rows = read_whale_event_journal(path)
+        assert rows[0]["event"]["source_type"] == "exchange_trade"
+        assert rows[0]["event"]["exchange"]    == "binance_spot"
+
+    def test_startup_banner_mentions_market(self):
+        msgs = [json.dumps(_agg_trade(
+            agg_id=1, symbol="BTCUSDT", price=70_000, quantity=20.0,
+        ))]
+        _counters, _out, err = self._run(
+            msgs=msgs, symbols="BTCUSDT", min_notional=250_000,
+            market="futures",
+        )
+        assert any("market=futures" in line for line in err)
+
+
+class TestApplyEnvConfigMarket:
+    def _ns(self, **kw):
+        import argparse
+        base = dict(
+            symbols="BTCUSDT", min_notional=None, target="stdout",
+            forever=False, use_env_config=False, market="spot",
+        )
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_env_market_applied_when_enabled(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True)
+        apply_env_config(ns, env={"WHALE_WORKER_MARKET": "futures"}, argv=[])
+        assert ns.market == "futures"
+
+    def test_explicit_cli_market_wins_over_env(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True, market="spot")
+        apply_env_config(
+            ns,
+            env={"WHALE_WORKER_MARKET": "futures"},
+            argv=["--market", "spot"],
+        )
+        assert ns.market == "spot"
+
+    def test_invalid_env_market_ignored(self):
+        from scripts.run_binance_trade_stream_smoke import apply_env_config
+        ns = self._ns(use_env_config=True)
+        apply_env_config(ns, env={"WHALE_WORKER_MARKET": "rabbit"}, argv=[])
+        assert ns.market == "spot"

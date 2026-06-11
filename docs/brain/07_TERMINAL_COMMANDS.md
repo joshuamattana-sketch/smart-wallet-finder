@@ -640,6 +640,65 @@ WHALE_WORKER_FOREVER=true
 - Never commit any env file (`.env*`, `*.env`, `whale-worker.env`).
 - Rotate the service-role key if it ever appears in logs / screenshots / chat threads.
 
+## LM64B Binance Futures aggTrade Stream (--market flag)
+
+The whale worker now supports the **Binance USD-M Futures** aggTrade stream as an optional venue alongside the existing Spot feed. Spot remains the default — no existing behavior or schema changed.
+
+### CLI
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# Spot (default — unchanged):
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT
+
+# USD-M futures perpetuals:
+python scripts/run_binance_trade_stream_smoke.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --market futures
+```
+
+Env-config variant (new `WHALE_WORKER_MARKET`):
+
+```powershell
+$env:WHALE_WORKER_MARKET = "futures"
+python scripts/run_binance_trade_stream_smoke.py --use-env-config
+```
+
+### What changes per market
+
+| Field | spot (default) | futures |
+|---|---|---|
+| WS endpoint | `wss://stream.binance.com:9443/...` | `wss://fstream.binance.com/...` |
+| `source_type` | `exchange_trade` | `futures_trade` |
+| `exchange` | `binance_spot` | `binance_futures` |
+| `metadata.market` | `spot` | `futures` |
+
+The Supabase `whale_events` row carries `source_type`, `exchange`, and the full `metadata` block in `payload` — **no schema change needed** to filter by market in SQL later. Side mapping (`m == true` → SELL aggressor), notional math, and per-symbol thresholds are identical across markets.
+
+### What we still don't claim
+
+LM64B is *flow only*. Even on the futures stream, **leverage per trade is not in the public payload** and Lumora never claims it. The richer derived signals (`leverage_heat`, `oi_expansion`, funding-based context) arrive in **LM64C** (funding/OI poller) and **LM64D** (force-order stream + composite).
+
+### Run the tests
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/connectors/test_binance_trade_stream.py
+python -m compileall services scripts tests
+```
+
+### LM64B-fix — strict market validation + URL regression guard
+
+Two safety nets added so the futures WS endpoint is the one actually opened:
+
+1. **Strict market validation.** Unknown values for `--market` (or the `market=` kwarg) now raise `ValueError` with a clear message — silent fallback to spot was removed.
+
+   ```
+   ValueError: unsupported market 'bogus' — must be one of ['futures', 'spot']
+   ```
+
+2. **Iterator transport-URL guard.** `iter_binance_aggtrades(market="futures", message_iter=None)` is asserted (in tests) to hand a `wss://fstream.binance.com/...` URL to the websocket transport. If a future edit ever wires the wrong base URL through, the test fails before any real network call.
+
+If you observe `ws connecting: wss://stream.binance.com:9443/...` while running with `--market futures`, you are on an **old build**. Re-pull and re-deploy — the current code raises long before that mismatch is possible.
+
 ```
 
 ```
