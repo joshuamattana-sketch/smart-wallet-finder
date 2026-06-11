@@ -1,228 +1,274 @@
 import Link from "next/link";
-import { Activity, Zap, Layers, Bell, BookOpen, Monitor, ArrowRight, MessageCircle } from "lucide-react";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { Badge } from "@/components/ui/Badge";
-import { roadmapItems } from "@/lib/mock-data";
+import { Activity, ArrowRight, MessageCircle } from "lucide-react";
+import { Panel } from "@/components/ui/Panel";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { LumoraFieldHero } from "@/components/landing/LumoraFieldHero";
+import { MarketReplayStrip } from "@/components/landing/MarketReplayStrip";
+import { LandingFeatureGrid } from "@/components/landing/LandingFeatureGrid";
 import { clsx } from "clsx";
 
-const features = [
+// ── Capabilities ticker — scrolling intelligence readout ─────────────────────
+const PAGE_CSS = `
+@media (prefers-reduced-motion: no-preference) {
+  .lmk-track { animation: lmk-marquee 34s linear infinite; }
+  .lmk-track:hover { animation-play-state: paused; }
+  @keyframes lmk-marquee {
+    to { transform: translateX(-50%); }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lmk-track { width: 100%; flex-wrap: wrap; justify-content: center; }
+  .lmk-dup { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .lmb-drop { animation: lmb-drop 2.4s ease-in-out infinite; }
+  @keyframes lmb-drop {
+    0%   { transform: translateY(0); opacity: 0; }
+    18%  { opacity: 0.9; }
+    82%  { opacity: 0.9; }
+    100% { transform: translateY(40px); opacity: 0; }
+  }
+}
+`;
+
+const CAPABILITIES = [
+  "Orderbook depth · L2",
+  "Whale tape · aggTrade",
+  "Funding + open interest",
+  "Liquidity heatmap",
+  "Sweep risk zones",
+  "Market reads",
+  "Discord alerts",
+];
+
+// ── Market read examples ─────────────────────────────────────────────────────
+// Illustrative Current Read cards in the app's own visual language — the
+// landing-page proof that Lumora's output is a sentence, not a dashboard dump.
+
+type Bias = "LONG" | "SHORT" | "NEUTRAL";
+
+const READS: Array<{
+  symbol: string;
+  bias: Bias;
+  score: number;
+  risk: "LOW" | "MEDIUM" | "HIGH";
+  reason: string;
+  action: string;
+}> = [
   {
-    icon: Monitor,
-    title: "Pro Orderbook Terminal",
-    desc: "Real-time bid/ask depth with wall detection, pressure ratio, and size-highlighted rows — built for fast reads.",
-    badge: "Live",
+    symbol: "BTCUSDT",
+    bias: "LONG",
+    score: 72,
+    risk: "MEDIUM",
+    reason: "Bid intensity 58% vs 42% ask — buyers leading into a support band that has held twice.",
+    action: "Watch reclaim of 67,500 · read invalidates below 66,800.",
   },
   {
-    icon: Layers,
-    title: "Liquidity Maps",
-    desc: "Bookmap-style heatmap showing where large liquidity clusters over time. Spot walls before price hits them.",
-    badge: "Beta",
+    symbol: "ETHUSDT",
+    bias: "NEUTRAL",
+    score: 41,
+    risk: "LOW",
+    reason: "Order book balanced near 50/50 — no clean directional edge in the current structure.",
+    action: "Stand aside · wait for a sweep of either liquidity band.",
   },
   {
-    icon: Zap,
-    title: "Whale Alert Engine",
-    desc: "Track large spot and derivatives whale activity across Binance, Bybit, OKX and Coinbase in real time.",
-    badge: "Live",
-  },
-  {
-    icon: Activity,
-    title: "AI Market Bias",
-    desc: "Multi-signal engine combines CVD, OI, tape absorption and liquidity to generate directional conviction scores.",
-    badge: "Q3 2026",
-  },
-  {
-    icon: Bell,
-    title: "Smart Alerts",
-    desc: "Custom webhook and Discord alerts when your exact price + size conditions are met. No noise.",
-    badge: "Q4 2026",
-  },
-  {
-    icon: BookOpen,
-    title: "Paper Trading",
-    desc: "Test your edge with mock capital, structured journaling and P&L tracking — zero risk.",
-    badge: "Beta",
+    symbol: "SOLUSDT",
+    bias: "SHORT",
+    score: 64,
+    risk: "HIGH",
+    reason: "Ask wall rebuilt twice above price while futures positioning leans crowded long.",
+    action: "Pressure favors sellers into 168.50 · read invalidates above 172.",
   },
 ];
 
+function biasClass(b: Bias): string {
+  return b === "LONG" ? "text-emerald-400" : b === "SHORT" ? "text-red-400" : "text-lm-text-dim";
+}
+function riskVariant(r: "LOW" | "MEDIUM" | "HIGH"): "live" | "warning" | "error" {
+  return r === "LOW" ? "live" : r === "MEDIUM" ? "warning" : "error";
+}
+
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-lumora-bg overflow-hidden">
+    <div className="min-h-screen bg-lm-bg">
+      <style dangerouslySetInnerHTML={{ __html: PAGE_CSS }} />
+
       {/* Nav */}
-      <nav className="sticky top-0 z-50 border-b border-lumora-border bg-lumora-bg/80 backdrop-blur-xl">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+      <nav className="lm-topnav sticky top-0 z-50">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-lumora-purple" strokeWidth={2.5} />
-            <span className="text-lg font-semibold text-neon-purple">Lumora</span>
+            <Activity className="h-5 w-5 text-lm-purple" strokeWidth={2.5} />
+            <span className="lm-brand text-[15px] text-lm-text">Lumora</span>
           </div>
           <div className="flex items-center gap-3">
-            <Badge variant="purple">
-              <span className="mr-1 h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse inline-block" />
-              Private Beta
-            </Badge>
+            <StatusBadge variant="neutral" size="sm" className="hidden sm:inline-flex">
+              PRIVATE BETA
+            </StatusBadge>
             <Link
               href="/dashboard"
-              className="px-4 py-1.5 rounded-lg bg-lumora-purple text-white text-sm font-medium hover:bg-purple-500 transition-colors"
+              className="rounded-md bg-cyan-400 px-3.5 py-1.5 text-[13px] font-semibold text-zinc-950 transition-colors hover:bg-cyan-300"
             >
-              Open App
+              Launch terminal
             </Link>
           </div>
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="relative pt-24 pb-16 px-4 text-center overflow-hidden">
-        <div className="absolute inset-0 bg-hero-glow pointer-events-none" />
-        <div className="relative mx-auto max-w-3xl">
-          <Badge variant="purple" className="mb-6 text-xs">
-            Now in Private Beta — Limited Access
-          </Badge>
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-lumora-text leading-tight">
-            Market Intelligence for
-            <br />
-            <span className="text-neon-purple">Serious Crypto Traders</span>
-          </h1>
-          <p className="mt-6 text-lg text-lumora-text-dim max-w-2xl mx-auto leading-relaxed">
-            See liquidity walls, whale activity and orderbook pressure before they become obvious on the chart.
-          </p>
-          <p className="mt-3 text-sm text-lumora-muted max-w-xl mx-auto">
-            Lumora combines orderbook depth, liquidity mapping, whale alerts and market setup context in one premium trading terminal.
-            <span className="block mt-1.5 text-[12px] text-lumora-border">Demo data shown — live data integrations coming.</span>
-          </p>
-          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-            <Link
-              href="/dashboard"
-              className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-lumora-purple text-white font-semibold hover:bg-purple-500 transition-colors shadow-neon-purple"
-            >
-              Open App <ArrowRight className="h-4 w-4" />
-            </Link>
-            {/* TODO: replace with Lumora Discord invite */}
-            <a
-              href="#"
-              className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-lumora-border text-lumora-text font-medium hover:border-lumora-purple/50 hover:bg-lumora-surface transition-all"
-            >
-              <MessageCircle className="h-4 w-4 text-lumora-cyan" />
-              Join Discord
-            </a>
-          </div>
-        </div>
-      </section>
+      {/* 1+2 — Hero with The Lumora Field */}
+      <LumoraFieldHero />
 
-      {/* Context not noise */}
-      <section className="py-8 px-4">
-        <div className="mx-auto max-w-4xl">
-          <GlassCard className="px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center gap-4" glow="none">
-            <div className="flex-1">
-              <p className="text-base font-semibold text-lumora-text">
-                Built for traders who need context, not noise.
-              </p>
-              <p className="text-sm text-lumora-muted mt-1">
-                Lumora surfaces the information behind the price move — bid/ask walls, whale flow and liquidity gaps — so
-                you can act on context rather than react to candles.
-              </p>
-            </div>
-            <div className="shrink-0">
-              <Badge variant="muted" className="text-[11px]">Demo data shown · Live integrations coming</Badge>
-            </div>
-          </GlassCard>
+      {/* Capabilities ticker */}
+      <div className="overflow-hidden border-y border-lm-border/60 py-2.5">
+        <div className="lmk-track num flex w-max items-center text-[9px] uppercase tracking-[0.18em] text-lm-muted">
+          {CAPABILITIES.map((c) => (
+            <span key={c} className="flex items-center gap-3 pr-3">
+              <span>{c}</span>
+              <span className="text-lm-border">/</span>
+            </span>
+          ))}
+          {CAPABILITIES.map((c) => (
+            <span key={`dup-${c}`} aria-hidden className="lmk-dup flex items-center gap-3 pr-3">
+              <span>{c}</span>
+              <span className="text-lm-border">/</span>
+            </span>
+          ))}
         </div>
-      </section>
+      </div>
 
-      {/* Feature cards */}
-      <section className="py-12 px-4">
+      {/* 3 — Signal tape (staged market replay) */}
+      <MarketReplayStrip />
+
+      {/* Bridge — from the tape to the field */}
+      <div className="flex flex-col items-center px-4 pb-2 pt-8 text-center">
+        <span className="num text-[9px] uppercase tracking-[0.22em] text-lm-muted">
+          From the tape to the field
+        </span>
+        <h2 className="mt-3 max-w-xl text-xl font-semibold tracking-tight text-lm-text sm:text-2xl">
+          From raw market events to a{" "}
+          <span className="bg-gradient-to-r from-cyan-300 to-sky-500 bg-clip-text text-transparent">
+            readable pressure map
+          </span>
+          .
+        </h2>
+        <div className="relative mt-6 h-12 w-px bg-gradient-to-b from-zinc-700 to-transparent">
+          <span className="lmb-drop absolute -left-[2px] top-0 h-[5px] w-[5px] rounded-full bg-cyan-400/70" />
+        </div>
+      </div>
+
+      {/* 4 — What Lumora reads */}
+      <LandingFeatureGrid />
+
+      {/* 5 — Market read examples */}
+      <section className="px-4 py-9">
         <div className="mx-auto max-w-6xl">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold text-lumora-text">Everything you need. Nothing you don&apos;t.</h2>
-            <p className="text-lumora-muted mt-2">Built around the workflows of professional traders, not retail apps.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {features.map(({ icon: Icon, title, desc, badge }) => (
-              <GlassCard key={title} className="p-5" hover>
-                <div className="flex items-start justify-between mb-3">
-                  <div className="p-2 rounded-lg bg-lumora-purple/15">
-                    <Icon className="h-5 w-5 text-lumora-purple" />
-                  </div>
-                  <Badge variant={badge === "Live" ? "green" : badge === "Beta" ? "cyan" : "muted"}>
-                    {badge}
-                  </Badge>
-                </div>
-                <h3 className="font-semibold text-lumora-text mb-1.5">{title}</h3>
-                <p className="text-sm text-lumora-text-dim leading-relaxed">{desc}</p>
-              </GlassCard>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Beta CTA */}
-      <section className="py-16 px-4">
-        <div className="mx-auto max-w-2xl text-center">
-          <GlassCard className="p-10" glow="purple">
-            <Badge variant="purple" className="mb-4">Limited Beta Access</Badge>
-            <h2 className="text-2xl font-bold text-lumora-text mb-3">Get early access to Lumora</h2>
-            <p className="text-lumora-muted mb-6 text-sm">
-              We&apos;re onboarding a small group of serious traders. Join the waitlist or request access via Discord.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <button className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-lumora-purple text-white font-semibold hover:bg-purple-500 transition-colors">
-                Request Beta Access
-              </button>
-              {/* TODO: replace with Lumora Discord invite */}
-              <a
-                href="#"
-                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-lumora-border text-lumora-text font-medium hover:border-lumora-cyan/50 transition-all"
-              >
-                <MessageCircle className="h-4 w-4 text-lumora-cyan" />
-                Join Discord
-              </a>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <span className="lm-section-title">03 · The read</span>
+              <h2 className="mt-2 text-xl font-semibold tracking-tight text-lm-text">
+                The output is a read, not another wall of charts.
+              </h2>
+              <p className="mt-1 text-[13px] text-lm-text-dim">
+                Bias, score, risk — and the reason behind it, in one sentence.
+              </p>
             </div>
-          </GlassCard>
+            <StatusBadge variant="warning" size="sm">Illustrative</StatusBadge>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {READS.map((r) => (
+              <Panel key={r.symbol} flush hover className="lm-accent-top-cyan p-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="num text-[11px] font-semibold uppercase tracking-widest text-lm-text">
+                    {r.symbol}
+                  </span>
+                  <StatusBadge variant={riskVariant(r.risk)} size="sm">
+                    {r.risk} RISK
+                  </StatusBadge>
+                </div>
+                <div className="mt-2.5 flex items-baseline gap-2.5">
+                  <span className={clsx("lm-price text-xl leading-none", biasClass(r.bias))}>
+                    {r.bias}
+                  </span>
+                  <span className="num text-[12px] font-semibold text-lm-text">
+                    {r.score}
+                    <span className="text-[9px] text-lm-muted">/100</span>
+                  </span>
+                </div>
+                <p className="mt-2.5 text-[11.5px] leading-snug text-lm-text-dim">{r.reason}</p>
+                <div className="lm-verdict-rule mt-2.5">
+                  <p className="text-[9px] uppercase tracking-widest text-lm-muted">Action context</p>
+                  <p className="mt-0.5 text-[11.5px] font-medium leading-snug text-lm-text">{r.action}</p>
+                </div>
+              </Panel>
+            ))}
+          </div>
+          <p className="mt-2.5 px-1 text-[10px] leading-snug text-lm-muted">
+            Illustrative examples, not live signals or trade recommendations. Reads describe
+            market structure — they do not predict outcomes.
+          </p>
         </div>
       </section>
 
-      {/* Roadmap */}
-      <section className="py-16 px-4">
-        <div className="mx-auto max-w-5xl">
-          <div className="text-center mb-10">
-            <h2 className="text-2xl font-bold text-lumora-text">Roadmap</h2>
-            <p className="text-lumora-muted mt-2">Where we&apos;re going and how fast we&apos;re getting there.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {roadmapItems.map((item) => (
-              <GlassCard key={item.phase} className="p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <Badge
-                    variant={item.status === "active" ? "green" : item.status === "upcoming" ? "cyan" : "muted"}
-                  >
-                    {item.status === "active" ? "In Progress" : item.status === "upcoming" ? "Up Next" : "Planned"}
-                  </Badge>
-                  <span className="num text-xs text-lumora-muted">{item.phase}</span>
-                </div>
-                <h3 className="font-semibold text-lumora-text mb-3">{item.title}</h3>
-                <ul className="space-y-1.5">
-                  {item.items.map((it) => (
-                    <li key={it} className="text-xs text-lumora-text-dim flex items-start gap-1.5">
-                      <span className={clsx("mt-1 h-1 w-1 rounded-full shrink-0",
-                        item.status === "active" ? "bg-green-400" : item.status === "upcoming" ? "bg-cyan-400" : "bg-lumora-border"
-                      )} />
-                      {it}
-                    </li>
-                  ))}
-                </ul>
-              </GlassCard>
-            ))}
+      {/* 6 — Early access CTA */}
+      <section className="relative overflow-hidden px-4 py-14">
+        {/* Ambient glow behind the CTA */}
+        <div aria-hidden className="pointer-events-none absolute inset-0">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_45%_60%_at_50%_50%,rgba(34,211,238,0.06),transparent_70%)]" />
+        </div>
+        <div className="relative mx-auto max-w-2xl">
+          {/* Gradient hairline border */}
+          <div className="rounded-lg bg-gradient-to-r from-cyan-500/25 via-purple-500/20 to-emerald-500/25 p-px">
+            <div className="rounded-[7px] bg-lm-surface px-6 py-8 text-center sm:px-10 sm:py-10">
+              <span className="num text-[9px] uppercase tracking-[0.22em] text-lm-muted">
+                Early access
+              </span>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-lm-text">
+                Read the market with Lumora
+              </h2>
+              <p className="mx-auto mt-2.5 max-w-md text-[13px] leading-relaxed text-lm-text-dim">
+                We&apos;re onboarding a small group of traders during private beta. Open the
+                terminal with demo data today, or join the Discord for live-integration updates.
+              </p>
+              <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-colors hover:bg-cyan-300"
+                >
+                  Launch terminal <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+                {/* TODO: replace with Lumora Discord invite */}
+                <a
+                  href="#"
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-lm-border px-5 py-2.5 text-[13px] font-medium text-lm-text-dim transition-colors hover:border-zinc-600 hover:text-lm-text"
+                >
+                  <MessageCircle className="h-3.5 w-3.5 text-lm-cyan" />
+                  Join the Discord
+                </a>
+              </div>
+              <p className="mt-5 text-[10px] leading-snug text-lm-muted">
+                Lumora provides informational market context only — no guaranteed outcomes,
+                no financial advice.
+              </p>
+            </div>
           </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-lumora-border py-8 px-4">
-        <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4">
+      <footer className="border-t border-lm-border px-4 py-7">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 sm:flex-row">
           <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-lumora-purple" />
-            <span className="text-sm font-semibold text-neon-purple">Lumora</span>
-            <span className="text-xs text-lumora-muted ml-2">Trading Intelligence Terminal</span>
+            <Activity className="h-4 w-4 text-lm-purple" />
+            <span className="lm-brand text-sm text-lm-text">Lumora</span>
+            <span className="ml-2 text-xs text-lm-muted">Liquidity intelligence terminal</span>
           </div>
-          <p className="text-xs text-lumora-muted">© 2026 Lumora. Not financial advice. For informational use only.</p>
+          <div className="flex flex-col items-center gap-1 sm:items-end">
+            <p className="text-xs text-lm-muted">
+              © 2026 Lumora. Not financial advice. For informational use only.
+            </p>
+            <p className="num text-[9px] uppercase tracking-[0.18em] text-lm-muted/80">
+              Private beta · demo data shown
+            </p>
+          </div>
         </div>
       </footer>
     </div>
