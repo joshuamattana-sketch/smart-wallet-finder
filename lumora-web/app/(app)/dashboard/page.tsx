@@ -1,6 +1,19 @@
 "use client";
 
+// LM69C — Dashboard: a live command center, not a card grid.
+//
+// Composition:
+//   read strip     — ONE compact line: bias · score/conf · risk · action ·
+//                    live price · status. The read stays available without a
+//                    giant static card eating the top of the page.
+//   watchlist rail — compact secondary symbols + priority picker
+//   whale tape     — what changed (demo until live wiring)
+//   setups         — what to watch
+//
+// Mobile order: read → watchlist → whale tape → setups.
+
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageShell } from "@/components/ui/PageShell";
@@ -9,7 +22,6 @@ import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker
 import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
-import { TrendingUp, Zap, RefreshCw } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
 import {
   heatmapCurrentPrice,
@@ -37,9 +49,6 @@ function qualityTier(score: number): SetupQuality {
   if (score >= 70) return "Strong";
   if (score >= 40) return "Developing";
   return "Weak";
-}
-function qualityVariant(q: SetupQuality): "live" | "warning" | "neutral" {
-  return q === "Strong" ? "live" : q === "Developing" ? "warning" : "neutral";
 }
 
 function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSignal | null {
@@ -111,8 +120,8 @@ function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSig
   return { bias, score, confidence, quality, risk, reason, action };
 }
 
-function biasVariant(b: Bias): "bid" | "ask" | "neutral" {
-  return b === "LONG" ? "bid" : b === "SHORT" ? "ask" : "neutral";
+function biasTone(b: Bias): string {
+  return b === "LONG" ? "text-emerald-400" : b === "SHORT" ? "text-red-400" : "text-lm-text-dim";
 }
 function riskVariant(r: TraderSignal["risk"]): "live" | "warning" | "error" {
   return r === "LOW" ? "live" : r === "MEDIUM" ? "warning" : "error";
@@ -121,8 +130,8 @@ function riskVariant(r: TraderSignal["risk"]): "live" | "warning" | "error" {
 // Active/primary market refreshes fast; the rest poll slowly in the background.
 const ACTIVE_REFRESH_MS = 2000;
 const BACKGROUND_REFRESH_MS = 9000;
-/** Max number of compact secondary cards shown next to the primary. */
-const MAX_SECONDARY = 2;
+/** Max number of watchlist rail rows shown next to the command surface. */
+const MAX_SECONDARY = 4;
 
 interface MarketState {
   payload: HeatmapApiPayload | null;
@@ -145,7 +154,7 @@ function marketStatus(
     s.variant === "green" ? "live" :
     s.variant === "red"   ? "error" :
     s.variant === "muted" ? "neutral" : "stale";
-  return { label: s.label, variant, isFallback: s.isFallback, stale: s.stale };
+  return { label: s.label, variant: variant, isFallback: s.isFallback, stale: s.stale };
 }
 
 function fmtTime(iso?: string | null): string {
@@ -159,7 +168,7 @@ function fmtTime(iso?: string | null): string {
 export default function DashboardPage() {
   const { primary, secondaries } = useWatchlist();
   // The primary symbol gets the fast 2s poll. Background symbols cycle on a
-  // slower 9s poll. We cap visible secondaries to keep the layout balanced;
+  // slower 9s poll. We cap visible secondaries to keep the rail balanced;
   // the full watchlist is still managed via the picker.
   const activeSymbol = primary;
   const backgroundSymbols = secondaries.slice(0, MAX_SECONDARY);
@@ -239,10 +248,17 @@ export default function DashboardPage() {
     headerStatus.resolved === "live" ? "bg-green-400" :
     headerStatus.resolved == null ? "bg-lm-muted" : "bg-yellow-400";
 
+  // Read strip state for the primary symbol.
+  const activeMarket = markets[activeSymbol] ?? EMPTY_MARKET;
+  const activePayload = activeMarket.payload;
+  const activeSignal = deriveSignal(activeSymbol, activePayload);
+  const activeStatus = marketStatus(activeMarket);
+  const activePrice = activePayload ? heatmapCurrentPrice(activePayload) : null;
+
   return (
     <PageShell
-      title="Market Dashboard"
-      context="Current read · live markets · top setups · whale intel"
+      title="Dashboard"
+      context="The read first · then what changed · then what to watch"
       status={
         <span className="flex items-center gap-2 text-[11px] text-lm-text-dim num uppercase tracking-wide">
           <span className={clsx("h-1.5 w-1.5 rounded-full inline-block", headerDot, headerStatus.resolved === "live" && "lm-live-dot text-emerald-400")} />
@@ -251,421 +267,270 @@ export default function DashboardPage() {
       }
     >
 
-      {/* ── CURRENT READ · primary symbol verdict ──────────────────────────── */}
-      {(() => {
-        const m = markets[activeSymbol] ?? EMPTY_MARKET;
-        const p = m.payload;
-        const signal = deriveSignal(activeSymbol, p);
-        const status = marketStatus(m);
-        return (
-          <Panel flush hover className="lm-accent-top-cyan lm-card-primary p-4">
-            {/* Header row */}
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <span className="lm-section-title">Current Read</span>
-                <span className="num text-[11px] font-semibold uppercase tracking-widest text-lm-text">
-                  {activeSymbol}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {signal && (
-                  <StatusBadge variant={qualityVariant(signal.quality)} size="sm">
-                    {signal.quality.toUpperCase()}
-                  </StatusBadge>
-                )}
-                <StatusBadge variant={status.variant} size="sm" dot={status.variant === "live"}>
-                  {status.label}
-                </StatusBadge>
-              </div>
-            </div>
-
-            {!signal ? (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-3">
-                <Skeleton variant="line" height="h-12" />
-                <div className="space-y-2">
-                  <Skeleton variant="line" width="w-3/4" />
-                  <Skeleton variant="line" width="w-1/2" />
-                </div>
-              </div>
-            ) : (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-3 items-start">
-                {/* Big bias verdict */}
-                <div>
-                  <p className="text-[9px] uppercase tracking-widest text-lm-muted">Bias</p>
-                  <p
-                    className={clsx(
-                      "lm-price text-3xl leading-none mt-0.5",
-                      signal.bias === "LONG"
-                        ? "text-emerald-400"
-                        : signal.bias === "SHORT"
-                        ? "text-red-400"
-                        : "text-lm-text-dim",
-                    )}
-                  >
-                    {signal.bias}
-                  </p>
-                  <div className="mt-2 flex items-center gap-3">
-                    <div>
-                      <p className="text-[9px] uppercase tracking-widest text-lm-muted">Score</p>
-                      <p className="num text-[15px] font-semibold text-lm-text leading-none">
-                        {signal.score}
-                        <span className="text-[10px] text-lm-muted">/100</span>
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase tracking-widest text-lm-muted">Conf</p>
-                      <p className="num text-[15px] font-semibold text-lm-text leading-none">
-                        {signal.confidence}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase tracking-widest text-lm-muted">Risk</p>
-                      <StatusBadge variant={riskVariant(signal.risk)} size="sm">
-                        {signal.risk}
-                      </StatusBadge>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Reason + action */}
-                <div className="space-y-2.5">
-                  <div>
-                    <p className="text-[9px] uppercase tracking-widest text-lm-muted">Reason</p>
-                    <p className="text-[12px] text-lm-text-dim leading-snug mt-0.5">{signal.reason}</p>
-                  </div>
-                  <div className="lm-verdict-rule">
-                    <p className="text-[9px] uppercase tracking-widest text-lm-muted">Action</p>
-                    <p className="text-[12.5px] text-lm-text leading-snug mt-0.5 font-medium">
-                      {signal.action}
-                    </p>
-                  </div>
-                </div>
-              </div>
+      {/* ── CURRENT READ — one compact command strip, not a card ──────────── */}
+      <Panel level="focus" flush className="overflow-hidden">
+        <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1.5 bg-gradient-to-r from-cyan-400/[0.04] via-transparent to-violet-500/[0.03] px-4 py-2.5">
+          {/* bias edge — the verdict at a glance */}
+          <span
+            aria-hidden
+            className={clsx(
+              "absolute inset-y-1.5 left-0 w-[2.5px] rounded-full",
+              !activeSignal
+                ? "bg-zinc-600/50"
+                : activeSignal.bias === "LONG"
+                  ? "bg-emerald-400/70"
+                  : activeSignal.bias === "SHORT"
+                    ? "bg-rose-400/70"
+                    : "bg-zinc-500/60",
             )}
-          </Panel>
-        );
-      })()}
-
-      {/* ── PRIMARY · Live Markets ──────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-          <span className="lm-section-title">
-            Live Markets
-            <span className="text-lm-border">·</span>
-            <span className="text-lm-muted normal-case tracking-normal num text-[10px]">
-              auto · 2s
+          />
+          <div className="flex items-baseline gap-2.5">
+            <span className="lm-section-title">Current Read</span>
+            <span className="num text-[12px] font-semibold uppercase tracking-widest text-lm-text">
+              {activeSymbol}
             </span>
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 text-[10px] text-lm-muted num">
-              <RefreshCw className="h-3 w-3" />
-              {lastFetchedAt ? `updated ${fmtTime(lastFetchedAt)}` : "loading…"}
-            </span>
-            <WatchlistPriorityPicker />
           </div>
-        </div>
-        {/* Command-center split: primary card spans 2/3, compacts stacked in 1/3 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
-          {/* ── Primary focal card ─────────────────────────────── */}
-          {(() => {
-            const sym = activeSymbol;
-            const m = markets[sym] ?? EMPTY_MARKET;
-            const status = marketStatus(m);
-            const p = m.payload;
-            const price = p ? heatmapCurrentPrice(p) : null;
-            const bidWall = p ? heatmapStrongestWall(p, "bid") : null;
-            const askWall = p ? heatmapStrongestWall(p, "ask") : null;
-            const signal = deriveSignal(sym, p);
-            return (
-              <Panel flush hover className="lg:col-span-2 lm-accent-top-cyan lm-card-primary p-4">
-                {/* Header */}
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="num text-[13px] font-semibold uppercase tracking-widest text-lm-text">
-                      {sym}
-                    </span>
-                    <span className="num text-[9px] uppercase tracking-widest text-lm-cyan">
-                      PRIMARY · FAST
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {(status.isFallback || status.stale) && (
-                      <StatusBadge variant="stale" size="sm">
-                        {status.stale ? "Stale" : "Fallback"}
-                      </StatusBadge>
-                    )}
-                    <StatusBadge variant={status.variant} dot={status.variant === "live"}>
-                      {status.label}
-                    </StatusBadge>
-                  </div>
-                </div>
-
-                {!p ? (
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-4">
-                    <div className="space-y-2">
-                      <Skeleton variant="line" height="h-10" width="w-3/4" />
-                      <Skeleton variant="line" width="w-1/2" />
-                    </div>
-                    <div className="space-y-2">
-                      <Skeleton variant="line" width="w-2/3" />
-                      <Skeleton variant="line" width="w-1/2" />
-                    </div>
-                    {m.error && (
-                      <p className="text-[10px] text-red-400/80 truncate sm:col-span-2">last error: {m.error}</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-4">
-                    {/* Price column — execution focus */}
-                    <div>
-                      <p className="text-[10px] uppercase tracking-widest text-lm-muted">Last Price</p>
-                      <p className="lm-price text-4xl text-lm-text leading-none mt-1">
-                        {price !== null
-                          ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                          : "—"}
-                      </p>
-                      {p.meta.liveUpdatedAt && (
-                        <p className="num text-[10px] text-lm-muted mt-2">
-                          live {fmtTime(p.meta.liveUpdatedAt)}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Depth column — top bid/ask only */}
-                    <div className="space-y-2">
-                      {bidWall && (
-                        <div className="lm-rail-bid relative pl-3 flex items-center gap-2 text-[12px]">
-                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-7">Bid</span>
-                          <span className="num text-lm-text">${bidWall.price_bucket.toLocaleString()}</span>
-                          <span className="num text-lm-muted ml-auto">
-                            ${(bidWall.total_usd / 1_000_000).toFixed(2)}M
-                          </span>
-                        </div>
-                      )}
-                      {askWall && (
-                        <div className="lm-rail-ask relative pl-3 flex items-center gap-2 text-[12px]">
-                          <span className="text-[9px] uppercase tracking-widest text-lm-muted w-7">Ask</span>
-                          <span className="num text-lm-text">${askWall.price_bucket.toLocaleString()}</span>
-                          <span className="num text-lm-muted ml-auto">
-                            ${(askWall.total_usd / 1_000_000).toFixed(2)}M
-                          </span>
-                        </div>
-                      )}
-                      {signal && (
-                        <p className="text-[10px] text-lm-muted leading-snug pt-1 num">
-                          See Current Read above for bias, score and action.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </Panel>
-            );
-          })()}
-
-          {/* ── Compact secondary cards (ETH, SOL) ─────────────────────── */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
-            {backgroundSymbols.length === 0 ? (
-              <Panel flush className="p-3 text-center">
-                <p className="text-[11px] text-lm-muted leading-snug">
-                  Add another symbol to the watchlist to compare side-by-side.
-                </p>
-              </Panel>
-            ) : null}
-            {backgroundSymbols.map((sym) => {
-              const m = markets[sym] ?? EMPTY_MARKET;
-              const status = marketStatus(m);
-              const p = m.payload;
-              const price = p ? heatmapCurrentPrice(p) : null;
-              const signal = deriveSignal(sym, p);
-              return (
-                <Panel flush hover key={sym} className="p-3">
-                  {/* Header: symbol + status */}
-                  <div className="flex items-center justify-between">
-                    <span className="num text-[11px] font-semibold uppercase tracking-widest text-lm-text">
-                      {sym}
-                    </span>
-                    <StatusBadge variant={status.variant} size="sm" dot={status.variant === "live"}>
-                      {status.label}
-                    </StatusBadge>
-                  </div>
-
-                  {!p || !signal ? (
-                    <div className="mt-1.5 space-y-1.5">
-                      <Skeleton variant="line" height="h-5" width="w-1/2" />
-                      <Skeleton variant="line" width="w-3/4" />
-                    </div>
-                  ) : (
-                    <>
-                      {/* Price */}
-                      <p className="lm-price text-xl text-lm-text leading-none mt-1">
-                        {price !== null
-                          ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                          : "—"}
-                      </p>
-                      {/* Bias + Score */}
-                      <div className="mt-2 flex items-center gap-2">
-                        <StatusBadge variant={biasVariant(signal.bias)} size="sm">
-                          {signal.bias}
-                        </StatusBadge>
-                        <span className="num text-[10px] text-lm-muted uppercase tracking-wide">Score</span>
-                        <span className="num text-[12px] font-semibold text-lm-text ml-auto">
-                          {signal.score}
-                          <span className="text-[9px] text-lm-muted">/100</span>
-                        </span>
-                      </div>
-                      {/* Confidence micro-bar */}
-                      <div className="mt-1.5 h-[3px] rounded-full bg-lm-border overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-lm-cyan/70"
-                          style={{ width: `${signal.confidence}%` }}
-                        />
-                      </div>
-                      {/* Freshness */}
-                      <p className="text-[10px] text-lm-muted mt-1.5 num truncate">
-                        {p.meta.liveUpdatedAt
-                          ? `live ${fmtTime(p.meta.liveUpdatedAt)}`
-                          : `last ${fmtTime(m.lastFetchedAt)}`}
-                      </p>
-                    </>
-                  )}
-                </Panel>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* ── SECONDARY · Setups | Whale Intel ────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-
-        {/* Left column */}
-        <div className="lg:col-span-2 space-y-3">
-          {/* Top Setups */}
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <span className="lm-section-title">
-                Top Market Setups
-                <TrendingUp className="h-3 w-3 text-lm-purple" />
+          {!activeSignal || !activePayload ? (
+            <>
+              <Skeleton variant="line" width="w-48" height="h-4" />
+              {activeMarket.error && (
+                <span className="text-[10px] text-red-400/80 truncate">
+                  last error: {activeMarket.error}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className={clsx("num text-[15px] font-bold leading-none", biasTone(activeSignal.bias))}>
+                {activeSignal.bias}
               </span>
-              <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
+              <span className="num text-[11px] text-lm-text-dim">
+                {activeSignal.score}
+                <span className="text-lm-muted">/100</span>
+                <span className="mx-1.5 text-lm-border">·</span>
+                conf {activeSignal.confidence}%
+              </span>
+              <StatusBadge variant={riskVariant(activeSignal.risk)} size="sm">
+                {activeSignal.risk}
+              </StatusBadge>
+              {/* The directive — one line; full reason on hover */}
+              <span
+                className="hidden min-w-0 flex-1 truncate text-[11.5px] text-lm-text-dim md:inline"
+                title={`${activeSignal.reason} — ${activeSignal.action}`}
+              >
+                {activeSignal.action}
+              </span>
+            </>
+          )}
+
+          <div className="ml-auto flex items-center gap-2.5">
+            <span className="lm-price text-[15px] leading-none text-lm-cyan drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]">
+              {activePrice !== null
+                ? `$${activePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                : "—"}
+            </span>
+            <StatusBadge variant={activeStatus.variant} size="sm" dot={activeStatus.variant === "live"}>
+              {activeStatus.label}
+            </StatusBadge>
+            <Link
+              href="/terminal"
+              className="num text-[10px] uppercase tracking-wider text-lm-cyan/80 transition-colors duration-150 hover:text-lm-cyan focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cyan-400/60"
+            >
+              Terminal →
+            </Link>
+          </div>
+        </div>
+      </Panel>
+
+      {/* ── COMMAND GRID · Setups | Watchlist + Whale Tape ─────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
+
+        {/* Right rail (first on mobile): watchlist priority + what changed */}
+        <aside className="space-y-3 lg:order-2">
+          {/* Watchlist rail */}
+          <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.04]">
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-lm-border/60">
+              <span className="lm-section-title">Watchlist</span>
+              <WatchlistPriorityPicker />
             </div>
-            <Panel flush className="divide-y divide-lm-border/60">
-              {mockSetups.map((s) => {
-                const biasVar = biasVariant(s.bias as Bias);
-                // Setup score = same confidence scale; useful as a leading metric.
-                const setupScore = s.confidence;
+            <div className="divide-y divide-lm-border/40">
+              {backgroundSymbols.length === 0 && (
+                <p className="px-3 py-4 text-[11px] text-lm-muted leading-snug">
+                  Add symbols to compare against {activeSymbol}.
+                </p>
+              )}
+              {backgroundSymbols.map((sym) => {
+                const m = markets[sym] ?? EMPTY_MARKET;
+                const p = m.payload;
+                const price = p ? heatmapCurrentPrice(p) : null;
+                const signal = deriveSignal(sym, p);
                 return (
-                  <div
-                    key={s.symbol}
-                    className="lm-row px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[88px_1fr_140px_60px] sm:gap-3 sm:items-center"
-                  >
-                    {/* Symbol + bias */}
-                    <div className="min-w-0">
-                      <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
-                      <StatusBadge variant={biasVar} size="sm" className="mt-1">
-                        {s.bias}
-                      </StatusBadge>
-                    </div>
-
-                    {/* Reason + tags */}
-                    <div className="min-w-0">
-                      <p className="text-[11.5px] text-lm-text-dim leading-snug line-clamp-2">{s.reason}</p>
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {s.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-lm-surface-muted text-lm-muted border border-lm-border/60"
-                          >
-                            {tag}
+                  <div key={sym} className="lm-row px-3 py-2">
+                    {!p || !signal ? (
+                      <div className="space-y-1.5">
+                        <Skeleton variant="line" width="w-1/3" />
+                        <Skeleton variant="line" width="w-2/3" />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="num text-[12px] font-semibold tracking-wide text-lm-text">
+                            {sym}
                           </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Levels — Entry / Invalidation / Target */}
-                    <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] num">
-                      <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Entry</span>
-                      <span className="text-right text-lm-text">{s.entry}</span>
-                      <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Target</span>
-                      <span className="text-right text-emerald-400">{s.target}</span>
-                      <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Invalid</span>
-                      <span className="text-right text-red-400">{s.stop}</span>
-                    </div>
-
-                    {/* Setup score + confidence bar */}
-                    <div className="text-right">
-                      <p className="num text-[14px] font-semibold text-lm-text leading-none">
-                        {setupScore}
-                        <span className="text-[9px] text-lm-muted">/100</span>
-                      </p>
-                      <div className="h-1 mt-1 rounded-full bg-lm-border overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-lm-cyan/80"
-                          style={{ width: `${s.confidence}%` }}
-                        />
-                      </div>
-                      <p className="num text-[9px] text-lm-muted mt-0.5 uppercase tracking-wide">Score</p>
-                    </div>
+                          <span className={clsx("num text-[10px] font-semibold uppercase", biasTone(signal.bias))}>
+                            {signal.bias}
+                          </span>
+                          <span className="lm-price text-[14px] text-lm-text ml-auto">
+                            {price !== null
+                              ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <div className="h-[3px] flex-1 rounded-full bg-lm-border overflow-hidden">
+                            <div
+                              className={clsx(
+                                "h-full rounded-full transition-[width] duration-500",
+                                signal.bias === "LONG"
+                                  ? "bg-emerald-400/70"
+                                  : signal.bias === "SHORT"
+                                    ? "bg-rose-400/70"
+                                    : "bg-lm-cyan/60",
+                              )}
+                              style={{ width: `${signal.confidence}%` }}
+                            />
+                          </div>
+                          <span className="num text-[10px] text-lm-muted">
+                            {signal.score}
+                            <span className="text-lm-border">/</span>100
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               })}
-            </Panel>
-          </section>
-
-        </div>
-
-        {/* Right column — Whale intel feed (compact) */}
-        <aside className="space-y-3">
-          <Panel flush className="overflow-hidden">
-            <div className="px-3 py-2 border-b border-lm-border flex items-center justify-between">
-              <span className="lm-section-title">
-                Whale Intel
-                <Zap className="h-3 w-3 text-lm-cyan" />
-              </span>
-              <div className="flex items-center gap-1.5">
-                <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
-                <StatusBadge variant="neutral" size="sm">{mockWhaleAlerts.length}</StatusBadge>
-              </div>
             </div>
-            <div className="overflow-y-auto max-h-[340px] divide-y divide-lm-border/60">
-              {mockWhaleAlerts.map((a) => (
-                <div key={a.id} className="lm-row px-3 py-2">
-                  {/* Top line: side · symbol · type · notional */}
-                  <div className="flex items-center gap-2">
-                    <StatusBadge variant={a.side === "BUY" ? "bid" : "ask"} size="sm" className="w-9 justify-center shrink-0">
-                      {a.side}
-                    </StatusBadge>
-                    <span className="num text-[12px] font-semibold text-lm-text">{a.symbol}</span>
-                    <span className="text-[10px] text-lm-muted uppercase tracking-wide truncate">{a.type}</span>
-                    <span className="ml-auto lm-price text-[13px] text-lm-text">{a.size}</span>
-                  </div>
-                  {/* Reason — full width, tight */}
-                  <p className="text-[11px] text-lm-text-dim leading-snug mt-1 pl-11 line-clamp-2">{a.reason}</p>
-                  {/* Meta strip: severity · confidence · time */}
-                  <div className="flex items-center gap-1.5 mt-1 pl-11">
-                    <StatusBadge
-                      variant={a.risk === "HIGH" ? "error" : a.risk === "MEDIUM" ? "warning" : "neutral"}
-                      size="sm"
-                    >
-                      {a.risk}
-                    </StatusBadge>
-                    <span className="num text-[9px] uppercase tracking-wide text-lm-muted">
-                      conf {a.confidence}%
-                    </span>
-                    <span className="num text-[10px] text-lm-muted ml-auto">{a.time}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <p className="num border-t border-lm-border/40 px-3 py-1.5 text-[9.5px] uppercase tracking-wider text-lm-muted">
+              {lastFetchedAt ? `updated ${fmtTime(lastFetchedAt)}` : "loading…"} · auto
+            </p>
           </Panel>
 
-          <p className="text-[10px] text-lm-muted px-1 leading-snug">
-            Live per-symbol liquidity walls are shown in the Live Markets cards above
-            and on the Liquidity Map.
-          </p>
+          {/* Whale tape — what changed */}
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <span className="lm-section-title">Whale Tape · What Changed</span>
+              <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
+            </div>
+            <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.04]">
+              <div className="overflow-y-auto max-h-[360px] divide-y divide-lm-border/40">
+                {mockWhaleAlerts.map((a) => (
+                  <div
+                    key={a.id}
+                    className={clsx(
+                      "lm-row relative px-3 py-2",
+                      a.side === "BUY" ? "lm-rail-bid pl-4" : "lm-rail-ask pl-4",
+                    )}
+                  >
+                    {/* Top line: side · symbol · type · notional */}
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className={clsx(
+                          "num text-[10px] font-semibold uppercase w-8 shrink-0",
+                          a.side === "BUY" ? "text-emerald-400" : "text-red-400",
+                        )}
+                      >
+                        {a.side}
+                      </span>
+                      <span className="num text-[12px] font-semibold text-lm-text">{a.symbol}</span>
+                      <span className="text-[10px] text-lm-muted uppercase tracking-wide truncate">{a.type}</span>
+                      <span className="ml-auto lm-price text-[13px] text-lm-text">{a.size}</span>
+                    </div>
+                    {/* Bottom line: reason (one line) · risk · time */}
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="flex-1 min-w-0 text-[10.5px] text-lm-text-dim leading-snug line-clamp-1">
+                        {a.reason}
+                      </p>
+                      {a.risk !== "LOW" && (
+                        <StatusBadge variant={a.risk === "HIGH" ? "error" : "warning"} size="sm">
+                          {a.risk}
+                        </StatusBadge>
+                      )}
+                      <span className="num text-[10px] text-lm-muted">{a.time}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </section>
         </aside>
+
+        {/* Setups — what to watch */}
+        <section className="lg:order-1 lg:col-span-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="lm-section-title">Setups · What to Watch</span>
+            <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
+          </div>
+          <Panel level="subtle" flush className="divide-y divide-lm-border/40 overflow-hidden ring-1 ring-white/[0.04]">
+            {mockSetups.map((s) => (
+              <div
+                key={s.symbol}
+                className={clsx(
+                  "lm-row relative px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[92px_1fr_150px_52px] sm:gap-3 sm:items-center",
+                  s.bias === "LONG" ? "lm-rail-bid pl-4" : s.bias === "SHORT" ? "lm-rail-ask pl-4" : "",
+                )}
+              >
+                {/* Symbol + bias (colored text, no chip) */}
+                <div className="min-w-0">
+                  <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
+                  <p className={clsx("num text-[10px] font-semibold uppercase mt-0.5", biasTone(s.bias as Bias))}>
+                    {s.bias}
+                  </p>
+                </div>
+
+                {/* Reason — one line; full text on hover */}
+                <p
+                  className="text-[11.5px] text-lm-text-dim leading-snug line-clamp-1 min-w-0"
+                  title={s.reason}
+                >
+                  {s.reason}
+                </p>
+
+                {/* Levels — Entry / Target / Invalidation */}
+                <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] num">
+                  <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Entry</span>
+                  <span className="text-right text-lm-text">{s.entry}</span>
+                  <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Target</span>
+                  <span className="text-right text-emerald-400">{s.target}</span>
+                  <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Invalid</span>
+                  <span className="text-right text-red-400">{s.stop}</span>
+                </div>
+
+                {/* Score */}
+                <div className="text-right">
+                  <p className="num text-[14px] font-semibold text-lm-text leading-none">
+                    {s.confidence}
+                    <span className="text-[9px] text-lm-muted">/100</span>
+                  </p>
+                  <div className="h-1 mt-1 rounded-full bg-lm-border overflow-hidden">
+                    <div
+                      className={clsx(
+                        "h-full rounded-full",
+                        s.bias === "LONG"
+                          ? "bg-emerald-400/70"
+                          : s.bias === "SHORT"
+                            ? "bg-rose-400/70"
+                            : "bg-lm-cyan/70",
+                      )}
+                      style={{ width: `${s.confidence}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </Panel>
+        </section>
       </div>
     </PageShell>
   );

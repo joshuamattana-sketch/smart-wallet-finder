@@ -23,15 +23,18 @@ type StatusVariant =
   | "warning";
 type StatusSize = "sm" | "md";
 
+// Each variant carries a faint matching border so chips read as crisp
+// hardware indicators instead of soft color blobs. Alpha stays ≤25% so the
+// page never turns into badge soup.
 const styles: Record<StatusVariant, { bg: string; text: string; dot: string; border?: string }> = {
-  live:    { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
-  stale:   { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400" },
-  error:   { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400" },
-  warning: { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400" },
-  bid:     { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
-  ask:     { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400" },
-  neutral: { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400", border: "border-zinc-700/50" },
-  demo:    { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400", border: "border-zinc-700/50" },
+  live:    { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400", border: "border-emerald-500/25" },
+  stale:   { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400",   border: "border-amber-500/25" },
+  error:   { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400",     border: "border-red-500/25" },
+  warning: { bg: "bg-amber-500/10",   text: "text-amber-400",   dot: "bg-amber-400",   border: "border-amber-500/25" },
+  bid:     { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400", border: "border-emerald-500/25" },
+  ask:     { bg: "bg-red-500/10",     text: "text-red-400",     dot: "bg-red-400",     border: "border-red-500/25" },
+  neutral: { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400",    border: "border-zinc-700/50" },
+  demo:    { bg: "bg-zinc-500/10",    text: "text-zinc-400",    dot: "bg-zinc-400",    border: "border-zinc-700/50" },
 };
 
 const sizes: Record<StatusSize, string> = {

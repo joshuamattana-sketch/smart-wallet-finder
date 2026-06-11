@@ -39,6 +39,20 @@ import {
 } from "lightweight-charts";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import {
+  IntelligenceDock,
+  type DockTone,
+} from "@/components/ui/IntelligenceDock";
+import {
+  CandlestickChart,
+  Crosshair,
+  Radar,
+  Flame,
+  Waves,
+  Gauge,
+  Eye,
+  type LucideIcon,
+} from "lucide-react";
 import { clsx } from "clsx";
 import {
   MODE_PRESETS,
@@ -74,7 +88,41 @@ const MODE_LABELS: Record<ViewMode, string> = {
   full: "Full Intel",
 };
 
+// IntelligenceDock wiring — modes carry the violet selected accent; overlays
+// carry their semantic tone (cyan = intelligence, emerald = whale flow,
+// amber = pressure/caution, cyan = read).
+const MODE_ICONS: Record<ViewMode, LucideIcon> = {
+  clean: CandlestickChart,
+  assisted: Crosshair,
+  full: Radar,
+};
+const MODE_HINTS: Record<ViewMode, string> = {
+  clean: "price only",
+  assisted: "key zones + whales",
+  full: "every layer",
+};
+
 const OVERLAY_KEYS = ["heatmap", "whales", "pressure", "read"] as const;
+type OverlayKey = (typeof OVERLAY_KEYS)[number];
+
+const OVERLAY_LABELS: Record<OverlayKey, string> = {
+  heatmap: "Heatmap",
+  whales: "Whales",
+  pressure: "Pressure",
+  read: "Read",
+};
+const OVERLAY_ICONS: Record<OverlayKey, LucideIcon> = {
+  heatmap: Flame,
+  whales: Waves,
+  pressure: Gauge,
+  read: Eye,
+};
+const OVERLAY_TONES: Record<OverlayKey, DockTone> = {
+  heatmap: "cyan",
+  whales: "emerald",
+  pressure: "amber",
+  read: "cyan",
+};
 
 function toBar(c: ChartCandle) {
   return {
@@ -453,16 +501,21 @@ export function IntelligenceChartPanel({
           : { variant: "warning" as const, label: "DEMO FALLBACK", dot: false };
 
   return (
-    <Panel level="focus" flush className={clsx("overflow-hidden", className)}>
+    // No overflow-hidden on the panel itself — the dock tooltips float ABOVE
+    // the header and must not be clipped. The chart pane clips its own canvas
+    // and the footer rounds its own bottom corners instead.
+    <Panel level="focus" flush className={className}>
       {/* Layer 6: controls header */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-lm-border px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-lm-border px-3 py-2">
         <span className="lm-section-title">Intelligence Chart</span>
+
+        <span aria-hidden className="hidden h-4 w-px bg-lm-border sm:block" />
 
         {/* Symbol */}
         <select
           value={symbol}
           onChange={(e) => setSymbol(e.target.value)}
-          className="num cursor-pointer appearance-none rounded-md border border-lm-border bg-lm-bg px-2 py-1 text-[11px] text-lm-text focus:border-lm-purple focus:outline-none"
+          className="num cursor-pointer appearance-none rounded-md border border-lm-border bg-lm-bg px-2 py-1 text-[11px] text-lm-text transition-colors duration-150 hover:border-zinc-600 focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-cyan-400/60"
         >
           {BINANCE_CHART_SYMBOLS.map((s) => (
             <option key={s} value={s}>
@@ -477,8 +530,9 @@ export function IntelligenceChartPanel({
             <button
               key={iv}
               onClick={() => setInterval(iv)}
+              aria-pressed={interval === iv}
               className={clsx(
-                "lm-segment-btn px-2 py-1 text-[11px] font-medium",
+                "lm-segment-btn px-2 py-1 text-[11px] font-medium focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-cyan-400/60",
                 interval === iv ? "lm-segment-active" : "bg-lm-surface text-lm-muted",
               )}
             >
@@ -487,8 +541,16 @@ export function IntelligenceChartPanel({
           ))}
         </div>
 
-        {/* Source / status */}
-        <StatusBadge variant={sourceBadge.variant} size="sm" dot={sourceBadge.dot}>
+        {/* Source / status — quiet emerald halo when actually live */}
+        <StatusBadge
+          variant={sourceBadge.variant}
+          size="sm"
+          dot={sourceBadge.dot}
+          className={clsx(
+            sourceBadge.variant === "live" &&
+              "shadow-[0_0_12px_-3px_rgba(52,211,153,0.45)]",
+          )}
+        >
           {sourceBadge.label}
         </StatusBadge>
         {lastUpdateMs !== null && !usingMock && (
@@ -498,47 +560,34 @@ export function IntelligenceChartPanel({
           </span>
         )}
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* View mode presets */}
-          <div className="flex overflow-hidden rounded-md border border-lm-border">
-            {(["clean", "assisted", "full"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => selectMode(m)}
-                className={clsx(
-                  "lm-segment-btn px-2.5 py-1 text-[11px] font-medium",
-                  activePreset === m
-                    ? "lm-segment-active"
-                    : "bg-lm-surface text-lm-muted",
-                )}
-              >
-                {MODE_LABELS[m]}
-              </button>
-            ))}
-          </div>
-          {/* Individual overlay toggles */}
-          <div className="flex items-center gap-1.5">
-            {OVERLAY_KEYS.map((k) => (
-              <button
-                key={k}
-                onClick={() => toggleOverlay(k)}
-                title={`Toggle ${k} overlay (demo data)`}
-                className={clsx(
-                  "lm-segment-btn rounded-md border px-2 py-1 text-[10px] font-medium capitalize",
-                  overlays[k]
-                    ? "lm-toggle-active"
-                    : "border-lm-border bg-lm-surface text-lm-muted",
-                )}
-              >
-                {k}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* IntelligenceDock — mode presets + overlay channels in one glass pill */}
+        <IntelligenceDock
+          className="ml-auto"
+          groups={[
+            (["clean", "assisted", "full"] as const).map((m) => ({
+              id: m,
+              label: MODE_LABELS[m],
+              hint: MODE_HINTS[m],
+              icon: MODE_ICONS[m],
+              active: activePreset === m,
+              tone: "violet" as const,
+              onSelect: () => selectMode(m),
+            })),
+            OVERLAY_KEYS.map((k) => ({
+              id: k,
+              label: OVERLAY_LABELS[k],
+              hint: overlays[k] ? "on · demo data" : "off",
+              icon: OVERLAY_ICONS[k],
+              active: overlays[k],
+              tone: OVERLAY_TONES[k],
+              onSelect: () => toggleOverlay(k),
+            })),
+          ]}
+        />
       </div>
 
-      {/* Layers 1–4: chart + overlay canvas */}
-      <div className="relative" style={{ height }}>
+      {/* Layers 1–4: chart + overlay canvas (pane clips its own content) */}
+      <div className="relative overflow-hidden" style={{ height }}>
         <div ref={containerRef} className="absolute inset-0" />
         <canvas
           ref={canvasRef}
@@ -546,10 +595,31 @@ export function IntelligenceChartPanel({
           aria-hidden
         />
 
+        {/* Edge lighting — faint cyan/violet hairlines falling from the top
+            corners so the instrument frame reads live, not boxed. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-0 top-0 z-10 h-28 w-px bg-gradient-to-b from-cyan-400/25 to-transparent"
+        />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute right-0 top-0 z-10 h-28 w-px bg-gradient-to-b from-violet-400/20 to-transparent"
+        />
+
         {/* Layer 5: current read chip — demo data until LM68D */}
         {overlays.read && (
-          <div className="pointer-events-none absolute right-16 top-2.5 z-10 rounded-md border border-lm-border bg-lm-surface/95 px-2.5 py-1.5">
-            <p className="num text-[7.5px] uppercase tracking-[0.2em] text-lm-muted">
+          <div
+            className={clsx(
+              "pointer-events-none absolute right-16 top-2.5 z-10 rounded-md border border-lm-border border-l-2 bg-lm-surface/95 px-2.5 py-1.5 shadow-[0_4px_14px_rgba(0,0,0,0.5)] backdrop-blur-[2px]",
+              read.bias === "LONG"
+                ? "border-l-emerald-400/60"
+                : read.bias === "SHORT"
+                  ? "border-l-red-400/60"
+                  : "border-l-zinc-500/60",
+            )}
+          >
+            <p className="num flex items-center gap-1.5 text-[9px] uppercase tracking-[0.2em] text-lm-muted">
+              <span aria-hidden className="h-1 w-1 rounded-full bg-cyan-400/70" />
               Current read · demo
             </p>
             <div className="mt-0.5 flex items-baseline gap-1.5">
@@ -591,11 +661,11 @@ export function IntelligenceChartPanel({
             </div>
           </div>
         )}
-      </div>
-
-      {/* Layer 5: futures pressure strip — demo data until LM68D */}
-      {overlays.pressure && (
-        <div className="lm-no-scrollbar flex items-center justify-between gap-3 overflow-x-auto border-t border-lm-border bg-lm-surface-muted/80 px-3 py-1.5">
+        {/* Layer 5: futures pressure strip — absolute bottom overlay inside
+            the pane so toggling Pressure NEVER changes the instrument height
+            (no layout shift, nothing pushed below the chart). */}
+        {overlays.pressure && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-3 overflow-hidden border-t border-lm-border/60 bg-[#0d0d10]/85 px-3 py-1.5 backdrop-blur-[2px]">
           <div className="num flex items-center gap-3.5 whitespace-nowrap text-[9px] uppercase tracking-wider text-lm-muted">
             <span>
               FUNDING{" "}
@@ -646,15 +716,17 @@ export function IntelligenceChartPanel({
           <span className="num hidden whitespace-nowrap text-[9px] text-lm-muted sm:inline">
             {read.action}
           </span>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
-      {/* Honesty footer */}
-      <div className="border-t border-lm-border px-3 py-1.5">
-        <p className="num text-[8.5px] uppercase tracking-[0.15em] text-lm-muted">
-          Candles · Binance public market data (demo fallback when unavailable) ·
-          Overlays · demo until LM68D · informational context only — not
-          financial advice
+      {/* Honesty footer — deliberate two-sided status line */}
+      <div className="flex items-center justify-between gap-3 rounded-b-lg border-t border-lm-border bg-lm-surface-muted/40 px-3 py-1.5">
+        <p className="num text-[9px] uppercase tracking-[0.15em] text-lm-muted">
+          Candles · Binance public data · overlays demo until LM68D
+        </p>
+        <p className="num hidden whitespace-nowrap text-[9px] uppercase tracking-[0.15em] text-lm-muted sm:block">
+          Context only · not financial advice
         </p>
       </div>
     </Panel>

@@ -838,6 +838,87 @@ New shared primitives (use these instead of hand-rolling):
 - `Panel level="subtle"` — supporting surfaces (recessed, NO border)
 - `StatusBadge variant="demo"` — gray; amber is reserved for risk/staleness only
 
+## LM69C UI Texture + Interaction Pass (web only · no Python)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+```
+
+Then open http://localhost:3000/terminal and http://localhost:3000/dashboard.
+
+What changed (texture only — LM69B layout intact):
+- `Panel` levels gained depth: default = inner top highlight + soft drop;
+  focus = instrument shadow + built-in cyan top stripe (do NOT also add
+  `lm-accent-top-cyan` to focus panels — the stripe is included).
+- `StatusBadge` variants now carry faint matching borders (≤25% alpha).
+- Chart header: group dividers, `aria-pressed` on all segments/toggles,
+  overlay toggles show a cyan indicator dot when on, read chip has a
+  bias-colored left rail, honesty footer is a two-sided status line.
+- TopNav: LIVE is a bordered emerald chip; active link icon tinted purple.
+- Dashboard opens with a ~40px Current Read command strip (bias · score ·
+  conf · risk · action · live price · status · Terminal link) instead of the
+  old full-size read card; watchlist + whale tape live in the right rail.
+
+Check: hover nav/buttons/chips, active mode/toggle states, chart LIVE ·
+BINANCE, dashboard loads, no console errors.
+
+## LM69C IntelligenceDock + Visual Liveness (web only · no Python)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+```
+
+Then open http://localhost:3000/terminal and http://localhost:3000/dashboard.
+
+What changed:
+- New `components/ui/IntelligenceDock.tsx` — a dark glass pill of icon
+  controls (hover halo, 1px hover lift, compact tooltip, active dot,
+  optional live badge). Reusable; CSS transitions only, motion-reduce safe.
+- Intelligence Chart header: mode presets (Clean / Assisted / Full Intel,
+  violet = selected) and overlay channels (Heatmap cyan / Whales emerald /
+  Pressure amber / Read cyan) moved into the dock. Tooltips name each
+  control and show on/off + demo state.
+- Chart pane: faint cyan (left) / violet (right) edge-light hairlines under
+  the focus stripe; LIVE · BINANCE badge gets a quiet emerald halo when live.
+- Terminal: perpetual walls spinner removed; pressure caption has a cyan
+  left edge; segments expose aria-pressed.
+- Dashboard: compact Current Read command strip (no giant read card),
+  watchlist rail + whale tape on the right, setups on the left.
+
+Check: hover each dock control (halo + lift + tooltip), click modes and
+overlays (active dot + tone), chart LIVE badge, dashboard top strip,
+no console errors.
+
+## LM69C Nav Refinement Fix (web only · no Python)
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+```
+
+Then open http://localhost:3000/dashboard and http://localhost:3000/terminal.
+
+What changed:
+- TopNav is a dark-glass command bar (in-component Tailwind, no global
+  classes): violet logo tile + LUMORA + TERMINAL suffix, active link =
+  violet inset pill with a luminous violet→cyan bottom edge, hover = 1px
+  lift + inner highlight, UTC + LIVE fused into one status capsule.
+- Intelligence Chart: the futures pressure strip renders as an absolute
+  overlay at the bottom of the chart pane — toggling Pressure (or any
+  overlay) causes zero layout shift and nothing appears below the chart.
+
+Check: hover every nav item, active tab on /dashboard and /terminal,
+UTC/LIVE capsule, narrow width (icon-only links scroll, no break),
+toggle Pressure/Read — chart height must not jump, no console errors.
+
 ## Git Rules
 
 Always check: git status

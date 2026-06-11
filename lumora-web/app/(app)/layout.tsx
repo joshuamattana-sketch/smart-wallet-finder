@@ -1,10 +1,12 @@
 import { TopNav } from "@/components/nav/TopNav";
 
-// LM69B: flat terminal background — the dot-grid texture is gone so the
-// instruments (chart, heatmap, tape) own all the visual depth on a page.
+// LM69C: deep navy terminal backdrop — a near-black indigo base with one
+// very faint cool radial wash falling from the top, so pages read as a lit
+// instrument bay instead of flat black-gray. No dot grid, no hero glow; the
+// instruments still own the depth.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-lm-bg">
+    <div className="min-h-screen bg-[#0a0b10] bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(99,102,241,0.07),transparent_65%)]">
       <TopNav />
       <main className="mx-auto max-w-screen-2xl px-4 py-5 sm:px-6 lg:px-8">
         {children}
