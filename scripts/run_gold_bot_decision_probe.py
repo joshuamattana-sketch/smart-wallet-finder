@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +36,10 @@ from services.connectors.mt5_demo_connector import (  # noqa: E402
     ProbeResult,
 )
 from services.gold_bot_decision_engine import decide  # noqa: E402
+from services.gold_bot_macro_context import (  # noqa: E402
+    build_macro_context,
+    load_macro_events,
+)
 from services.gold_bot_lot_calculator import (  # noqa: E402
     RISK_MODES,
     calc_auto_volume,
@@ -59,6 +64,17 @@ def parse_args(argv=None):
     p.add_argument("--auto-execute-demo", action="store_true", dest="auto_execute_demo",
                    help="Permit a demo order from the decision (needs --confirm-demo-order too).")
     p.add_argument("--json", action="store_true", dest="json_output")
+    # ── Macro / news / event context (LM77A) ─────────────────────────────────
+    p.add_argument("--macro-events-file", default=None, dest="macro_events_file",
+                   help="Local/sample macro events JSON (e.g. data/gold_bot/macro_events.sample.json).")
+    p.add_argument("--dxy-bias", choices=["rising", "falling", "flat", "unknown"],
+                   default="unknown", dest="dxy_bias", help="Placeholder DXY bias (no live feed yet).")
+    p.add_argument("--yields-bias", choices=["rising", "falling", "flat", "unknown"],
+                   default="unknown", dest="yields_bias", help="Placeholder yields bias (no live feed yet).")
+    p.add_argument("--geopolitical-risk", choices=["low", "medium", "high", "unknown"],
+                   default="unknown", dest="geopolitical_risk", help="Placeholder geopolitical risk.")
+    p.add_argument("--ignore-event-lockout-demo", action="store_true", dest="ignore_event_lockout_demo",
+                   help="Override event lockout (still dry-run unless execute+confirm flags present).")
     return p.parse_args(argv)
 
 
@@ -89,9 +105,18 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
         candles = connector.recent_candles(symbol, args.timeframe, args.bars)
         open_xau = len(connector.positions_for_symbol(symbol))
 
+        # ── Macro / news / event context (file-based + placeholder biases) ─────
+        macro_events, macro_source, macro_warns = load_macro_events(args.macro_events_file)
+        macro = build_macro_context(
+            datetime.now(timezone.utc), macro_events, macro_source,
+            dxy_bias=args.dxy_bias, yields_bias=args.yields_bias,
+            geopolitical_risk=args.geopolitical_risk, extra_warnings=macro_warns,
+        )
+
         idea = decide(
             candles, symbol=symbol, timeframe=args.timeframe.upper(), risk_mode=args.risk_mode,
             spread_points=spread_points, point=point, has_open_position=open_xau > 0,
+            macro=macro, ignore_event_lockout=args.ignore_event_lockout_demo,
         )
 
         # ── Print ─────────────────────────────────────────────────────────────
@@ -110,6 +135,9 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
                   f"swing {ms_d['swing_low']:.2f}-{ms_d['swing_high']:.2f}  "
                   f"prev {ms_d['prev_low']:.2f}-{ms_d['prev_high']:.2f}")
         print(f" Open XAUUSD : {open_xau}")
+        print("\n Macro Context:")
+        for line in macro.human_lines():
+            print(line)
         print(f"\n DECISION    : {idea.decision}   [{idea.strategy}]  confidence {idea.confidence}")
         print(f" Context     : session {idea.session} | regime {idea.regime} | risk {idea.risk_mode}")
         if idea.zones:
@@ -121,6 +149,8 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
             print(f" Confidence  : {idea.confidence_components}")
         for r in idea.reasons:
             print(f"   reason  - {r}")
+        for w in idea.warnings:
+            print(f"   warning - {w}")
         for b in idea.blockers:
             print(f"   blocker - {b}")
 
@@ -203,6 +233,8 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
             "dry_run": args.dry_run,
             "auto_execute_demo": args.auto_execute_demo,
             "confirm_demo_order": args.confirm_demo_order,
+            "macro_events_file": args.macro_events_file,
+            "ignore_event_lockout_demo": args.ignore_event_lockout_demo,
             "execution_status": exec_status,
             "risk": risk_decision.to_dict() if risk_decision else None,
         }, journal.DECISION_JOURNAL_PATH)

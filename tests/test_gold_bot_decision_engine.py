@@ -6,14 +6,27 @@ LM76B — Pure tests for the Gold Bot strategy engine V2. No MT5, no network.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from services.gold_bot_decision_engine import (
     SLTP_POINTS,
     compute_market_state,
     decide,
     _find_fvg,
 )
+from services.gold_bot_macro_context import build_macro_context
 
 POINT = 0.01
+_NOW = datetime(2026, 6, 12, 13, 0, 0, tzinfo=timezone.utc)
+
+
+def _macro(events=None, **biases):
+    return build_macro_context(_NOW, events or [], "sample", **biases)
+
+
+def _lockout_event(minutes_from_now=20):
+    return [{"name": "US CPI", "type": "CPI", "currency": "USD",
+             "impact": "high", "minutes_from_now": minutes_from_now}]
 
 
 def _c(o, h, l, cl, t="2026-06-12T13:00:00+00:00"):
@@ -152,6 +165,62 @@ def test_scalp_blocks_wide_spread():
     idea = _decide(_rising(), risk_mode="scalp", spread_points=50)
     assert idea.decision == "NO_TRADE"
     assert idea.strategy == "no_trade_spread"
+
+
+# ── macro / news / event overlay (LM77A) ──────────────────────────────────────
+def test_macro_none_is_identical_to_technical():
+    base = _decide(_rising())
+    with_macro = _decide(_rising(), macro=None)
+    assert base.decision == with_macro.decision == "LONG"
+
+
+def test_lockout_converts_long_to_no_trade():
+    idea = _decide(_rising(), macro=_macro(_lockout_event(20)))
+    assert idea.decision == "NO_TRADE"
+    assert idea.strategy == "macro_lockout"
+    assert idea.should_execute_demo is False
+    assert any("lockout" in b.lower() for b in idea.blockers)
+
+
+def test_lockout_converts_short_to_no_trade():
+    idea = _decide(_falling(), macro=_macro(_lockout_event(15)))
+    assert idea.decision == "NO_TRADE"
+    assert idea.strategy == "macro_lockout"
+
+
+def test_ignore_lockout_override_keeps_decision_dry_run():
+    idea = _decide(_rising(), macro=_macro(_lockout_event(20)), ignore_event_lockout=True)
+    assert idea.decision == "LONG"
+    assert any("overridden" in w.lower() for w in idea.warnings)
+
+
+def test_dxy_yields_rising_penalises_long_confidence():
+    plain = _decide(_rising())
+    biased = _decide(_rising(), macro=_macro(dxy_bias="rising", yields_bias="rising"))
+    assert biased.decision == "LONG"
+    assert biased.confidence < plain.confidence
+    assert biased.macro["applied"]["confidence_delta"] < 0
+
+
+def test_dxy_yields_falling_helps_long_confidence():
+    plain = _decide(_rising())
+    biased = _decide(_rising(), macro=_macro(dxy_bias="falling", yields_bias="falling"))
+    assert biased.confidence >= plain.confidence
+
+
+def test_scalp_blocked_in_post_event_window():
+    # CPI released 5 min ago → post_event; scalp must stand aside.
+    idea = _decide(_rising(), risk_mode="scalp", spread_points=10,
+                   macro=_macro(_lockout_event(-5)))
+    assert idea.decision == "NO_TRADE"
+    assert idea.strategy == "macro_post_event_scalp"
+
+
+def test_macro_context_attached_to_idea():
+    idea = _decide(_rising(), macro=_macro(dxy_bias="rising"))
+    assert idea.macro
+    assert idea.macro["source_mode"] == "sample"
+    assert "applied" in idea.macro
 
 
 # ── market state context ──────────────────────────────────────────────────────

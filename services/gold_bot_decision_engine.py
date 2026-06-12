@@ -27,6 +27,8 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any
 
+from services.gold_bot_macro_context import MacroContext, macro_directional_adjustment
+
 # ── Tunable thresholds (transparent, conservative) ───────────────────────────
 SMA_SHORT = 9
 SMA_LONG = 21
@@ -114,9 +116,11 @@ class TradeIdea:
     regime: str = "unknown"
     reasons: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     zones: dict[str, Any] = field(default_factory=dict)
     confidence_components: dict[str, Any] = field(default_factory=dict)
     market_state: dict[str, Any] = field(default_factory=dict)
+    macro: dict[str, Any] = field(default_factory=dict)
     should_execute_demo: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -389,7 +393,7 @@ def _new_idea(symbol, timeframe, mode, ms: MarketState | None, **kw) -> TradeIde
     )
 
 
-def decide(
+def _decide_core(
     candles: list[dict],
     *,
     symbol: str,
@@ -483,3 +487,108 @@ def decide(
     return _new_idea(symbol, timeframe, mode, ms, decision="NO_TRADE", strategy="no_trade",
                      confidence=0, entry_reference_price=entry, sl_points=None, tp_points=None,
                      reasons=reasons, zones=zones)
+
+
+# ── macro / news / event overlay (LM77A) ─────────────────────────────────────
+def _apply_macro(
+    idea: TradeIdea,
+    macro: MacroContext,
+    *,
+    mode: str,
+    min_conf: int,
+    ignore_lockout: bool,
+) -> TradeIdea:
+    """
+    Fold the macro context into a technical TradeIdea. Lockout is a hard gate;
+    watch / post-event reduce confidence (scalp stricter); DXY/yields/geo nudge
+    a directional idea. Pure: mutates and returns the same idea.
+    """
+    idea.macro = macro.to_dict()
+    idea.warnings = list(idea.warnings) + list(macro.warnings)
+    applied = {"confidence_delta": 0, "forced_no_trade": False, "overrode_lockout": False}
+
+    # 1) Lockout — hard gate (all modes) unless explicitly overridden (demo dry-run).
+    if macro.event_risk_state == "lockout":
+        if ignore_lockout:
+            idea.warnings.append(
+                "event lockout overridden (--ignore-event-lockout-demo); demo dry-run only.")
+            applied["overrode_lockout"] = True
+        else:
+            if idea.decision in ("LONG", "SHORT"):
+                idea.decision = "NO_TRADE"
+                idea.strategy = "macro_lockout"
+                idea.confidence = 0
+                idea.should_execute_demo = False
+                applied["forced_no_trade"] = True
+            idea.blockers.append(
+                f"High-impact {macro.event_type} lockout window active "
+                f"({macro.event_currency}, {macro.minutes_to_next_event:+d}m).")
+            idea.reasons += [f"macro: {r}" for r in macro.reasons]
+            idea.macro["applied"] = applied
+            return idea
+
+    # Attach macro reasons regardless of decision.
+    idea.reasons += [f"macro: {r}" for r in macro.reasons]
+
+    # 2) Directional ideas: event window + DXY/yields/geo + scalp strictness.
+    if idea.decision in ("LONG", "SHORT"):
+        delta = macro.confidence_modifier
+        dir_delta, dir_reasons = macro_directional_adjustment(macro, idea.decision)
+        delta += dir_delta
+        idea.reasons += [f"macro: {r}" for r in dir_reasons]
+
+        if mode == "scalp":
+            if macro.event_risk_state == "post_event":
+                idea.decision = "NO_TRADE"
+                idea.strategy = "macro_post_event_scalp"
+                idea.should_execute_demo = False
+                idea.confidence = max(0, idea.confidence + delta)
+                idea.blockers.append("scalp blocked in post-event window (volatility).")
+                applied.update({"forced_no_trade": True, "confidence_delta": delta})
+                idea.macro["applied"] = applied
+                return idea
+            if macro.event_risk_state == "watch":
+                delta -= 8
+                idea.reasons.append("macro: scalp tightened in watch window (-8).")
+
+        new_conf = max(0, min(100, idea.confidence + delta))
+        applied["confidence_delta"] = delta
+        if new_conf < min_conf:
+            idea.blockers.append(
+                f"macro pulled confidence to {new_conf} < min {min_conf} for {mode}.")
+            idea.decision = "NO_TRADE"
+            idea.strategy = "macro_low_confidence"
+            idea.should_execute_demo = False
+            applied["forced_no_trade"] = True
+        idea.confidence = new_conf
+
+    idea.macro["applied"] = applied
+    return idea
+
+
+def decide(
+    candles: list[dict],
+    *,
+    symbol: str,
+    timeframe: str,
+    risk_mode: str,
+    spread_points: float,
+    point: float,
+    has_open_position: bool,
+    macro: MacroContext | None = None,
+    ignore_event_lockout: bool = False,
+) -> TradeIdea:
+    """
+    Public entry point. Runs the pure technical engine, then (optionally) folds
+    in the macro/news/event context. With ``macro=None`` the result is identical
+    to the technical engine — macro is purely additive.
+    """
+    idea = _decide_core(
+        candles, symbol=symbol, timeframe=timeframe, risk_mode=risk_mode,
+        spread_points=spread_points, point=point, has_open_position=has_open_position,
+    )
+    if macro is None:
+        return idea
+    mode = risk_mode.lower()
+    return _apply_macro(idea, macro, mode=mode, min_conf=MIN_CONFIDENCE.get(mode, 55),
+                        ignore_lockout=ignore_event_lockout)
