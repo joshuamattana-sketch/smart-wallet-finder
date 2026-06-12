@@ -1403,3 +1403,37 @@ files (`data/gold_bot/replay/*.jsonl|*.json|*.csv`) are gitignored. Tests
 `python -m pytest tests/test_gold_bot_replay_engine.py -q` (no MT5/internet;
 assert no future bars in visible window, causal macro as-of, NO_TRADE not scored
 win/loss, dry-run writes nothing, MetaTrader5 never imported).
+
+## LM86A Pattern scoring / learning journal (replay -> setup scorecards)
+
+`services/gold_bot_learning_journal.py` aggregates the LM85A replay JSONL into
+explainable per-setup scorecards: sample/trade/no_trade counts, win/loss/neutral/
+no_data + winrate + avg_dir_return + expectancy by horizon, MFE/MAE, plus slices
+by confidence bucket / direction / timeframe / risk_mode / session / macro bias,
+and a NO_TRADE missed-opportunity analysis. `recommended_status` =
+promising / weak / avoid / insufficient_sample / mixed (min-sample guarded).
+READ-ONLY + OFFLINE: no MT5, no orders, no HTTP. It writes a
+`setup_modifiers.preview.json` but that is PREVIEW ONLY (`LEARNING_MODIFIERS_LIVE
+= False`) — NOT wired into the decision engine or worker; live behavior is
+unchanged until a future owner-approved gate.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# needs replay output first (LM85A):
+python scripts/run_gold_bot_replay.py --timeframe M1 --max-bars 500 --risk-mode balanced --horizons 5,15,30
+# build scorecards:
+python scripts/run_gold_bot_learning_scorecard.py --dry-run
+python scripts/run_gold_bot_learning_scorecard.py --horizon 15 --min-samples 10 --top 10
+python scripts/run_gold_bot_learning_scorecard.py --timeframe M5 --risk-mode scalp --horizon 12 --min-samples 10 --top 10
+```
+
+Reads `data/gold_bot/replay/*.jsonl` (risk_mode pulled from the sibling
+`.summary.json`; session derived from bar time when absent). Writes
+`data/gold_bot/learning/scorecard_<SYMBOL>_<TF>_<RISK>_<date>.json` +
+`scorecard_latest.json` + `setup_modifiers.preview.json` + appends
+`learning_events.jsonl`. Flags: `--replay-dir --out-dir --symbol --timeframe
+--risk-mode --horizon --min-samples --missed-move-threshold-points --top
+--dry-run --json`. dry-run writes nothing; no replay files -> clear error (hint:
+run LM85A). All learning outputs (`data/gold_bot/learning/*.json|*.jsonl|*.csv`)
+are gitignored. Tests `python -m pytest tests/test_gold_bot_learning_journal.py -q`
+(no MT5/internet). LIVE TRADING UNCHANGED — learning is analysis only.

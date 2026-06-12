@@ -21,6 +21,10 @@ data/gold_bot/macro_history/samples/*
 data/gold_bot/replay/*.jsonl
 data/gold_bot/replay/*.json
 data/gold_bot/replay/*.csv
+# LM86A generated learning output — never commit.
+data/gold_bot/learning/*.json
+data/gold_bot/learning/*.jsonl
+data/gold_bot/learning/*.csv
 __pycache__/
 *.pyc
 .DS_Store
