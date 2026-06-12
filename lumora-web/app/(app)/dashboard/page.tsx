@@ -30,6 +30,54 @@ import {
   heatmapIntensitySummary,
 } from "@/lib/heatmap-types";
 
+// ── Dashboard-local visual layer (LM70C) ─────────────────────────────────────
+// Command-center accents: a breathing live ring on the read strip, glow-tipped
+// score bars, and a faint signal sweep across the read surface. All gated
+// behind prefers-reduced-motion; static fallbacks read fine.
+const DASH_CSS = `
+@media (prefers-reduced-motion: no-preference) {
+  .lmdc-sweep { animation: lmdc-sweep 9s ease-in-out infinite; }
+  @keyframes lmdc-sweep {
+    0%, 100% { transform: translateX(-120%); opacity: 0; }
+    40%      { opacity: 1; }
+    60%      { transform: translateX(120%); opacity: 0; }
+  }
+  .lmdc-breathe { animation: lmdc-breathe 3.2s ease-in-out infinite; }
+  @keyframes lmdc-breathe {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1; }
+  }
+}
+.lmdc-bar-tip { box-shadow: 0 0 6px 0 currentColor; }
+.lmdc-module-row { transition: background-color 130ms ease-out, box-shadow 130ms ease-out; }
+.lmdc-module-row:hover {
+  background-color: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+`;
+
+// Module header — one shared lead for every intelligence module: section
+// title, optional right slot, and a violet→cyan hairline underneath so the
+// modules read as parts of one connected system.
+function ModuleHeader({
+  title,
+  right,
+}: {
+  title: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="relative flex items-center justify-between gap-2 px-3 py-2">
+      <span className="lm-section-title">{title}</span>
+      {right}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-violet-500/25 via-white/[0.05] to-transparent"
+      />
+    </div>
+  );
+}
+
 // ── Trader-signal derivation ─────────────────────────────────────────────────
 // Derives bias/score/confidence/risk/action from the live heatmap payload
 // and (when available) the mock setup for this symbol. No new API calls.
@@ -266,21 +314,37 @@ export default function DashboardPage() {
         </span>
       }
     >
+      <style dangerouslySetInnerHTML={{ __html: DASH_CSS }} />
 
-      {/* ── CURRENT READ — one compact command strip, not a card ──────────── */}
+      {/* ── CURRENT READ — the command surface ─────────────────────────────── */}
       <Panel level="focus" flush className="overflow-hidden">
-        <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1.5 bg-gradient-to-r from-cyan-400/[0.04] via-transparent to-violet-500/[0.03] px-4 py-2.5">
-          {/* bias edge — the verdict at a glance */}
+        <div
+          className={clsx(
+            "relative flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3",
+            // Bias-tinted atmosphere — the surface itself carries the verdict.
+            !activeSignal || activeSignal.bias === "NEUTRAL"
+              ? "bg-gradient-to-r from-cyan-400/[0.04] via-transparent to-violet-500/[0.03]"
+              : activeSignal.bias === "LONG"
+                ? "bg-gradient-to-r from-emerald-400/[0.06] via-transparent to-violet-500/[0.03]"
+                : "bg-gradient-to-r from-rose-400/[0.06] via-transparent to-violet-500/[0.03]",
+          )}
+        >
+          {/* Signal sweep — a quiet scanner pass across the command surface */}
+          <span
+            aria-hidden
+            className="lmdc-sweep pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-cyan-300/[0.04] to-transparent"
+          />
+          {/* bias edge — thicker, glowing verdict rail */}
           <span
             aria-hidden
             className={clsx(
-              "absolute inset-y-1.5 left-0 w-[2.5px] rounded-full",
+              "absolute inset-y-1.5 left-0 w-[3px] rounded-full",
               !activeSignal
                 ? "bg-zinc-600/50"
                 : activeSignal.bias === "LONG"
-                  ? "bg-emerald-400/70"
+                  ? "bg-emerald-400/80 shadow-[0_0_10px_rgba(52,211,153,0.5)]"
                   : activeSignal.bias === "SHORT"
-                    ? "bg-rose-400/70"
+                    ? "bg-rose-400/80 shadow-[0_0_10px_rgba(251,113,133,0.5)]"
                     : "bg-zinc-500/60",
             )}
           />
@@ -302,14 +366,38 @@ export default function DashboardPage() {
             </>
           ) : (
             <>
-              <span className={clsx("num text-[15px] font-bold leading-none", biasTone(activeSignal.bias))}>
+              {/* The verdict — large, glowing, unmistakable */}
+              <span
+                className={clsx(
+                  "num text-[19px] font-bold leading-none tracking-wide",
+                  biasTone(activeSignal.bias),
+                  activeSignal.bias === "LONG" && "drop-shadow-[0_0_10px_rgba(52,211,153,0.45)]",
+                  activeSignal.bias === "SHORT" && "drop-shadow-[0_0_10px_rgba(251,113,133,0.45)]",
+                )}
+              >
                 {activeSignal.bias}
               </span>
-              <span className="num text-[11px] text-lm-text-dim">
-                {activeSignal.score}
-                <span className="text-lm-muted">/100</span>
-                <span className="mx-1.5 text-lm-border">·</span>
-                conf {activeSignal.confidence}%
+              {/* Score capsule — number + micro bar in one unit */}
+              <span className="flex items-center gap-2">
+                <span className="num text-[11px] text-lm-text-dim">
+                  {activeSignal.score}
+                  <span className="text-lm-muted">/100</span>
+                  <span className="mx-1.5 text-lm-border">·</span>
+                  conf {activeSignal.confidence}%
+                </span>
+                <span className="hidden h-[3px] w-12 overflow-hidden rounded-full bg-black/40 shadow-[inset_0_1px_1px_rgba(0,0,0,0.5)] sm:block">
+                  <span
+                    className={clsx(
+                      "lmdc-bar-tip block h-full rounded-full",
+                      activeSignal.bias === "LONG"
+                        ? "bg-emerald-400/80 text-emerald-400"
+                        : activeSignal.bias === "SHORT"
+                          ? "bg-rose-400/80 text-rose-400"
+                          : "bg-lm-cyan/70 text-cyan-400",
+                    )}
+                    style={{ width: `${activeSignal.score}%` }}
+                  />
+                </span>
               </span>
               <StatusBadge variant={riskVariant(activeSignal.risk)} size="sm">
                 {activeSignal.risk}
@@ -325,17 +413,24 @@ export default function DashboardPage() {
           )}
 
           <div className="ml-auto flex items-center gap-2.5">
-            <span className="lm-price text-[15px] leading-none text-lm-cyan drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]">
-              {activePrice !== null
-                ? `$${activePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                : "—"}
+            {/* Live price — breathing halo behind the number */}
+            <span className="relative">
+              <span
+                aria-hidden
+                className="lmdc-breathe pointer-events-none absolute -inset-2 rounded-full bg-cyan-400/[0.07] blur-md"
+              />
+              <span className="lm-price relative text-[16px] leading-none text-lm-cyan drop-shadow-[0_0_8px_rgba(34,211,238,0.35)]">
+                {activePrice !== null
+                  ? `$${activePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                  : "—"}
+              </span>
             </span>
             <StatusBadge variant={activeStatus.variant} size="sm" dot={activeStatus.variant === "live"}>
               {activeStatus.label}
             </StatusBadge>
             <Link
               href="/terminal"
-              className="num text-[10px] uppercase tracking-wider text-lm-cyan/80 transition-colors duration-150 hover:text-lm-cyan focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cyan-400/60"
+              className="num rounded border border-white/[0.06] bg-white/[0.02] px-2 py-1 text-[10px] uppercase tracking-wider text-lm-cyan/80 transition-colors duration-150 hover:border-cyan-400/30 hover:text-lm-cyan focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cyan-400/60"
             >
               Terminal →
             </Link>
@@ -349,11 +444,8 @@ export default function DashboardPage() {
         {/* Right rail (first on mobile): watchlist priority + what changed */}
         <aside className="space-y-3 lg:order-2">
           {/* Watchlist rail */}
-          <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.04]">
-            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-lm-border/60">
-              <span className="lm-section-title">Watchlist</span>
-              <WatchlistPriorityPicker />
-            </div>
+          <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.05] shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)]">
+            <ModuleHeader title="Watchlist" right={<WatchlistPriorityPicker />} />
             <div className="divide-y divide-lm-border/40">
               {backgroundSymbols.length === 0 && (
                 <p className="px-3 py-4 text-[11px] text-lm-muted leading-snug">
@@ -366,7 +458,7 @@ export default function DashboardPage() {
                 const price = p ? heatmapCurrentPrice(p) : null;
                 const signal = deriveSignal(sym, p);
                 return (
-                  <div key={sym} className="lm-row px-3 py-2">
+                  <div key={sym} className="lmdc-module-row px-3 py-2">
                     {!p || !signal ? (
                       <div className="space-y-1.5">
                         <Skeleton variant="line" width="w-1/3" />
@@ -388,15 +480,15 @@ export default function DashboardPage() {
                           </span>
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
-                          <div className="h-[3px] flex-1 rounded-full bg-lm-border overflow-hidden">
+                          <div className="h-[3px] flex-1 rounded-full bg-black/40 shadow-[inset_0_1px_1px_rgba(0,0,0,0.5)] overflow-hidden">
                             <div
                               className={clsx(
-                                "h-full rounded-full transition-[width] duration-500",
+                                "lmdc-bar-tip h-full rounded-full transition-[width] duration-500",
                                 signal.bias === "LONG"
-                                  ? "bg-emerald-400/70"
+                                  ? "bg-emerald-400/70 text-emerald-400"
                                   : signal.bias === "SHORT"
-                                    ? "bg-rose-400/70"
-                                    : "bg-lm-cyan/60",
+                                    ? "bg-rose-400/70 text-rose-400"
+                                    : "bg-lm-cyan/60 text-cyan-400",
                               )}
                               style={{ width: `${signal.confidence}%` }}
                             />
@@ -419,17 +511,17 @@ export default function DashboardPage() {
 
           {/* Whale tape — what changed */}
           <section>
-            <div className="flex items-center justify-between mb-2">
-              <span className="lm-section-title">Whale Tape · What Changed</span>
-              <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
-            </div>
-            <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.04]">
+            <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.05] shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)]">
+              <ModuleHeader
+                title="Whale Tape · What Changed"
+                right={<StatusBadge variant="demo" size="sm">Demo</StatusBadge>}
+              />
               <div className="overflow-y-auto max-h-[360px] divide-y divide-lm-border/40">
                 {mockWhaleAlerts.map((a) => (
                   <div
                     key={a.id}
                     className={clsx(
-                      "lm-row relative px-3 py-2",
+                      "lmdc-module-row relative px-3 py-2",
                       a.side === "BUY" ? "lm-rail-bid pl-4" : "lm-rail-ask pl-4",
                     )}
                   >
@@ -468,16 +560,17 @@ export default function DashboardPage() {
 
         {/* Setups — what to watch */}
         <section className="lg:order-1 lg:col-span-2">
-          <div className="flex items-center justify-between mb-2">
-            <span className="lm-section-title">Setups · What to Watch</span>
-            <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
-          </div>
-          <Panel level="subtle" flush className="divide-y divide-lm-border/40 overflow-hidden ring-1 ring-white/[0.04]">
+          <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.05] shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)]">
+            <ModuleHeader
+              title="Setups · What to Watch"
+              right={<StatusBadge variant="demo" size="sm">Demo</StatusBadge>}
+            />
+            <div className="divide-y divide-lm-border/40">
             {mockSetups.map((s) => (
               <div
                 key={s.symbol}
                 className={clsx(
-                  "lm-row relative px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[92px_1fr_150px_52px] sm:gap-3 sm:items-center",
+                  "lmdc-module-row relative px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[92px_1fr_150px_52px] sm:gap-3 sm:items-center",
                   s.bias === "LONG" ? "lm-rail-bid pl-4" : s.bias === "SHORT" ? "lm-rail-ask pl-4" : "",
                 )}
               >
@@ -513,15 +606,15 @@ export default function DashboardPage() {
                     {s.confidence}
                     <span className="text-[9px] text-lm-muted">/100</span>
                   </p>
-                  <div className="h-1 mt-1 rounded-full bg-lm-border overflow-hidden">
+                  <div className="h-1 mt-1 rounded-full bg-black/40 shadow-[inset_0_1px_1px_rgba(0,0,0,0.5)] overflow-hidden">
                     <div
                       className={clsx(
-                        "h-full rounded-full",
+                        "lmdc-bar-tip h-full rounded-full",
                         s.bias === "LONG"
-                          ? "bg-emerald-400/70"
+                          ? "bg-emerald-400/70 text-emerald-400"
                           : s.bias === "SHORT"
-                            ? "bg-rose-400/70"
-                            : "bg-lm-cyan/70",
+                            ? "bg-rose-400/70 text-rose-400"
+                            : "bg-lm-cyan/70 text-cyan-400",
                       )}
                       style={{ width: `${s.confidence}%` }}
                     />
@@ -529,6 +622,7 @@ export default function DashboardPage() {
                 </div>
               </div>
             ))}
+            </div>
           </Panel>
         </section>
       </div>
