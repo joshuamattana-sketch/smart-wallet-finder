@@ -41,6 +41,14 @@ export interface WhaleAlertView {
   confidence: number;        // 0–100
   reason:     string;
   action:     string;
+  /**
+   * LM68D — raw machine-readable fields for chart consumers. Optional so
+   * mock alerts (which lack them) and existing consumers stay untouched.
+   */
+  event_ts?:     string;     // ISO 8601 event timestamp
+  notional_usd?: number;     // raw notional in USD
+  severity?:     string;     // raw severity bucket, e.g. "high" / "notable"
+  source_type?:  string;     // e.g. "binance_spot_aggtrade"
 }
 
 export type WhaleAlertsDataSource = "supabase" | "journal" | "mock";
@@ -196,8 +204,10 @@ function normalizeEventDict(
   const confidence = normalizeConfidence(asNumber(event.confidence));
   const reason     = asString(event.reason, `${symbol} whale flow`);
   const exchange   = normalizeExchange(asString(event.exchange));
-  const time       = fmtTimeFromIso(asString(event.event_ts));
+  const eventTs    = asString(event.event_ts);
+  const time       = fmtTimeFromIso(eventTs);
   const id         = asString(event.whale_event_id) || `evt-${index}`;
+  const sourceType = asString(event.source_type);
 
   return {
     id,
@@ -212,6 +222,10 @@ function normalizeEventDict(
     confidence,
     reason,
     action: deriveAction(side, risk),
+    event_ts: eventTs || undefined,
+    notional_usd: notional > 0 ? notional : undefined,
+    severity,
+    source_type: sourceType || undefined,
   };
 }
 

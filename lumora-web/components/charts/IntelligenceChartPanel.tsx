@@ -9,10 +9,14 @@
 // keeps the deterministic mock session and shows a DEMO FALLBACK badge —
 // the page never crashes.
 //
-// Intelligence overlays (heatmap bands, whale markers, pressure, read)
-// remain DEMO data in this patch, derived relative to whatever candles are
-// displayed so they stay meaningful at any price level. Live overlay wiring
-// lands in LM68D.
+// LM68D: whale markers are now REAL — `useWhaleChartEvents` polls
+// /api/whale-alerts (Supabase → journal → mock server-side) and events for
+// the charted symbol that fall inside the candle range render as markers
+// (BUY below bar, SELL above, sized by risk, short $-labels). When no real
+// whale data is available (mock-only API, fetch failure, or demo candles),
+// the demo whale markers remain as the fallback. Other overlays (heatmap
+// bands, pressure, read) are still demo data, derived relative to whatever
+// candles are displayed so they stay meaningful at any price level.
 //
 // Layering (unchanged from LM68B):
 //   1–2. candles + volume      → lightweight-charts series
@@ -73,6 +77,11 @@ import {
   type BinanceInterval,
 } from "@/lib/binance-klines";
 import { useBinanceKlines } from "@/components/charts/useBinanceKlines";
+import { useWhaleChartEvents } from "@/components/charts/useWhaleChartEvents";
+import {
+  mapWhaleEventsToChartMarkers,
+  type RawChartWhaleEvent,
+} from "@/lib/chart-whale-events";
 
 interface IntelligenceChartPanelProps {
   /** Chart pane height in CSS px (header/footer come on top). */
@@ -160,6 +169,10 @@ export function IntelligenceChartPanel({
   const [mode, setMode] = useState<ViewMode>(defaultMode);
   const [overlays, setOverlays] = useState<OverlayState>(MODE_PRESETS[defaultMode]);
   const [usingMock, setUsingMock] = useState(true);
+  // LM68D — which whale source the markers currently reflect.
+  const [whaleDisplay, setWhaleDisplay] = useState<"live" | "fallback" | "none">(
+    "fallback",
+  );
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -176,11 +189,16 @@ export function IntelligenceChartPanel({
   const candlesRef = useRef<ChartCandle[]>(MOCK_CANDLES);
   const overlayDataRef = useRef(deriveMockOverlays(MOCK_CANDLES));
 
+  // LM68D — real whale events (polled from /api/whale-alerts). Held in refs
+  // so syncOverlays (called from non-React paths) always sees current data.
+  const whaleEventsRef = useRef<RawChartWhaleEvent[]>([]);
+  const whaleFeedRef = useRef<"loading" | "real" | "unavailable">("loading");
+
   // Density: which preset shapes zone/whale filtering. Custom toggle combos
   // keep the density of the last preset the user selected.
   const density: ViewMode = matchedMode(overlays) ?? mode;
-  const stateRef = useRef({ overlays, density });
-  stateRef.current = { overlays, density };
+  const stateRef = useRef({ overlays, density, symbol });
+  stateRef.current = { overlays, density, symbol };
 
   // ── Layer 3: overlay canvas draw (zones + sweep bands) ─────────────────────
   const drawOverlay = useCallback(() => {
@@ -294,15 +312,38 @@ export function IntelligenceChartPanel({
     const anchor = anchorRef.current;
     if (!candles || !anchor) return;
 
-    const { overlays: ov, density: dens } = stateRef.current;
+    const { overlays: ov, density: dens, symbol: sym } = stateRef.current;
     const data = overlayDataRef.current;
     const bars = candlesRef.current;
 
-    const whales = ov.whales
-      ? dens === "full"
-        ? data.whales
-        : data.whales.filter(isImportantWhale)
-      : [];
+    // Whale markers — real events first, demo only as fallback (LM68D).
+    // On demo candles real timestamps can't align with the session, so the
+    // demo whale prints stay. With live candles: real mapped events → LIVE;
+    // real source answered but nothing for this symbol/range → NONE (honest
+    // empty, no fake markers); feed unavailable → demo FALLBACK.
+    let whales = data.whales;
+    let display: "live" | "fallback" | "none" = "fallback";
+    if (!usingMockRef.current) {
+      const real = mapWhaleEventsToChartMarkers(
+        whaleEventsRef.current,
+        bars,
+        sym,
+        dens,
+      );
+      if (real.length > 0) {
+        whales = real;
+        display = "live";
+      } else if (whaleFeedRef.current === "real") {
+        whales = [];
+        display = "none";
+      }
+    }
+    if (!ov.whales) whales = [];
+    else if (display === "fallback" && dens !== "full") {
+      whales = whales.filter(isImportantWhale);
+    }
+    setWhaleDisplay(display);
+
     const markers: SeriesMarker<Time>[] = whales.map((w) => ({
       time: w.time as UTCTimestamp,
       position: w.side === "BUY" ? "belowBar" : "aboveBar",
@@ -385,6 +426,17 @@ export function IntelligenceChartPanel({
   useEffect(() => {
     if (status === "error") applySnapshot(MOCK_CANDLES, true);
   }, [status, applySnapshot]);
+
+  // ── Live whale events (LM68D) ───────────────────────────────────────────────
+  const { events: whaleEvents, feed: whaleFeed } = useWhaleChartEvents();
+
+  // Push fresh events/feed into refs and remap markers. Also reruns on
+  // symbol change so stale-symbol markers clear before the next snapshot.
+  useEffect(() => {
+    whaleEventsRef.current = whaleEvents;
+    whaleFeedRef.current = whaleFeed;
+    syncOverlays();
+  }, [whaleEvents, whaleFeed, symbol, syncOverlays]);
 
   // ── Chart creation (once) ───────────────────────────────────────────────────
   useEffect(() => {
@@ -576,7 +628,15 @@ export function IntelligenceChartPanel({
             OVERLAY_KEYS.map((k) => ({
               id: k,
               label: OVERLAY_LABELS[k],
-              hint: overlays[k] ? "on · demo data" : "off",
+              hint: !overlays[k]
+                ? "off"
+                : k === "whales"
+                  ? whaleDisplay === "live"
+                    ? "on · live events"
+                    : whaleDisplay === "none"
+                      ? "on · none in range"
+                      : "on · demo data"
+                  : "on · demo data",
               icon: OVERLAY_ICONS[k],
               active: overlays[k],
               tone: OVERLAY_TONES[k],
@@ -723,7 +783,15 @@ export function IntelligenceChartPanel({
       {/* Honesty footer — deliberate two-sided status line */}
       <div className="flex items-center justify-between gap-3 rounded-b-lg border-t border-lm-border bg-lm-surface-muted/40 px-3 py-1.5">
         <p className="num text-[9px] uppercase tracking-[0.15em] text-lm-muted">
-          Candles · Binance public data · overlays demo until LM68D
+          Candles · Binance public data · zones demo ·{" "}
+          <span
+            className={clsx(
+              whaleDisplay === "live" && "text-emerald-400/80",
+              whaleDisplay === "fallback" && "text-amber-400/70",
+            )}
+          >
+            whales · {whaleDisplay === "live" ? "live" : whaleDisplay === "none" ? "none" : "fallback"}
+          </span>
         </p>
         <p className="num hidden whitespace-nowrap text-[9px] uppercase tracking-[0.15em] text-lm-muted sm:block">
           Context only · not financial advice
