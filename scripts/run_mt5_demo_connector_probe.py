@@ -48,11 +48,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Number of recent candles to read (default 100).")
     parser.add_argument("--json", action="store_true", dest="json_output",
                         help="Print a compact JSON summary instead of human output.")
+    parser.add_argument("--history-debug", action="store_true", dest="history_debug",
+                        help="Print compact rows for recent deals + the exact query windows used.")
     return parser.parse_args(argv)
 
 
 def _fmt(v: object) -> str:
-    return "—" if v is None else str(v)
+    return "-" if v is None else str(v)
 
 
 def print_human(result: ProbeResult) -> None:
@@ -73,7 +75,7 @@ def print_human(result: ProbeResult) -> None:
         else "UNKNOWN" if r.is_demo is None
         else "REAL"
     )
-    print(f"   Trade mode       : {_fmt(r.trade_mode_label)} ({_fmt(r.trade_mode_raw)}) → {demo_str}")
+    print(f"   Trade mode       : {_fmt(r.trade_mode_label)} ({_fmt(r.trade_mode_raw)}) -> {demo_str}")
     print(f"   Balance          : {_fmt(r.balance)}")
     print(f"   Equity           : {_fmt(r.equity)}")
     print(f"   Margin           : {_fmt(r.margin)}")
@@ -100,12 +102,36 @@ def print_human(result: ProbeResult) -> None:
         print(f"     O/H/L/C        : {_fmt(c.get('open'))} / {_fmt(c.get('high'))} / "
               f"{_fmt(c.get('low'))} / {_fmt(c.get('close'))}")
 
-    print("\n Positions / History")
+    print("\n Positions")
     print(f"   Open positions   : {_fmt(r.open_positions)}")
-    if r.history_deals is None:
-        print("   Recent history   : (unavailable)")
+
+    print("\n Deal / Order History (deals + orders, profit/comm/swap on trades)")
+    if not r.history_windows:
+        print("   (history_deals_get unavailable)")
     else:
-        print(f"   Recent history   : {r.history_deals} deals over last {_fmt(r.history_days)} days")
+        for w in r.history_windows:
+            print(f"   [{w['label']:>5}] deals={w['deal_total']} (XAU={w['symbol_deals']} "
+                  f"in={w['entry_deals']} out={w['exit_deals']}) orders={w['order_total']} "
+                  f"profit={w['profit_sum']} comm={w['commission_sum']} swap={w['swap_sum']}")
+        any_deal = any(w["deal_total"] for w in r.history_windows)
+        if not any_deal:
+            print("\n   No deals found in any window. Possible reasons:")
+            print("     - terminal history not yet synced (open the History tab in MT5 once)")
+            print("     - broker server time differs (windows are padded +1 day to compensate)")
+            print("     - only balance ops so far, no closed trades")
+            print("     - account just created / different login than the one trading")
+            print("   Exact windows queried (tz-aware UTC):")
+            for w in r.history_windows:
+                print(f"     {w['label']:>5}: from {w['from']}  to {w['to']}")
+
+    if r.history_recent:
+        print("\n Recent deals (debug)")
+        for d in r.history_recent:
+            print(f"   #{_fmt(d['ticket'])} ord={_fmt(d['order'])} {_fmt(d['time'])} "
+                  f"{_fmt(d['symbol'])} {_fmt(d['type'])}/{_fmt(d['entry'])} "
+                  f"vol={_fmt(d['volume'])} px={_fmt(d['price'])} "
+                  f"pnl={_fmt(d['profit'])} comm={_fmt(d['commission'])} swap={_fmt(d['swap'])} "
+                  f"'{_fmt(d['comment'])}'")
 
     if r.warnings:
         print("\n Warnings")
@@ -126,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             symbol=args.symbol,
             timeframe=args.timeframe,
             bars=args.bars,
+            history_debug=args.history_debug,
         )
     except Mt5ConnectorError as exc:
         if args.json_output:

@@ -995,3 +995,81 @@ Tests (no terminal needed, fake MT5 injected):
 ```powershell
 python -m pytest tests/connectors/test_mt5_demo_connector.py -q
 ```
+
+## LM75B MT5 Demo Guarded Trade Loop — demo only, heavily guarded
+
+DEMO ONLY. Default behavior sends nothing. An order is sent ONLY with
+`--confirm-demo-order` (and not `--dry-run`), on a verified demo account, after
+the risk gate approves and order_check passes. Close-position is deferred.
+
+Safety env (defaults safe): MT5_DEMO_ONLY=true · LIVE_TRADING_ENABLED=false ·
+ALLOW_REAL_ORDERS=false · GOLD_BOT_KILL_SWITCH=false ·
+GOLD_BOT_MAX_TRADES_PER_DAY=3 · GOLD_BOT_MAX_DAILY_LOSS_PCT=7
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+
+# read-only probe still works:
+python scripts/run_mt5_demo_connector_probe.py --bars 50
+
+# validate only (sends NOTHING):
+python scripts/run_mt5_demo_trade_loop.py --side buy  --volume 0.01 --sl-points 300 --tp-points 600 --dry-run
+python scripts/run_mt5_demo_trade_loop.py --side sell --volume 0.01 --sl-points 300 --tp-points 600 --dry-run
+
+# actually place a guarded DEMO order (opens a real position on the demo account):
+python scripts/run_mt5_demo_trade_loop.py --side buy  --volume 0.01 --sl-points 300 --tp-points 600 --confirm-demo-order
+```
+
+Journal (gitignored): `data/gold_bot/demo_trade_journal.jsonl` — one line per
+attempt (dry_run / blocked / demo_order).
+
+Tests (no terminal needed):
+
+```powershell
+python -m pytest tests/connectors/test_mt5_demo_connector.py tests/test_gold_bot_risk_gate.py -q
+```
+
+## LM75C MT5 Demo Position Manager + Close — demo only, guarded
+
+List is read-only. Close sends nothing unless `--confirm-demo-order`, on a
+verified demo account, with the ticket found. Closing is risk-reducing so the
+open-side caps don't apply; the kill switch still blocks a close unless
+`--emergency-close` (demo only) is given.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+
+# list open positions (read-only):
+python scripts/run_mt5_demo_trade_loop.py --list-positions
+
+# close one position by ticket (guarded):
+python scripts/run_mt5_demo_trade_loop.py --close-position TICKET --confirm-demo-order
+
+# emergency close even if kill switch is on (still demo only):
+python scripts/run_mt5_demo_trade_loop.py --close-position TICKET --confirm-demo-order --emergency-close
+
+# verify afterwards:
+python scripts/run_mt5_demo_connector_probe.py --bars 10
+```
+
+Close uses the position's exact ticket/symbol/volume with the opposite order
+type (close BUY → SELL at bid, close SELL → BUY at ask). `order_check` on a
+close is advisory only (unreliable in the MT5 Python API) — demo verification +
+the safety checks are the real guard. Close attempts are journaled
+(`mode=close_position` / `blocked`).
+
+## LM75C-fix MT5 deal/history import — robust, multi-window
+
+The probe now queries deals AND orders across today / 7d / 30d windows with
+tz-aware UTC bounds, padding `date_to` +1 day so a broker clock ahead of UTC
+can't hide a just-closed deal. Prints per-window deal/order counts, XAUUSD
+deal count, entry/exit counts and profit/commission/swap sums; with
+`--history-debug` it also lists recent deal rows and the exact query windows.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_mt5_demo_connector_probe.py --bars 10 --history-debug
+python scripts/run_mt5_demo_connector_probe.py --bars 10
+```
+
+If no deals appear, the output prints likely reasons + the exact windows used.
