@@ -96,7 +96,7 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
 
         # ── Print ─────────────────────────────────────────────────────────────
         print("=" * 64)
-        print(" GOLD BOT DECISION ENGINE V1   (DEMO ONLY)")
+        print(" GOLD BOT DECISION ENGINE V2   (DEMO ONLY)")
         print("=" * 64)
         print(f" Account     : {probe.account_login}@{probe.account_server} "
               f"(DEMO {connector.demo_verified})")
@@ -105,12 +105,20 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
         if idea.market_state:
             from services.gold_bot_decision_engine import MarketState
             print(f" Market      : {MarketState(**idea.market_state).summary()}")
+            ms_d = idea.market_state
+            print(f" Structure   : recent {ms_d['recent_low']:.2f}-{ms_d['recent_high']:.2f}  "
+                  f"swing {ms_d['swing_low']:.2f}-{ms_d['swing_high']:.2f}  "
+                  f"prev {ms_d['prev_low']:.2f}-{ms_d['prev_high']:.2f}")
         print(f" Open XAUUSD : {open_xau}")
         print(f"\n DECISION    : {idea.decision}   [{idea.strategy}]  confidence {idea.confidence}")
-        print(f" Risk mode   : {idea.risk_mode}")
+        print(f" Context     : session {idea.session} | regime {idea.regime} | risk {idea.risk_mode}")
+        if idea.zones:
+            print(f" Zones       : {idea.zones}")
         if idea.sl_points is not None:
             print(f" SL/TP sugg. : {idea.sl_points} / {idea.tp_points} pts  "
                   f"(entry ref {idea.entry_reference_price})")
+        if idea.confidence_components:
+            print(f" Confidence  : {idea.confidence_components}")
         for r in idea.reasons:
             print(f"   reason  - {r}")
         for b in idea.blockers:

@@ -1158,3 +1158,17 @@ python scripts/run_gold_bot_decision_probe.py --risk-mode scalp --auto-execute-d
 
 Decision journal (gitignored): data/gold_bot/decision_journal.jsonl.
 Tests: python -m pytest tests/test_gold_bot_decision_engine.py -q
+
+## LM76B Gold Bot strategy engine V2
+
+Richer context (sessions, swing/prev levels, compression, regime) + detectors:
+liquidity_sweep_reclaim, fvg_retest, breakout_retest, momentum, scalp_retest/
+scalp_momentum. Picks best by priority+confidence; explainable score breakdown.
+Same guards as V1 (decision-only + dry-run default; demo execution needs both
+--auto-execute-demo + --confirm-demo-order).
+
+```powershell
+python scripts/run_gold_bot_decision_probe.py --risk-mode balanced --dry-run
+python scripts/run_gold_bot_decision_probe.py --risk-mode scalp --dry-run
+python scripts/run_gold_bot_decision_probe.py --risk-mode aggressive --dry-run
+```
