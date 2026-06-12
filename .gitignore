@@ -8,3 +8,6 @@ __pycache__/
 lumora-web/fixtures/heatmap/*.json
 lumora-web/fixtures/live/*.json
 lumora-web/fixtures/live/*.tmp
+.agents/
+.claude/
+skills-lock.json
