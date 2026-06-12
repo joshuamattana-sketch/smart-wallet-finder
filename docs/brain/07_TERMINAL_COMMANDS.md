@@ -1206,3 +1206,38 @@ Kill switch (blocks all orders, worker still observes):
 
 Tests: `python -m pytest tests/test_gold_bot_worker.py -q` (11, fake connector,
 no terminal needed).
+
+## LM82A Gold Bot start scripts (PowerShell convenience launchers)
+
+Thin `.ps1` wrappers around the LM81A worker so you don't memorize long Python
+commands. MT5 DEMO ONLY, never live. The observe/scalp/macro scripts send NO
+orders. Each resolves the repo root from `$PSScriptRoot` (works from repo root
+or the scripts folder) and prints a banner (mode / MT5 demo only / no live /
+orders disabled-or-armed). `$ErrorActionPreference = "Stop"` - errors are not
+hidden. No core trading/strategy logic changed.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+
+# read-only one-shot health check (connector probe + decision probe, dry-run):
+.\scripts\gold_bot_health_check.ps1
+
+# observe loops (no orders) - Ctrl+C to stop:
+.\scripts\start_gold_bot_observe.ps1        # balanced observe, 5s
+.\scripts\start_gold_bot_scalp.ps1          # scalp observe, 5s
+.\scripts\start_gold_bot_macro_scalp.ps1    # scalp observe + sample macro lockout context
+
+# guarded demo launcher - DEFAULTS to observe/dry-run (sends nothing):
+.\scripts\start_gold_bot_demo_guarded.ps1
+#   -> prints "Demo execution requires explicit -ConfirmDemoExecution" and runs observe.
+# Arm demo orders (MT5 demo only; still passes risk gate / macro lockout / no-stacking):
+.\scripts\start_gold_bot_demo_guarded.ps1 -ConfirmDemoExecution
+#   -> python scripts/run_gold_bot_worker.py --mode demo --risk-mode scalp \
+#        --auto-execute-demo --confirm-demo-order --interval-seconds 5
+# Optional params: -RiskMode <mode> -IntervalSeconds <n>
+```
+
+Safety: only `start_gold_bot_demo_guarded.ps1 -ConfirmDemoExecution` ever passes
+the execution flags; no script enables live trading or contains secrets.
+Generated `data/gold_bot/worker_journal.jsonl` + `worker_status.json` stay
+gitignored.
