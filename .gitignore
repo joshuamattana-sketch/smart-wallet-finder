@@ -1,6 +1,10 @@
 .streamlit/secrets.toml
 .env
-data/
+data/*
+# Keep committed sample/fixture event files; runtime journals (*.jsonl) stay ignored.
+!data/gold_bot/
+data/gold_bot/*
+!data/gold_bot/*.sample.json
 __pycache__/
 *.pyc
 .DS_Store

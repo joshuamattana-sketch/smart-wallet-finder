@@ -290,6 +290,33 @@ class Mt5DemoConnector:
         except Exception:
             return False
 
+    def recent_candles(self, symbol: str, timeframe: str, bars: int) -> list[dict[str, Any]]:
+        """
+        Read recent candles as normalized dicts (read-only). Returns oldest →
+        newest. Fails closed if none are returned (decision engine needs data).
+        """
+        mt5 = self._mt5
+        tf_attr = _TIMEFRAME_ATTR.get(timeframe.upper())
+        if tf_attr is None:
+            raise Mt5ConnectorError(
+                f"Unknown timeframe '{timeframe}'. Supported: {', '.join(_TIMEFRAME_ATTR)}."
+            )
+        tf_const = getattr(mt5, tf_attr, None)
+        if tf_const is None:
+            raise Mt5ConnectorError(f"MT5 module is missing constant {tf_attr}.")
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, bars)
+        if rates is None or len(rates) == 0:
+            raise Mt5ConnectorError(
+                f"No candles returned for {symbol} {timeframe} ({self._last_error()}). (fail closed)."
+            )
+        return [{
+            "time": _iso_from_epoch(_rate_field(r, "time", 0)),
+            "open": _safe_float(_rate_field(r, "open", 1)),
+            "high": _safe_float(_rate_field(r, "high", 2)),
+            "low": _safe_float(_rate_field(r, "low", 3)),
+            "close": _safe_float(_rate_field(r, "close", 4)),
+        } for r in rates]
+
     # ── candles (fail closed: at least one bar required) ─────────────────────
     def read_candles(self, result: ProbeResult, symbol: str, timeframe: str, bars: int) -> None:
         mt5 = self._mt5
