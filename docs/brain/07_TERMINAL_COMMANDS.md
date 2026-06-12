@@ -963,3 +963,35 @@ npm run dev
 # open http://localhost:3000/terminal and http://localhost:3000/liquidity-map
 # chart footer shows: whales · live | fallback | none
 ```
+
+## LM75A MT5 Demo Connector Probe — read-only, no orders
+
+Requires MetaTrader 5 installed + a running, logged-in MetaQuotes DEMO account
+with XAUUSD visible. Windows only. Install the dependency once (not in
+requirements.txt — it is Windows-only and would break the Linux workers):
+
+```powershell
+pip install MetaTrader5
+```
+
+Run from repo root (sends NO orders, fails closed on a real account):
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_mt5_demo_connector_probe.py
+python scripts/run_mt5_demo_connector_probe.py --bars 50
+python scripts/run_mt5_demo_connector_probe.py --symbol XAUUSD --timeframe M5 --bars 100
+python scripts/run_mt5_demo_connector_probe.py --json
+```
+
+Expected: connects to the running terminal, confirms DEMO, auto-discovers the
+gold symbol (XAUUSD/GOLD/...), prints account + tick + latest candles, ends
+with `READ ONLY - NO ORDERS SENT`. Exits 1 (fail-closed) if MT5 can't
+initialize, account info can't be read, the account is real/live, no gold
+symbol is selectable, or no candles return.
+
+Tests (no terminal needed, fake MT5 injected):
+
+```powershell
+python -m pytest tests/connectors/test_mt5_demo_connector.py -q
+```
