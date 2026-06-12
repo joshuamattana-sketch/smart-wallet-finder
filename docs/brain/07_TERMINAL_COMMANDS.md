@@ -1367,3 +1367,39 @@ data/gold_bot/macro_history --overwrite --dry-run`. Existing files skipped unles
 for the free workflow. Tests `python -m pytest tests/test_gold_bot_macro_history.py -q`
 (no internet, no MT5). Later LM84C/LM84D add yfinance/FRED behind the same
 interface.
+
+## LM85A No-lookahead replay engine (backtest over local history)
+
+`services/gold_bot_replay_engine.py` streams stored XAUUSD history (LM84A) one
+bar at a time, joins macro history (LM84B DXY/US10Y/US02Y/VIX) AS-OF the current
+bar only, runs the real Decision Engine V2 through a CSV->candle adapter (NO MT5,
+NO orders), then scores each decision against FUTURE bars — but only after the
+decision is recorded. `ReplayClock` exposes `visible_bars` (time <= current);
+`MacroSeries.snapshot` returns the latest macro row <= current time; forward
+scoring reads `bars[i+1:]`. Horizons give win/loss/neutral/no_data + MFE/MAE +
+TP/SL first-touch + forward return.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# needs local history first (LM84A):
+python scripts/run_gold_bot_history_backfill.py --timeframes M1,M5
+# validate only (no files):
+python scripts/run_gold_bot_replay.py --timeframe M1 --max-bars 200 --dry-run
+# run a replay (writes JSONL + summary under data/gold_bot/replay/):
+python scripts/run_gold_bot_replay.py --timeframe M1 --max-bars 200 --risk-mode balanced --horizons 5,15,30
+python scripts/run_gold_bot_replay.py --timeframe M5 --max-bars 200 --risk-mode scalp --horizons 3,6,12
+```
+
+Output: `data/gold_bot/replay/replay_XAUUSD_<TF>_<YYYYMMDD>_NNN.jsonl` (one row
+per step: decision/strategy/confidence/reasons/macro snapshot/score-by-horizon/
+`no_lookahead_visible_bars_count`/`forward_scoring_uses_future_after_decision`)
++ `.summary.json` (bars processed, long/short/no_trade, avg confidence, win/loss/
+neutral/no_data + avg return per horizon, top setups, warnings). Flags:
+`--symbol --timeframe --history-dir --macro-history-dir --out-dir --warmup-bars
+--max-bars --from-time --to-time --risk-mode --horizons --dry-run --json`.
+Missing history → clear error (hint: run LM84A backfill). Missing macro → warn +
+continue (macro unknown). NEVER calls MT5, never sends orders. Generated replay
+files (`data/gold_bot/replay/*.jsonl|*.json|*.csv`) are gitignored. Tests
+`python -m pytest tests/test_gold_bot_replay_engine.py -q` (no MT5/internet;
+assert no future bars in visible window, causal macro as-of, NO_TRADE not scored
+win/loss, dry-run writes nothing, MetaTrader5 never imported).

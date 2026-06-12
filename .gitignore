@@ -17,6 +17,10 @@ data/gold_bot/macro_history/*
 !data/gold_bot/macro_history/samples/
 data/gold_bot/macro_history/samples/*
 !data/gold_bot/macro_history/samples/*.sample.csv
+# LM85A generated replay output — never commit.
+data/gold_bot/replay/*.jsonl
+data/gold_bot/replay/*.json
+data/gold_bot/replay/*.csv
 __pycache__/
 *.pyc
 .DS_Store
