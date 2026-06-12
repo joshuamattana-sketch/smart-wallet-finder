@@ -1334,3 +1334,36 @@ weekends), it WARNS in the metadata + probe but never crashes. Tests
 `python -m pytest tests/test_gold_bot_historical_market_data.py -q` (no MT5 —
 injected fetch_fn + temp dirs). History files (`data/gold_bot/history/*.csv|*.json`)
 are gitignored.
+
+## LM84B Macro history import (DXY / US10Y / US02Y / VIX, offline CSV)
+
+Offline bootstrap (NO HTTP / API / scraping) that moves DXY/yields/VIX from
+placeholder to missing/active. `services/gold_bot_macro_history.py` imports a
+free, manually-downloaded CSV into a normalized `MacroBar` (time UTC / OHLC opt /
+close / value opt) under `data/gold_bot/macro_history/<SYM>_<TF>.csv` + `.meta.json`
+(D1; H1 optional). Auto-detects **OHLC** (`time,open,high,low,close`) or
+**value-only** (`time,value`; close=value). `macro_market_statuses` reports
+`dxy_history` / `us_yields_history` (US10Y and/or US02Y) / `vix_history` as
+active/missing (category macro_market); FRED + yfinance stay placeholder.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# validate only (no writes):
+python scripts/run_gold_bot_macro_history_import.py --input data/gold_bot/macro_history/samples/DXY_D1.sample.csv --symbol DXY --timeframe D1 --dry-run
+# import the bundled samples:
+python scripts/run_gold_bot_macro_history_import.py --input data/gold_bot/macro_history/samples/DXY_D1.sample.csv --symbol DXY --timeframe D1 --overwrite
+python scripts/run_gold_bot_macro_history_import.py --input data/gold_bot/macro_history/samples/US10Y_D1.sample.csv --symbol US10Y --timeframe D1 --overwrite
+python scripts/run_gold_bot_macro_history_import.py --input data/gold_bot/macro_history/samples/VIX_D1.sample.csv --symbol VIX --timeframe D1 --overwrite
+# inspect + status:
+python scripts/run_gold_bot_macro_history_probe.py --symbol DXY --timeframe D1 --tail 5
+python scripts/run_gold_bot_data_sources_probe.py     # Macro market now shows ACTIVE dxy/yields
+```
+
+Import flags: `--input --symbol --timeframe D1 --source manual_csv --out-dir
+data/gold_bot/macro_history --overwrite --dry-run`. Existing files skipped unless
+`--overwrite`; dry-run validates + shows target path, writes nothing. Tracked:
+`data/gold_bot/macro_history/README.md` + `samples/*.sample.csv`. Ignored
+(generated): `data/gold_bot/macro_history/*.csv|*.json`. See the folder README
+for the free workflow. Tests `python -m pytest tests/test_gold_bot_macro_history.py -q`
+(no internet, no MT5). Later LM84C/LM84D add yfinance/FRED behind the same
+interface.

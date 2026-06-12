@@ -10,6 +10,13 @@ data/gold_bot/*
 # data/gold_bot/* ; listed explicitly for intent).
 data/gold_bot/history/*.csv
 data/gold_bot/history/*.json
+# LM84B macro history: track README + samples/*.sample.csv; ignore imports.
+!data/gold_bot/macro_history/
+data/gold_bot/macro_history/*
+!data/gold_bot/macro_history/README.md
+!data/gold_bot/macro_history/samples/
+data/gold_bot/macro_history/samples/*
+!data/gold_bot/macro_history/samples/*.sample.csv
 __pycache__/
 *.pyc
 .DS_Store

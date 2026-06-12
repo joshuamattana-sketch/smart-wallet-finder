@@ -49,7 +49,9 @@ def parse_args(argv=None):
     p.add_argument("--calendar-file", default=DEFAULT_SAMPLE_CALENDAR, dest="calendar_file")
     p.add_argument("--manual-file", default=DEFAULT_MANUAL_CALENDAR, dest="manual_file")
     p.add_argument("--history-dir", default=None, dest="history_dir",
-                   help="History dir (default data/gold_bot/history).")
+                   help="MT5 history dir (default data/gold_bot/history).")
+    p.add_argument("--macro-history-dir", default=None, dest="macro_history_dir",
+                   help="Macro history dir (default data/gold_bot/macro_history).")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
 
@@ -59,7 +61,7 @@ def main(argv=None) -> int:
     now = datetime.now(timezone.utc)
     statuses = build_data_source_overview(
         calendar_file=args.calendar_file, manual_file=args.manual_file,
-        history_dir=args.history_dir, now=now)
+        history_dir=args.history_dir, macro_history_dir=args.macro_history_dir, now=now)
 
     if args.json_output:
         print(json.dumps({"now": now.isoformat(),

@@ -59,13 +59,18 @@ def test_overview_includes_real_and_placeholder(tmp_path):
     statuses = build_data_source_overview(
         calendar_file="data/gold_bot/economic_calendar.sample.json",
         manual_file="data/gold_bot/economic_calendar.manual.json",
-        history_dir=str(tmp_path), now=NOW)            # empty history dir
+        history_dir=str(tmp_path), macro_history_dir=str(tmp_path), now=NOW)  # empty dirs
     by_name = {s.name: s for s in statuses}
     assert by_name["local_json"].status == "active"
     assert by_name["manual_json"].status == "fallback"
     assert by_name["finnhub"].status == "placeholder"
     assert by_name["mt5_xauusd_history"].status == "missing"   # no history files yet
-    # at least one of each placeholder category present
+    # macro DXY/yields/VIX are now REAL (missing here), not placeholder
+    assert by_name["dxy_history"].status == "missing"
+    assert by_name["us_yields_history"].status == "missing"
+    assert by_name["vix_history"].status == "missing"
+    assert by_name["fred"].status == "placeholder"
+    assert by_name["yfinance"].status == "placeholder"
     cats = {s.category for s in statuses}
     assert {"economic_calendar", "historical_market", "macro_market", "news"} <= cats
 
@@ -74,11 +79,12 @@ def test_overview_missing_files_report_missing(tmp_path):
     statuses = build_data_source_overview(
         calendar_file="data/gold_bot/nope_sample.json",
         manual_file="data/gold_bot/nope_manual.json",
-        history_dir=str(tmp_path), now=NOW)
+        history_dir=str(tmp_path), macro_history_dir=str(tmp_path), now=NOW)
     by_name = {s.name: s for s in statuses}
     assert by_name["local_json"].status == "missing"
     assert by_name["manual_json"].status == "missing"
     assert by_name["mt5_xauusd_history"].status == "missing"
+    assert by_name["dxy_history"].status == "missing"
 
 
 def test_group_by_category():

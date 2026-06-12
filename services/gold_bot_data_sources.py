@@ -132,31 +132,14 @@ class YFinanceMacroProvider(PlaceholderProvider):
         "yfinance macro (DXY/^TNX/^VIX) - placeholder; no HTTP in this build.")
 
 
-# historical market — MT5 XAUUSD is REAL as of LM84A (status lives in
-# gold_bot_historical_market_data.history_status). DXY/yields/VIX stay
-# placeholder until LM84B.
-class DxyHistoricalProvider(PlaceholderProvider):
-    spec = _PlaceholderSpec(
-        "dxy_history", "historical_market",
-        "DXY historical series - placeholder until LM84B.")
-
-
-class UsYieldsHistoricalProvider(PlaceholderProvider):
-    spec = _PlaceholderSpec(
-        "us_yields_history", "historical_market",
-        "US Treasury yields historical series - placeholder until LM84B.")
-
-
-class VixHistoricalProvider(PlaceholderProvider):
-    spec = _PlaceholderSpec(
-        "vix_history", "historical_market",
-        "VIX historical series - placeholder until LM84B.")
-
+# historical market — MT5 XAUUSD is REAL as of LM84A (status from
+# gold_bot_historical_market_data.history_status). Macro DXY/US-yields/VIX are
+# REAL as of LM84B (status from gold_bot_macro_history.macro_market_statuses).
+# FRED + yfinance remain external-fetch placeholders.
 
 # Order matters only for display.
 PLACEHOLDER_PROVIDERS = (
     MT5CalendarExportProvider, FinnhubEconomicCalendarProvider, TradingEconomicsCalendarProvider,
-    DxyHistoricalProvider, UsYieldsHistoricalProvider, VixHistoricalProvider,
     FredMacroProvider, YFinanceMacroProvider,
     GdeltNewsProvider, RssNewsProvider,
 )
@@ -168,13 +151,14 @@ def build_data_source_overview(
     calendar_file: str | None = None,
     manual_file: str | None = None,
     history_dir: str | None = None,
+    macro_history_dir: str | None = None,
     now: datetime | None = None,
 ) -> list[ProviderStatus]:
     """
-    Full data-source status snapshot: real local + manual economic calendars and
-    the real MT5 XAUUSD history (their live file status) followed by every
-    placeholder provider. No external calls. Lazy-imports the real providers to
-    avoid an import cycle.
+    Full data-source status snapshot: real local + manual economic calendars, the
+    real MT5 XAUUSD history, the real macro (DXY/US-yields/VIX) history, then the
+    remaining external-fetch placeholders. No external calls. Lazy-imports the
+    real providers to avoid an import cycle.
     """
     now = now or datetime.now(timezone.utc)
     from services.gold_bot_economic_calendar import (
@@ -182,12 +166,14 @@ def build_data_source_overview(
         ManualJsonEconomicCalendarProvider,
     )
     from services.gold_bot_historical_market_data import DEFAULT_HISTORY_DIR, history_status
+    from services.gold_bot_macro_history import DEFAULT_MACRO_HISTORY_DIR, macro_market_statuses
 
     statuses: list[ProviderStatus] = [
         LocalJsonEconomicCalendarProvider(calendar_file or DEFAULT_SAMPLE_CALENDAR).status(now),
         ManualJsonEconomicCalendarProvider(manual_file or DEFAULT_MANUAL_CALENDAR).status(now),
         history_status(history_dir or DEFAULT_HISTORY_DIR, now=now),
     ]
+    statuses.extend(macro_market_statuses(macro_history_dir or DEFAULT_MACRO_HISTORY_DIR, now=now))
     for cls in PLACEHOLDER_PROVIDERS:
         statuses.append(cls().status(now))
     return statuses
