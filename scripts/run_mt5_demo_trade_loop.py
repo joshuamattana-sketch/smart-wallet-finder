@@ -73,6 +73,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    metavar="TICKET", help="Close the position with this ticket (guarded).")
     p.add_argument("--emergency-close", action="store_true", dest="emergency_close",
                    help="Allow a close even when the kill switch is active (demo only).")
+    p.add_argument("--emergency-close-demo", action="store_true", dest="emergency_close_demo",
+                   help="Alias of --emergency-close (demo-only kill-switch override for closes).")
 
     p.add_argument("--side", choices=["buy", "sell"], default=None)
     p.add_argument("--volume", type=float, default=0.01, help="Manual lots (default 0.01).")
@@ -115,46 +117,41 @@ def _result_field(obj, name, default=None):
 def _do_list(connector: Mt5DemoConnector, out: dict) -> int:
     """List every open position (read-only). Always safe."""
     positions = connector.all_positions()
-    print(f"\nOpen positions: {len(positions)}")
-    views = []
-    for pos in positions:
-        v = connector.position_view(pos)
-        views.append(v)
+    views = [connector.position_view(p) for p in positions]
+    xau = [v for v in views if v["symbol"] and "XAU" in v["symbol"].upper()]
+    print(f"\nOpen positions: {len(positions)}  (XAUUSD: {len(xau)})")
+    for v in views:
         print(f"   ticket={v['ticket']} {v['side']} {v['symbol']} vol={v['volume']} "
               f"open={v['price_open']} cur={v['price_current']} "
-              f"SL={v['sl']} TP={v['tp']} profit={v['profit']} magic={v['magic']}")
+              f"SL={v['sl']} TP={v['tp']} profit={v['profit']} "
+              f"magic={v['magic']} '{v['comment']}'")
     if not positions:
         print("   (none)")
     out.update({"action": "list_positions", "open_positions": len(positions),
-                "positions": views, "order_sent": False})
+                "xau_positions": len(xau), "positions": views, "order_sent": False})
     return 0
 
 
-def _do_close(connector, probe, config, args, out) -> int:
-    """Guarded close of one position by ticket. Sends only with --confirm-demo-order."""
+def _do_close(connector, probe, config, args, out) -> int:  # noqa: C901 - guarded flow
+    """Guarded close by ticket. Dry-run previews; confirm sends; demo only."""
     ticket = args.close_position
+    emergency = args.emergency_close or args.emergency_close_demo
     position = connector.position_by_ticket(ticket)
     found = position is not None
     view = connector.position_view(position) if found else None
     if found:
         print(f"Position: ticket={view['ticket']} {view['side']} {view['symbol']} "
-              f"vol={view['volume']} open={view['price_open']} profit={view['profit']}")
+              f"vol={view['volume']} open={view['price_open']} cur={view['price_current']} "
+              f"profit={view['profit']}")
     else:
         print(f"Position ticket {ticket} not found on this account.")
 
     decision = evaluate_demo_close(
-        config=config,
-        account_is_demo=connector.demo_verified,
-        ticket_found=found,
-        volume=view["volume"] if view else None,
-        emergency=args.emergency_close,
+        config=config, account_is_demo=connector.demo_verified,
+        ticket_found=found, volume=view["volume"] if view else None, emergency=emergency,
     )
     for w in decision.warnings:
         print(f"  ! {w}")
-    if not decision.approved:
-        print("CLOSE BLOCKED:")
-        for r in decision.reasons:
-            print(f"   - {r}")
 
     base = {
         "timestamp": journal.utc_now_iso(),
@@ -163,6 +160,7 @@ def _do_close(connector, probe, config, args, out) -> int:
         "symbol": view["symbol"] if view else None,
         "volume": view["volume"] if view else None,
         "side_being_closed": view["side"] if view else None,
+        "profit_before": view["profit"] if view else None,
         "account_server": probe.account_server,
         "account_login": probe.account_login,
         "safety_flags": {
@@ -170,27 +168,21 @@ def _do_close(connector, probe, config, args, out) -> int:
             "LIVE_TRADING_ENABLED": config.live_trading_enabled,
             "ALLOW_REAL_ORDERS": config.allow_real_orders,
             "GOLD_BOT_KILL_SWITCH": config.kill_switch,
-            "emergency_close": args.emergency_close,
+            "emergency_close": emergency,
         },
         "risk": decision.to_dict(),
     }
 
-    will_close = found and decision.approved and args.confirm_demo_order
-    if not will_close:
-        why = ("blocked" if not decision.approved
-               else "ticket not found" if not found
-               else "missing --confirm-demo-order")
-        print(f"No close sent ({why}).")
+    # Ticket must exist to build anything.
+    if not found:
+        print("No close sent (ticket not found).")
         journal.append_entry({**base, "mode": journal.MODE_BLOCKED, "order_send": None})
-        out.update({"action": "close_position", "order_sent": False, "reason": why})
-        return 0 if (found and decision.approved) else 1
+        out.update({"action": "close_position", "order_sent": False, "reason": "ticket not found"})
+        return 1
 
-    # Build + optional order_check, then send.
+    # Build the close request + advisory order_check (used by both paths).
     request = connector.build_close_request(position, comment="lumora-gold-bot-demo-close",
                                              deviation=args.deviation)
-    # order_check on a close can be unreliable in the MT5 Python API; we run it
-    # for visibility but DO NOT hard-abort on it — demo verification + the
-    # safety checks above are the real guards, and closing is risk-reducing.
     try:
         check = connector.check_order(request)
         print(f"order_check (close, advisory): retcode={_safe_int(_result_field(check, 'retcode'))} "
@@ -198,6 +190,32 @@ def _do_close(connector, probe, config, args, out) -> int:
     except Exception as exc:  # noqa: BLE001 - advisory only
         print(f"order_check (close) unavailable: {exc} (continuing — demo close)")
 
+    # Close DRY RUN — build + preview, never send.
+    if args.dry_run:
+        print(f"\nDRY RUN — would close ticket {ticket}: {request.get('volume')} "
+              f"{view['symbol']} via {'SELL' if view['side'] == 'buy' else 'BUY'} @ {request['price']}")
+        print("No order sent (dry-run).")
+        journal.append_entry({**base, "mode": journal.MODE_DRY_RUN, "close_price": request["price"],
+                              "order_send": None})
+        out.update({"action": "close_position", "order_sent": False, "mode": "dry_run"})
+        return 0
+
+    if not decision.approved:
+        print("CLOSE BLOCKED:")
+        for r in decision.reasons:
+            print(f"   - {r}")
+        journal.append_entry({**base, "mode": journal.MODE_BLOCKED, "order_send": None})
+        out.update({"action": "close_position", "order_sent": False, "reason": "blocked"})
+        return 1
+
+    if not args.confirm_demo_order:
+        print("No close sent (missing --confirm-demo-order).")
+        journal.append_entry({**base, "mode": journal.MODE_BLOCKED, "order_send": None})
+        out.update({"action": "close_position", "order_sent": False,
+                    "reason": "missing --confirm-demo-order"})
+        return 1
+
+    # Send.
     print("\n>>> MT5 DEMO CLOSE MODE <<<")
     send = connector.send_demo_close(request)
     send_rc = _safe_int(_result_field(send, "retcode"))
@@ -207,22 +225,31 @@ def _do_close(connector, probe, config, args, out) -> int:
           f"order={_safe_int(_result_field(send, 'order'))} "
           f"deal={_safe_int(_result_field(send, 'deal'))}")
     print(f"Closed     : ticket={ticket} {view['side']} {view['symbol']} "
-          f"vol={view['volume']} @ {request['price']}")
+          f"vol={view['volume']} @ {request['price']}  profit_before={view['profit']}")
 
     journal.append_entry({
-        **base, "mode": journal.MODE_CLOSE,
-        "close_price": request["price"],
+        **base, "mode": journal.MODE_CLOSE, "close_price": request["price"],
         "order_send": {"retcode": send_rc, "comment": _opt(_result_field(send, "comment")),
                        "order": _safe_int(_result_field(send, "order")),
                        "deal": _safe_int(_result_field(send, "deal")), "ok": closed_ok},
     })
 
-    # Post-close verification.
+    # Post-close verification: ticket status, remaining, balance/equity, today PnL.
     still = connector.position_by_ticket(ticket)
     print(f"\nPost-close : ticket {ticket} {'STILL OPEN' if still else 'closed'}")
     if view and view["symbol"]:
         remaining = connector.positions_for_symbol(view["symbol"])
         print(f"Remaining {view['symbol']} positions: {len(remaining)}")
+    try:
+        acct = connector.account_snapshot()
+        print(f"Account    : balance={acct['balance']} equity={acct['equity']}")
+        connector.read_history_report(probe, symbol=view["symbol"] if view else None)
+        today = next((w for w in probe.history_windows if w["label"] == "today"), None)
+        if today:
+            print(f"Today PnL  : {today['profit_sum']} (XAU deals {today['symbol_deals']})")
+    except Exception as exc:  # noqa: BLE001 - reporting only
+        print(f"  ! post-close report unavailable: {exc}")
+
     out.update({"action": "close_position", "order_sent": closed_ok, "retcode": send_rc,
                 "ticket_still_open": still is not None})
     return 0 if closed_ok else 1

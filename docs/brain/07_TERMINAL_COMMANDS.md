@@ -1125,3 +1125,17 @@ no live).
 ```powershell
 python scripts/run_mt5_demo_trade_loop.py --side buy --sl-points 120 --tp-points 180 --auto-volume --risk-mode scalp --dry-run
 ```
+
+## LM75E close dry-run + richer post-close
+
+Close now supports a dry-run preview (build + print, no send) and prints
+post-close balance/equity/today-PnL. List shows the XAUUSD open count.
+`--emergency-close-demo` is an alias of `--emergency-close`.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_mt5_demo_trade_loop.py --list-positions
+python scripts/run_mt5_demo_trade_loop.py --close-position TICKET --dry-run        # preview, no send
+python scripts/run_mt5_demo_trade_loop.py --close-position TICKET --confirm-demo-order
+python scripts/run_mt5_demo_connector_probe.py --bars 10 --history-debug
+```
