@@ -953,3 +953,13 @@ git add docs/brain
 git commit -m "Add Lumora project brain notes"
 git push
 ```
+## LM68D Real Whale Markers — verify
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+# open http://localhost:3000/terminal and http://localhost:3000/liquidity-map
+# chart footer shows: whales · live | fallback | none
+```
