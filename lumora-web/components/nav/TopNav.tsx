@@ -16,14 +16,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
-import { Activity, LayoutDashboard, Monitor, Layers, Bell, BookOpen } from "lucide-react";
+import { Activity, LayoutDashboard, Monitor, Layers, Bell, BookOpen, Bot } from "lucide-react";
 
+// `gold: true` marks the private Gold Bot tab — its icon carries an amber
+// accent instead of the violet selection tone, so the tab reads as a
+// different wing of the product without breaking the nav system.
 const navLinks = [
   { href: "/dashboard",     label: "Dashboard",    icon: LayoutDashboard },
   { href: "/terminal",      label: "Terminal",     icon: Monitor         },
   { href: "/liquidity-map", label: "Liquidity Map",icon: Layers          },
   { href: "/whale-alerts",  label: "Whale Alerts", icon: Bell            },
   { href: "/paper-trading", label: "Paper Trading",icon: BookOpen        },
+  { href: "/gold-bot",      label: "Gold Bot",     icon: Bot, gold: true },
 ];
 
 export function TopNav() {
@@ -86,7 +90,7 @@ export function TopNav() {
           <div className="lm-no-scrollbar flex min-w-0 flex-1 items-center overflow-x-auto">
             {/* Recessed channel — deeper inset shadow than LM69C */}
             <div className="flex items-center gap-0 rounded-xl border border-white/[0.045] bg-black/30 p-[3px] shadow-[inset_0_2px_6px_rgba(0,0,0,0.55),inset_0_-1px_0_rgba(255,255,255,0.02),inset_0_0_0_1px_rgba(255,255,255,0.015)]">
-              {navLinks.map(({ href, label, icon: Icon }) => {
+              {navLinks.map(({ href, label, icon: Icon, gold }) => {
                 const isActive = pathname === href || pathname.startsWith(href + "/");
                 return (
                   <Link
@@ -149,8 +153,12 @@ export function TopNav() {
                       className={clsx(
                         "relative h-3.5 w-3.5 shrink-0 transition-colors duration-100 motion-reduce:transition-none",
                         isActive
-                          ? "text-violet-300 drop-shadow-[0_0_6px_rgba(196,181,253,0.6)]"
-                          : "text-[#4a5580] group-hover:text-[#8892b0]",
+                          ? gold
+                            ? "text-amber-300 drop-shadow-[0_0_6px_rgba(252,211,77,0.6)]"
+                            : "text-violet-300 drop-shadow-[0_0_6px_rgba(196,181,253,0.6)]"
+                          : gold
+                            ? "text-amber-500/50 group-hover:text-amber-300/80"
+                            : "text-[#4a5580] group-hover:text-[#8892b0]",
                       )}
                     />
                     <span className="relative hidden lg:inline">{label}</span>
