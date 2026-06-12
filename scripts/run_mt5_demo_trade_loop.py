@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -48,7 +49,12 @@ from services.connectors.mt5_demo_connector import (  # noqa: E402
 from services.gold_bot_risk_gate import (  # noqa: E402
     SafetyConfig,
     evaluate_demo_close,
-    evaluate_demo_order,
+    evaluate_risk_plan,
+)
+from services.gold_bot_lot_calculator import (  # noqa: E402
+    RISK_MODES,
+    calc_auto_volume,
+    resolve_risk_pct,
 )
 from services import gold_bot_trade_journal as journal  # noqa: E402
 
@@ -69,7 +75,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Allow a close even when the kill switch is active (demo only).")
 
     p.add_argument("--side", choices=["buy", "sell"], default=None)
-    p.add_argument("--volume", type=float, default=0.01, help="Lots (default 0.01).")
+    p.add_argument("--volume", type=float, default=0.01, help="Manual lots (default 0.01).")
+    p.add_argument("--auto-volume", action="store_true", dest="auto_volume",
+                   help="Size volume from risk (equity x risk%% / SL loss) instead of --volume.")
+    p.add_argument("--risk-mode", choices=list(RISK_MODES), default="balanced", dest="risk_mode",
+                   help="Risk posture: safe 0.25%% / balanced 0.50%% / aggressive 1.0%% / experimental 0.10%%.")
+    p.add_argument("--risk-pct", type=float, default=None, dest="risk_pct",
+                   help="Override risk-per-trade percent (capped 1.0%%, or 2.0%% with --allow-high-demo-risk).")
+    p.add_argument("--allow-high-demo-risk", action="store_true", dest="allow_high_demo_risk",
+                   help="Raise the risk-pct cap to 2.0%% (demo only).")
+    p.add_argument("--max-trades-per-day", type=int, default=None, dest="max_trades_per_day",
+                   help="Optional daily trade cap. Omit for high-activity mode (no cap).")
     p.add_argument("--sl-points", type=int, default=None, dest="sl_points",
                    help="Stop-loss distance in points (required for an open order).")
     p.add_argument("--tp-points", type=int, default=None, dest="tp_points",
@@ -219,6 +235,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - linear guarded f
     connector = Mt5DemoConnector()
     probe = ProbeResult()
     config = SafetyConfig.from_env()
+    # Explicit --max-trades-per-day overrides; otherwise high-activity (no cap).
+    if args.max_trades_per_day is not None:
+        config = replace(config, max_trades_per_day=args.max_trades_per_day)
 
     def emit(code: int) -> int:
         if args.json_output:
@@ -262,36 +281,107 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - linear guarded f
         print(f"Symbol  : {symbol}  bid={probe.tick_bid} ask={probe.tick_ask} "
               f"spread={probe.tick_spread}")
 
-        # 3-4. Build request (computes SL/TP from points, validates orientation).
+        # 3. Price levels (entry/SL/TP) — needed before volume for risk sizing.
+        levels = connector.compute_levels(symbol, args.side, args.sl_points, args.tp_points)
+        order_type = levels["order_type"]
+        entry, sl, tp = levels["price"], levels["sl"], levels["tp"]
+
+        # 4. Account + symbol risk metadata.
+        acct = connector.account_snapshot()
+        meta = connector.symbol_metadata(symbol)
+        equity = acct["equity"] or 0.0
+
+        # 5. Resolve risk percent (mode default or override, capped).
+        rp = resolve_risk_pct(mode=args.risk_mode, override_pct=args.risk_pct,
+                              allow_high_demo_risk=args.allow_high_demo_risk)
+        for w in rp.warnings:
+            print(f"  ! {w}")
+        if rp.pct <= 0:
+            raise Mt5ConnectorError("Resolved risk-pct is 0 — cannot size (fail closed).")
+        target_risk_amount = equity * rp.pct / 100.0
+
+        def _loss_at(v: float) -> float | None:
+            return connector.estimate_sl_loss(order_type=order_type, symbol=symbol,
+                                              volume=v, entry=entry, sl=sl)
+
+        # 6. Volume: auto (risk-derived) or manual.
+        lot_plan = None
+        if args.auto_volume:
+            lot_plan = calc_auto_volume(
+                target_risk_amount=target_risk_amount, loss_at_volume=_loss_at,
+                volume_min=meta["volume_min"] or 0.01,
+                volume_step=meta["volume_step"] or 0.01,
+                volume_max=meta["volume_max"] or 100.0,
+            )
+            if lot_plan is None:
+                raise Mt5ConnectorError(
+                    "Auto-volume could not size the trade (order_calc_profit/metadata "
+                    "unavailable). Fail closed — no order."
+                )
+            for w in lot_plan.warnings:
+                print(f"  ! {w}")
+            volume = lot_plan.volume
+        else:
+            volume = args.volume
+
+        # 7. Estimated SL loss + margin at the chosen volume.
+        est_sl_loss = _loss_at(volume)
+        margin_required = connector.calc_margin(order_type=order_type, symbol=symbol,
+                                                volume=volume, price=entry)
+        est_sl_loss_pct = (est_sl_loss / equity * 100.0) if (est_sl_loss and equity) else None
+
+        # 8. Daily realized PnL + trades today (LM75C history).
+        connector.read_history_report(probe, symbol=symbol)
+        today = next((w for w in probe.history_windows if w["label"] == "today"), None)
+        daily_pnl = (today or {}).get("profit_sum", 0.0) or 0.0
+        trades_today = (today or {}).get("entry_deals", 0) or 0
+
+        # 9. Build request + full risk-plan decision (final authority).
         request = connector.build_demo_order_request(
-            symbol=symbol, side=args.side, volume=args.volume,
+            symbol=symbol, side=args.side, volume=volume,
             sl_points=args.sl_points, tp_points=args.tp_points,
             comment=args.comment, deviation=args.deviation, magic=args.magic,
         )
-        print(f"Request : {args.side} {args.volume} {symbol} @ {request['price']} "
-              f"SL={request['sl']} TP={request['tp']}")
+        decision = evaluate_risk_plan(
+            config=config, account_is_demo=connector.demo_verified, side=args.side,
+            volume=volume, sl_present=request.get("sl") is not None,
+            tp_present=request.get("tp") is not None, est_sl_loss=est_sl_loss,
+            require_risk_calc=args.auto_volume, margin_required=margin_required,
+            free_margin=acct["margin_free"], equity=equity,
+            daily_realized_pnl=daily_pnl, trades_today=trades_today, risk_pct=rp.pct,
+        )
+        budget = decision.info.get("remaining_daily_budget")
 
-        # 5. Risk gate (final authority).
-        trades_today = journal.count_sent_today(
-            server=probe.account_server, login=probe.account_login,
-        )
-        decision = evaluate_demo_order(
-            config=config,
-            account_is_demo=connector.demo_verified,
-            side=args.side,
-            volume=args.volume,
-            sl_present=request.get("sl") is not None,
-            tp_present=request.get("tp") is not None,
-            trades_today=trades_today,
-        )
+        # Risk panel.
+        print("\n Risk Plan")
+        print(f"   Equity / Balance : {acct['equity']} / {acct['balance']}  "
+              f"free margin {acct['margin_free']}")
+        print(f"   Risk mode / pct  : {args.risk_mode} / {rp.pct}%  "
+              f"({'AUTO' if args.auto_volume else 'manual'} volume)")
+        print(f"   Target risk      : {round(target_risk_amount, 2)} {acct['currency'] or ''}")
+        print(f"   Entry/SL/TP      : {entry} / {sl} / {tp}")
+        print(f"   Volume           : {volume}")
+        print(f"   Est. SL loss     : {est_sl_loss} "
+              f"({round(est_sl_loss_pct, 3) if est_sl_loss_pct is not None else '-'}%)")
+        print(f"   Margin required  : {margin_required}  "
+              f"(allowed {decision.info.get('margin_allowed', '-')})")
+        print(f"   Daily PnL today  : {round(daily_pnl, 2)}  remaining budget {budget}")
+        if config.max_trades_per_day is None:
+            freq = "experimental-scalp" if args.risk_mode == "scalp" else "high-activity"
+            print(f"   Frequency mode   : {freq} (trade cap disabled)")
+            print(f"   Trades today     : {trades_today} / unlimited")
+        else:
+            print("   Frequency mode   : capped")
+            print(f"   Trades today     : {trades_today} / {config.max_trades_per_day}")
+        print(f"   Demo only        : {config.mt5_demo_only}")
         for w in decision.warnings:
             print(f"  ! {w}")
+        print(f"   RISK DECISION    : {'APPROVED' if decision.approved else 'BLOCKED'}")
         if not decision.approved:
-            print("RISK GATE: BLOCKED")
             for r in decision.reasons:
-                print(f"   - {r}")
+                print(f"     - {r}")
 
-        # 6. order_check (validation only — sends nothing).
+        # 10. order_check (validation only — sends nothing).
         check = connector.check_order(request)
         check_rc = _safe_int(_result_field(check, "retcode"))
         check_comment = _result_field(check, "comment")
@@ -310,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - linear guarded f
             "account_login": probe.account_login,
             "symbol": symbol,
             "side": args.side,
-            "volume": args.volume,
+            "volume": volume,
             "price": request["price"],
             "sl": request["sl"],
             "tp": request["tp"],
@@ -318,6 +408,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - linear guarded f
             "tp_points": args.tp_points,
             "comment": args.comment,
             "spread": probe.tick_spread,
+            "risk_mode": args.risk_mode,
+            "risk_pct": rp.pct,
+            "auto_volume": args.auto_volume,
+            "target_risk_amount": round(target_risk_amount, 2),
+            "estimated_sl_loss": est_sl_loss,
+            "estimated_margin": margin_required,
+            "daily_pnl_today": round(daily_pnl, 2),
+            "remaining_daily_budget": budget,
+            "trades_today": trades_today,
             "order_check": {"retcode": check_rc, "comment": _opt(check_comment)},
             "safety_flags": {
                 "MT5_DEMO_ONLY": config.mt5_demo_only,

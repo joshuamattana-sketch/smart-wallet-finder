@@ -88,10 +88,25 @@ class FakeMt5:
             return None
         return _Obj(login=5_000_111, server="MetaQuotes-Demo", name="Demo User",
                     currency="USD", trade_mode=self._trade_mode, balance=10000.0,
-                    equity=10000.0, margin=0.0, margin_free=10000.0)
+                    equity=10000.0, margin=0.0, margin_free=10000.0, leverage=100)
 
     def symbol_info(self, name):
-        return _Obj(name=name, point=self._point, digits=2) if name in self._symbols else None
+        if name not in self._symbols:
+            return None
+        return _Obj(name=name, point=self._point, digits=2,
+                    trade_contract_size=100.0, volume_min=0.01, volume_step=0.01,
+                    volume_max=50.0, trade_tick_size=0.01, trade_tick_value=1.0,
+                    margin_initial=0.0)
+
+    # ── risk metadata calc (LM75D) — gold ~ contract 100, $1 / point / lot ───
+    def order_calc_margin(self, order_type, symbol, volume, price):
+        # ~ price * volume * contract / leverage
+        return round(price * volume * 100.0 / 100.0, 2)
+
+    def order_calc_profit(self, order_type, symbol, volume, price_open, price_close):
+        # contract_size = 100; buy profit = (close-open)*100*vol; sell inverted.
+        sign = 1.0 if order_type == self.ORDER_TYPE_BUY else -1.0
+        return round(sign * (price_close - price_open) * 100.0 * volume, 2)
 
     def symbol_select(self, name, enable):
         if name in self._symbols:
@@ -388,3 +403,45 @@ def test_history_windows_are_padded_into_future():
     now = dt.datetime.now(dt.timezone.utc)
     for w in result.history_windows:
         assert dt.datetime.fromisoformat(w["to"]) > now
+
+
+# ── LM75D: risk metadata + margin/profit calc ─────────────────────────────────
+def test_account_snapshot_and_symbol_metadata():
+    c = Mt5DemoConnector(FakeMt5())
+    c.connect()
+    acct = c.account_snapshot()
+    assert acct["equity"] == 10000.0
+    assert acct["leverage"] == 100
+    meta = c.symbol_metadata("XAUUSD")
+    assert meta["contract_size"] == 100.0
+    assert meta["volume_min"] == 0.01
+    assert meta["volume_step"] == 0.01
+
+
+def test_estimate_sl_loss_buy_and_sell():
+    fake = FakeMt5()
+    c = Mt5DemoConnector(fake)
+    c.connect()
+    # buy entry 2380 SL 2377 → loss = 3 * 100 * 0.1 lot = 30
+    loss = c.estimate_sl_loss(order_type=fake.ORDER_TYPE_BUY, symbol="XAUUSD",
+                              volume=0.1, entry=2380.0, sl=2377.0)
+    assert loss == pytest.approx(30.0)
+    # sell entry 2380 SL 2383 (above) → loss = 3 * 100 * 0.1 = 30
+    loss_s = c.estimate_sl_loss(order_type=fake.ORDER_TYPE_SELL, symbol="XAUUSD",
+                                volume=0.1, entry=2380.0, sl=2383.0)
+    assert loss_s == pytest.approx(30.0)
+
+
+def test_calc_margin_present():
+    fake = FakeMt5()
+    c = Mt5DemoConnector(fake)
+    c.connect()
+    m = c.calc_margin(order_type=fake.ORDER_TYPE_BUY, symbol="XAUUSD", volume=0.1, price=2380.0)
+    assert m == pytest.approx(238.0)
+
+
+def test_compute_levels_buy():
+    c = Mt5DemoConnector(FakeMt5(point=0.01))
+    c.connect()
+    lv = c.compute_levels("XAUUSD", "buy", 300, 600)
+    assert lv["sl"] < lv["price"] < lv["tp"]

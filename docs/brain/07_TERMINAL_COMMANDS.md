@@ -1073,3 +1073,55 @@ python scripts/run_mt5_demo_connector_probe.py --bars 10
 ```
 
 If no deals appear, the output prints likely reasons + the exact windows used.
+
+## LM75D MT5 demo risk/margin/lot calculator — demo only, guarded
+
+The trade loop now sizes positions from risk instead of blind fixed lots and
+prints a full risk plan (equity, risk%, target risk, est SL loss, margin, daily
+PnL, remaining daily-loss budget, trades today, decision). The Risk Engine
+blocks unsafe trades (SL loss over remaining daily budget, margin over 10% of
+free margin, daily -7% hard stop, trade cap). Auto-volume fails closed if it
+cannot size. Sending still needs --confirm-demo-order on a verified demo account.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+
+# manual volume (still supported) — prints est SL loss + risk %:
+python scripts/run_mt5_demo_trade_loop.py --side buy --volume 0.01 --sl-points 300 --tp-points 600 --dry-run
+
+# auto-size from risk (equity x risk% / SL loss):
+python scripts/run_mt5_demo_trade_loop.py --side buy  --sl-points 300 --tp-points 600 --auto-volume --risk-mode balanced --dry-run
+python scripts/run_mt5_demo_trade_loop.py --side sell --sl-points 300 --tp-points 600 --auto-volume --risk-mode aggressive --dry-run
+
+# risk modes: safe 0.25% / balanced 0.50% / aggressive 1.0% / experimental 0.10%
+# override (capped 1.0%, or 2.0% with --allow-high-demo-risk):
+python scripts/run_mt5_demo_trade_loop.py --side buy --sl-points 300 --tp-points 600 --auto-volume --risk-pct 0.75 --dry-run
+
+# place the guarded demo order with auto size:
+python scripts/run_mt5_demo_trade_loop.py --side buy --sl-points 300 --tp-points 600 --auto-volume --risk-mode balanced --confirm-demo-order
+```
+
+## LM75D high-activity mode (no fixed trade cap)
+
+The daily trade cap is now OFF by default (high-activity): the bot may take
+many trades as long as each passes risk/margin/daily-loss/SL-TP. Pass
+`--max-trades-per-day N` (or set GOLD_BOT_MAX_TRADES_PER_DAY) only if you want a cap.
+
+```powershell
+# high-activity (no cap) — prints "Trades today: X / unlimited":
+python scripts/run_mt5_demo_trade_loop.py --side buy --sl-points 300 --tp-points 600 --auto-volume --risk-mode balanced --dry-run
+
+# enforce a cap:
+python scripts/run_mt5_demo_trade_loop.py --side buy --sl-points 300 --tp-points 600 --auto-volume --risk-mode balanced --max-trades-per-day 1 --dry-run
+```
+
+## LM75D scalp mode (experimental, demo-only high-frequency)
+
+`--risk-mode scalp`: 0.10% risk/trade, no fixed trade cap, prints
+"Frequency mode: experimental-scalp". For M1/M5 XAUUSD scalp testing — still
+obeys demo check, SL/TP, daily -7% stop, margin, kill switch (no martingale,
+no live).
+
+```powershell
+python scripts/run_mt5_demo_trade_loop.py --side buy --sl-points 120 --tp-points 180 --auto-volume --risk-mode scalp --dry-run
+```

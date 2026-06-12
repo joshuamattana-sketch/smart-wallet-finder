@@ -538,6 +538,40 @@ class Mt5DemoConnector:
             raise Mt5ConnectorError(f"Cannot read bid/ask for {symbol} (fail closed).")
         return bid, ask
 
+    def compute_levels(self, symbol: str, side: str, sl_points: int, tp_points: int) -> dict[str, Any]:
+        """
+        Entry/SL/TP prices + order type from point offsets, validated for
+        orientation. No volume needed — used by both the request builder and the
+        auto-volume risk math. Fails closed on bad side / missing SL-TP.
+        """
+        mt5 = self._mt5
+        side_l = side.lower()
+        if side_l not in ("buy", "sell"):
+            raise Mt5ConnectorError(f"side must be buy/sell, got '{side}'.")
+        if not (sl_points and sl_points > 0) or not (tp_points and tp_points > 0):
+            raise Mt5ConnectorError("SL and TP are required and must be positive (fail closed).")
+
+        point = self.symbol_point(symbol)
+        bid, ask = self.current_prices(symbol)
+        if side_l == "buy":
+            order_type = mt5.ORDER_TYPE_BUY
+            price = ask
+            sl = price - sl_points * point
+            tp = price + tp_points * point
+            if not (sl < price < tp):
+                raise Mt5ConnectorError("Buy SL/TP inverted (need SL < price < TP).")
+        else:
+            order_type = mt5.ORDER_TYPE_SELL
+            price = bid
+            sl = price + sl_points * point
+            tp = price - tp_points * point
+            if not (tp < price < sl):
+                raise Mt5ConnectorError("Sell SL/TP inverted (need TP < price < SL).")
+
+        digits = _safe_int(getattr(mt5.symbol_info(symbol), "digits", None)) or 5
+        return {"order_type": order_type, "side": side_l, "digits": digits,
+                "price": round(price, digits), "sl": round(sl, digits), "tp": round(tp, digits)}
+
     def build_demo_order_request(
         self,
         *,
@@ -556,46 +590,86 @@ class Mt5DemoConnector:
         nothing is sent here.
         """
         mt5 = self._mt5
-        side_l = side.lower()
-        if side_l not in ("buy", "sell"):
-            raise Mt5ConnectorError(f"side must be buy/sell, got '{side}'.")
-        if not (sl_points and sl_points > 0) or not (tp_points and tp_points > 0):
-            raise Mt5ConnectorError("SL and TP are required and must be positive (fail closed).")
-
-        point = self.symbol_point(symbol)
-        bid, ask = self.current_prices(symbol)
-
-        if side_l == "buy":
-            order_type = mt5.ORDER_TYPE_BUY
-            price = ask
-            sl = price - sl_points * point
-            tp = price + tp_points * point
-            if not (sl < price < tp):
-                raise Mt5ConnectorError("Buy SL/TP inverted (need SL < price < TP).")
-        else:
-            order_type = mt5.ORDER_TYPE_SELL
-            price = bid
-            sl = price + sl_points * point
-            tp = price - tp_points * point
-            if not (tp < price < sl):
-                raise Mt5ConnectorError("Sell SL/TP inverted (need TP < price < SL).")
-
-        digits = _safe_int(getattr(mt5.symbol_info(symbol), "digits", None)) or 5
-        request: dict[str, Any] = {
+        levels = self.compute_levels(symbol, side, sl_points, tp_points)
+        return {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": float(volume),
-            "type": order_type,
-            "price": round(price, digits),
-            "sl": round(sl, digits),
-            "tp": round(tp, digits),
+            "type": levels["order_type"],
+            "price": levels["price"],
+            "sl": levels["sl"],
+            "tp": levels["tp"],
             "deviation": deviation,
             "magic": magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": getattr(mt5, "ORDER_FILLING_IOC", 1),
         }
-        return request
+
+    # ── account / symbol risk metadata + margin/profit calc (LM75D) ──────────
+    def account_snapshot(self) -> dict[str, Any]:
+        """Equity/balance/leverage/free-margin/currency (read-only). Fail closed if absent."""
+        info = self._mt5.account_info()
+        if info is None:
+            raise Mt5ConnectorError("account_info() unavailable for risk math (fail closed).")
+        return {
+            "balance": _safe_float(getattr(info, "balance", None)),
+            "equity": _safe_float(getattr(info, "equity", None)),
+            "leverage": _safe_int(getattr(info, "leverage", None)),
+            "margin_free": _safe_float(getattr(info, "margin_free", None)),
+            "currency": _opt_str(getattr(info, "currency", None)),
+        }
+
+    def symbol_metadata(self, symbol: str) -> dict[str, Any]:
+        """Contract/volume/tick metadata for risk + margin math. Fail closed if absent."""
+        info = self._mt5.symbol_info(symbol)
+        if info is None:
+            raise Mt5ConnectorError(f"symbol_info({symbol}) unavailable for risk math (fail closed).")
+        return {
+            "point": _safe_float(getattr(info, "point", None)),
+            "digits": _safe_int(getattr(info, "digits", None)),
+            "contract_size": _safe_float(getattr(info, "trade_contract_size", None)),
+            "volume_min": _safe_float(getattr(info, "volume_min", None)),
+            "volume_step": _safe_float(getattr(info, "volume_step", None)),
+            "volume_max": _safe_float(getattr(info, "volume_max", None)),
+            "tick_size": _safe_float(getattr(info, "trade_tick_size", None)),
+            "tick_value": _safe_float(getattr(info, "trade_tick_value", None)),
+            "margin_initial": _safe_float(getattr(info, "margin_initial", None)),
+        }
+
+    def calc_margin(self, *, order_type: int, symbol: str, volume: float, price: float) -> float | None:
+        """mt5.order_calc_margin → required margin, or None if unavailable."""
+        fn = getattr(self._mt5, "order_calc_margin", None)
+        if not callable(fn):
+            return None
+        try:
+            m = fn(order_type, symbol, volume, price)
+        except Exception:
+            return None
+        return _safe_float(m)
+
+    def calc_profit(
+        self, *, order_type: int, symbol: str, volume: float, price_open: float, price_close: float
+    ) -> float | None:
+        """mt5.order_calc_profit → profit (negative = loss), or None if unavailable."""
+        fn = getattr(self._mt5, "order_calc_profit", None)
+        if not callable(fn):
+            return None
+        try:
+            p = fn(order_type, symbol, volume, price_open, price_close)
+        except Exception:
+            return None
+        return _safe_float(p)
+
+    def estimate_sl_loss(
+        self, *, order_type: int, symbol: str, volume: float, entry: float, sl: float
+    ) -> float | None:
+        """Absolute estimated loss if price hits SL, via order_calc_profit. None if unavailable."""
+        profit = self.calc_profit(order_type=order_type, symbol=symbol, volume=volume,
+                                  price_open=entry, price_close=sl)
+        if profit is None:
+            return None
+        return abs(profit) if profit < 0 else 0.0
 
     def check_order(self, request: dict[str, Any]) -> Any:
         """Run MT5 order_check (validation only — sends nothing)."""
