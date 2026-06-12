@@ -1139,3 +1139,22 @@ python scripts/run_mt5_demo_trade_loop.py --close-position TICKET --dry-run     
 python scripts/run_mt5_demo_trade_loop.py --close-position TICKET --confirm-demo-order
 python scripts/run_mt5_demo_connector_probe.py --bars 10 --history-debug
 ```
+
+## LM76A Gold Bot decision engine V1 — decision-only, demo execution guarded
+
+Reads live XAUUSD candles + spread + position state, outputs LONG/SHORT/NO_TRADE
+with reasons. Decision-only + dry-run by default (sends nothing). Demo
+execution needs BOTH --auto-execute-demo AND --confirm-demo-order, demo account,
+no open XAUUSD position, and the LM75D risk gate approving.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_gold_bot_decision_probe.py --risk-mode balanced --dry-run
+python scripts/run_gold_bot_decision_probe.py --risk-mode scalp --dry-run
+python scripts/run_gold_bot_decision_probe.py --risk-mode aggressive --dry-run
+# intentional guarded demo execution (opens a real demo position if APPROVED):
+python scripts/run_gold_bot_decision_probe.py --risk-mode scalp --auto-execute-demo --confirm-demo-order
+```
+
+Decision journal (gitignored): data/gold_bot/decision_journal.jsonl.
+Tests: python -m pytest tests/test_gold_bot_decision_engine.py -q
