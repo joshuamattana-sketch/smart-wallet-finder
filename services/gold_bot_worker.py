@@ -40,7 +40,7 @@ from services.connectors.mt5_demo_connector import (
 )
 from services.gold_bot_decision_engine import decide
 from services.gold_bot_lot_calculator import calc_auto_volume, resolve_risk_pct
-from services.gold_bot_macro_context import build_macro_context, load_macro_events
+from services.gold_bot_macro_context import build_macro_context, load_calendar_or_macro
 from services.gold_bot_risk_gate import SafetyConfig, evaluate_risk_plan
 from services import gold_bot_trade_journal as journal
 
@@ -66,6 +66,7 @@ class WorkerConfig:
     symbol: str | None = None             # None → auto-discover
     timeframe: str = "M1"
     bars: int = 120
+    calendar_file: str | None = None
     macro_events_file: str | None = None
     dxy_bias: str = "unknown"
     yields_bias: str = "unknown"
@@ -124,8 +125,9 @@ class GoldBotWorker:
         i = 0
         try:
             self._preflight_safety()                   # may raise CriticalSafetyError
-            self._macro_events, self._macro_source, self._macro_warns = load_macro_events(
-                self.cfg.macro_events_file
+            self._macro_events, self._macro_source, self._macro_warns = load_calendar_or_macro(
+                calendar_file=self.cfg.calendar_file,
+                macro_events_file=self.cfg.macro_events_file, now=self._now(),
             )
             connector = self._injected_connector or Mt5DemoConnector()
             probe = ProbeResult()
@@ -357,6 +359,11 @@ class GoldBotWorker:
         self._print(f" execution    : {self._execution_label()}")
         self._print(f" live trading : NEVER    demo-only {self.safety.mt5_demo_only}    "
                     f"kill-switch {self.safety.kill_switch}")
+        self._print(f" calendar     : {cfg.calendar_file or '(none)'}")
+        if cfg.calendar_file:
+            from services.gold_bot_economic_calendar import resolve_calendar_provider
+            ps = resolve_calendar_provider(cfg.calendar_file).status(self._now())
+            self._print(f" calendar stat: {ps.name} [{ps.status}] freshness {ps.freshness} - {ps.message}")
         self._print(f" macro events : {cfg.macro_events_file or '(none)'}")
         self._print(f" biases       : DXY {cfg.dxy_bias} | Yields {cfg.yields_bias} | "
                     f"Geo {cfg.geopolitical_risk}")

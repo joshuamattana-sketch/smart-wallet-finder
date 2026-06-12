@@ -5,6 +5,7 @@ data/*
 !data/gold_bot/
 data/gold_bot/*
 !data/gold_bot/*.sample.json
+!data/gold_bot/*.manual.json
 __pycache__/
 *.pyc
 .DS_Store
