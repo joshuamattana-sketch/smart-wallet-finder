@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { motion, useScroll, useTransform } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DynamicHeadline } from "@/components/landing/DynamicHeadline";
@@ -335,15 +336,36 @@ function FieldSvg() {
 
 export function LumoraFieldHero() {
   const tiltRef = useRef<HTMLDivElement | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const spotRef = useRef<HTMLDivElement | null>(null);
   const motionOkRef = useRef(false);
   const [motionOk, setMotionOk] = useState(false);
   const [annIdx, setAnnIdx] = useState(0);
+
+  // Scroll parallax — the field sinks slightly slower than the copy as the
+  // visitor scrolls past, so the hero has physical depth, not one flat plane.
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ["start start", "end start"],
+  });
+  const fieldY = useTransform(scrollYProgress, [0, 1], [0, 70]);
+  const copyY = useTransform(scrollYProgress, [0, 1], [0, 130]);
+  const heroFade = useTransform(scrollYProgress, [0, 0.85], [1, 0.25]);
 
   useEffect(() => {
     const ok = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     motionOkRef.current = ok;
     setMotionOk(ok);
   }, []);
+
+  // Cursor spotlight — a quiet cyan/violet light that follows the pointer
+  // across the whole hero, like a scanner beam over the dark field.
+  const handleSectionMove = (e: React.MouseEvent<HTMLElement>) => {
+    const el = spotRef.current;
+    if (!el || !motionOkRef.current) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    el.style.background = `radial-gradient(560px circle at ${e.clientX - r.left}px ${e.clientY - r.top}px, rgba(34,211,238,0.05), rgba(139,92,246,0.03) 40%, transparent 70%)`;
+  };
 
   // Annotation ticker — the field narrating itself, one state at a time.
   useEffect(() => {
@@ -368,18 +390,30 @@ export function LumoraFieldHero() {
   const ann = ANNOTATIONS[annIdx];
 
   return (
-    <section className="relative overflow-hidden px-4 pb-12 pt-12 sm:pt-16">
+    <section
+      ref={sectionRef}
+      onMouseMove={handleSectionMove}
+      className="relative overflow-hidden px-4 pb-14 pt-14 sm:pt-20"
+    >
       <style dangerouslySetInnerHTML={{ __html: FIELD_CSS }} />
 
-      {/* Ambient pressure glow behind the whole hero */}
+      {/* Ambient pressure glow behind the whole hero — violet brand + cyan energy */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_55%_42%_at_68%_18%,rgba(34,211,238,0.08),transparent_70%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_38%_32%_at_12%_32%,rgba(139,92,246,0.06),transparent_70%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_55%_42%_at_68%_18%,rgba(34,211,238,0.09),transparent_70%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_44%_38%_at_12%_28%,rgba(139,92,246,0.09),transparent_70%)]" />
+        {/* Horizon line — a faint floor the instrument stands on */}
+        <div className="absolute inset-x-0 bottom-10 h-px bg-gradient-to-r from-transparent via-violet-500/15 to-transparent" />
       </div>
 
-      <div className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-9 lg:grid-cols-[minmax(0,4.5fr)_minmax(0,7.5fr)] lg:gap-12">
+      {/* Cursor spotlight layer */}
+      <div ref={spotRef} aria-hidden className="pointer-events-none absolute inset-0" />
+
+      <motion.div
+        style={motionOk ? { opacity: heroFade } : undefined}
+        className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-9 lg:grid-cols-[minmax(0,4.5fr)_minmax(0,7.5fr)] lg:gap-12"
+      >
         {/* Copy */}
-        <div>
+        <motion.div style={motionOk ? { y: copyY } : undefined}>
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="num text-[10px] uppercase tracking-[0.22em] text-lm-muted">
               Liquidity intelligence terminal
@@ -408,16 +442,27 @@ export function LumoraFieldHero() {
             Demo data shown — live integrations rolling out in beta. Informational market
             context only: no guaranteed outcomes, not financial advice.
           </p>
-        </div>
+        </motion.div>
 
         {/* The Lumora Field — living market object */}
-        <div className="relative" onMouseMove={handleMove} onMouseLeave={handleLeave}>
-          {/* Pressure glow halo around the instrument */}
+        <motion.div
+          style={motionOk ? { y: fieldY } : undefined}
+          className="relative"
+          onMouseMove={handleMove}
+          onMouseLeave={handleLeave}
+        >
+          {/* Pressure glow halo around the instrument — deeper, violet-anchored */}
           <div aria-hidden className="pointer-events-none absolute -inset-8">
             <div className="absolute -right-6 top-6 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
             <div className="absolute -top-4 left-4 h-44 w-56 rounded-full bg-red-500/[0.07] blur-3xl" />
             <div className="absolute bottom-0 left-1/4 h-44 w-64 rounded-full bg-emerald-500/[0.07] blur-3xl" />
+            <div className="absolute -bottom-8 right-1/4 h-40 w-72 rounded-full bg-violet-500/[0.09] blur-3xl" />
           </div>
+          {/* Ground shadow — the instrument floats above the page */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -bottom-7 left-1/2 h-10 w-3/4 -translate-x-1/2 rounded-[100%] bg-black/60 blur-xl"
+          />
 
           <div ref={tiltRef} className="lmf-tilt relative">
             <div className="overflow-hidden rounded-lg border border-lm-border bg-lm-surface lm-chart-frame">
@@ -501,8 +546,8 @@ export function LumoraFieldHero() {
               private beta · demo data
             </span>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Scroll cue — invite the descent into the product world */}
       <div className="relative mx-auto mt-9 hidden w-fit flex-col items-center gap-1.5 sm:flex">
