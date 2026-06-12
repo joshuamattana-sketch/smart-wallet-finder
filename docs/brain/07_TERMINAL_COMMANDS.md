@@ -1172,3 +1172,37 @@ python scripts/run_gold_bot_decision_probe.py --risk-mode balanced --dry-run
 python scripts/run_gold_bot_decision_probe.py --risk-mode scalp --dry-run
 python scripts/run_gold_bot_decision_probe.py --risk-mode aggressive --dry-run
 ```
+
+## LM81A Gold Bot worker loop - MT5 DEMO ONLY, observe by default, sends nothing
+
+Long-running loop version of the decision probe. Each iteration: reads MT5 demo
+account/symbol/tick/candles, builds the LM77A macro context, runs Decision
+Engine V2, prints a safety banner once + a compact `[HB]` heartbeat per
+iteration, journals every iteration to `data/gold_bot/worker_journal.jsonl`
+(gitignored) and writes `data/gold_bot/worker_status.json` (gitignored).
+
+OBSERVE / dry-run by default - it SENDS NOTHING. A demo order is only ever
+attempted with `--mode demo` AND `--auto-execute-demo` AND `--confirm-demo-order`,
+on a verified demo account, after the LM75D risk gate APPROVES, and never during
+a macro lockout or with an open XAUUSD position (no stacking). Kill switch /
+LIVE / REAL flags block orders. Non-demo account, live-trading flags, or MT5
+unavailable for 5 consecutive iterations stop the worker fail-closed (exit 2).
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# observe once / a few loops (no orders):
+python scripts/run_gold_bot_worker.py --max-iterations 1
+python scripts/run_gold_bot_worker.py --max-iterations 5 --interval-seconds 5
+# scalp observe:
+python scripts/run_gold_bot_worker.py --risk-mode scalp --max-iterations 5 --interval-seconds 5
+# with macro context (sample events, DXY/yields placeholders):
+python scripts/run_gold_bot_worker.py --risk-mode scalp --macro-events-file data/gold_bot/macro_events.sample.json --dxy-bias rising --yields-bias rising --max-iterations 5 --interval-seconds 5
+# intentional guarded demo execution (opens a real demo position if APPROVED):
+python scripts/run_gold_bot_worker.py --mode demo --risk-mode scalp --auto-execute-demo --confirm-demo-order --max-iterations 1
+```
+
+Kill switch (blocks all orders, worker still observes):
+`$env:GOLD_BOT_KILL_SWITCH = "true"` before running.
+
+Tests: `python -m pytest tests/test_gold_bot_worker.py -q` (11, fake connector,
+no terminal needed).
