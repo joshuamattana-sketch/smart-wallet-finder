@@ -48,7 +48,10 @@ def parse_args(argv=None):
     p.add_argument("--symbol", default=None, help="Gold symbol; omit to auto-discover.")
     p.add_argument("--timeframe", default="M1")
     p.add_argument("--bars", type=int, default=120)
-    p.add_argument("--macro-events-file", default=None, dest="macro_events_file")
+    p.add_argument("--calendar-file", default=None, dest="calendar_file",
+                   help="Normalized economic calendar JSON (preferred).")
+    p.add_argument("--macro-events-file", default=None, dest="macro_events_file",
+                   help="Legacy LM77A macro events JSON (fallback if --calendar-file omitted).")
     p.add_argument("--dxy-bias", choices=["rising", "falling", "flat", "unknown"],
                    default="unknown", dest="dxy_bias")
     p.add_argument("--yields-bias", choices=["rising", "falling", "flat", "unknown"],
@@ -70,7 +73,8 @@ def main(argv=None) -> int:
     cfg = WorkerConfig(
         mode=args.mode, risk_mode=args.risk_mode, interval_seconds=args.interval_seconds,
         max_iterations=args.max_iterations, symbol=args.symbol, timeframe=args.timeframe,
-        bars=args.bars, macro_events_file=args.macro_events_file, dxy_bias=args.dxy_bias,
+        bars=args.bars, calendar_file=args.calendar_file,
+        macro_events_file=args.macro_events_file, dxy_bias=args.dxy_bias,
         yields_bias=args.yields_bias, geopolitical_risk=args.geopolitical_risk,
         auto_execute_demo=args.auto_execute_demo, confirm_demo_order=args.confirm_demo_order,
         close_on_no_trade=args.close_on_no_trade, json_output=args.json_output,

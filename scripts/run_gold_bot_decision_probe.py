@@ -38,7 +38,7 @@ from services.connectors.mt5_demo_connector import (  # noqa: E402
 from services.gold_bot_decision_engine import decide  # noqa: E402
 from services.gold_bot_macro_context import (  # noqa: E402
     build_macro_context,
-    load_macro_events,
+    load_calendar_or_macro,
 )
 from services.gold_bot_lot_calculator import (  # noqa: E402
     RISK_MODES,
@@ -65,8 +65,11 @@ def parse_args(argv=None):
                    help="Permit a demo order from the decision (needs --confirm-demo-order too).")
     p.add_argument("--json", action="store_true", dest="json_output")
     # ── Macro / news / event context (LM77A) ─────────────────────────────────
+    p.add_argument("--calendar-file", default=None, dest="calendar_file",
+                   help="Normalized economic calendar JSON (preferred; e.g. "
+                        "data/gold_bot/economic_calendar.sample.json).")
     p.add_argument("--macro-events-file", default=None, dest="macro_events_file",
-                   help="Local/sample macro events JSON (e.g. data/gold_bot/macro_events.sample.json).")
+                   help="Legacy LM77A macro events JSON (fallback if --calendar-file omitted).")
     p.add_argument("--dxy-bias", choices=["rising", "falling", "flat", "unknown"],
                    default="unknown", dest="dxy_bias", help="Placeholder DXY bias (no live feed yet).")
     p.add_argument("--yields-bias", choices=["rising", "falling", "flat", "unknown"],
@@ -105,13 +108,19 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
         candles = connector.recent_candles(symbol, args.timeframe, args.bars)
         open_xau = len(connector.positions_for_symbol(symbol))
 
-        # ── Macro / news / event context (file-based + placeholder biases) ─────
-        macro_events, macro_source, macro_warns = load_macro_events(args.macro_events_file)
+        # ── Macro / news / event context (calendar layer + placeholder biases) ─
+        now = datetime.now(timezone.utc)
+        macro_events, macro_source, macro_warns = load_calendar_or_macro(
+            calendar_file=args.calendar_file, macro_events_file=args.macro_events_file, now=now)
         macro = build_macro_context(
-            datetime.now(timezone.utc), macro_events, macro_source,
+            now, macro_events, macro_source,
             dxy_bias=args.dxy_bias, yields_bias=args.yields_bias,
             geopolitical_risk=args.geopolitical_risk, extra_warnings=macro_warns,
         )
+        macro_provider = None
+        if args.calendar_file:
+            from services.gold_bot_economic_calendar import resolve_calendar_provider
+            macro_provider = resolve_calendar_provider(args.calendar_file).status(now)
 
         idea = decide(
             candles, symbol=symbol, timeframe=args.timeframe.upper(), risk_mode=args.risk_mode,
@@ -136,6 +145,9 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
                   f"prev {ms_d['prev_low']:.2f}-{ms_d['prev_high']:.2f}")
         print(f" Open XAUUSD : {open_xau}")
         print("\n Macro Context:")
+        if macro_provider is not None:
+            print(f"   provider     : {macro_provider.name} [{macro_provider.status}] "
+                  f"freshness {macro_provider.freshness}")
         for line in macro.human_lines():
             print(line)
         print(f"\n DECISION    : {idea.decision}   [{idea.strategy}]  confidence {idea.confidence}")
@@ -233,6 +245,7 @@ def main(argv=None) -> int:  # noqa: C901 - linear guarded flow
             "dry_run": args.dry_run,
             "auto_execute_demo": args.auto_execute_demo,
             "confirm_demo_order": args.confirm_demo_order,
+            "calendar_file": args.calendar_file,
             "macro_events_file": args.macro_events_file,
             "ignore_event_lockout_demo": args.ignore_event_lockout_demo,
             "execution_status": exec_status,

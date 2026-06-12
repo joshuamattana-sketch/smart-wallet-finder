@@ -1241,3 +1241,62 @@ Safety: only `start_gold_bot_demo_guarded.ps1 -ConfirmDemoExecution` ever passes
 the execution flags; no script enables live trading or contains secrets.
 Generated `data/gold_bot/worker_journal.jsonl` + `worker_status.json` stay
 gitignored.
+
+## LM83A Economic calendar source layer (provider-neutral, local JSON real)
+
+Normalized economic calendar (`services/gold_bot_economic_calendar.py`) feeds
+the LM77A macro brain. ONE real provider (`LocalJsonEconomicCalendarProvider`)
+reads `data/gold_bot/economic_calendar.sample.json`; `FutureApiEconomicCalendar
+Provider` + `ManualImportProvider` are placeholders (no paid API, no secrets, no
+scraping). `EconomicEvent` is normalized (title/type/currency/impact/scheduled_at
+UTC/previous/forecast/actual/tags...); USD high-impact CPI/NFP/FOMC/Fed Speech/
+Rate Decision are tagged `gold_major`. Lockout/watch/post-event rules unchanged.
+
+Calendar probe (read-only, no MT5):
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python scripts/run_gold_bot_calendar_probe.py --calendar-file data/gold_bot/economic_calendar.sample.json --window-hours 48 --currency USD
+python scripts/run_gold_bot_calendar_probe.py --calendar-file data/gold_bot/economic_calendar.sample.json --impact high --json
+```
+
+Decision probe + worker now accept `--calendar-file` (preferred); the legacy
+`--macro-events-file` still works as a fallback when `--calendar-file` is omitted.
+
+```powershell
+python scripts/run_gold_bot_decision_probe.py --risk-mode balanced --calendar-file data/gold_bot/economic_calendar.sample.json --dry-run
+python scripts/run_gold_bot_worker.py --risk-mode scalp --calendar-file data/gold_bot/economic_calendar.sample.json --max-iterations 3 --interval-seconds 5
+```
+
+Tests: `python -m pytest tests/test_gold_bot_economic_calendar.py tests/test_gold_bot_macro_context.py -q`
+(no MT5). Generated worker journal/status stay gitignored; the `.sample.json`
+calendar is tracked.
+
+### LM83A part 2 — data source architecture (provider status + manual fallback)
+
+`services/gold_bot_data_sources.py` adds a `ProviderStatus` model
+(name/category/status/freshness/last_updated/message/warnings) and a registry.
+REAL providers: `LocalJsonEconomicCalendarProvider` (status `active`) and
+`ManualJsonEconomicCalendarProvider` (status `fallback` — a TEMPORARY free
+fallback, `data/gold_bot/economic_calendar.manual.json`). PLACEHOLDER providers
+(status-only, NO HTTP, no keys): Finnhub, TradingEconomics, MT5 calendar export,
+GDELT, RSS, FRED, yfinance, and MT5 XAUUSD / DXY / US-yields / VIX history
+(historical = placeholder until LM84A/LM84B). `resolve_calendar_provider(path)`
+picks Manual when the filename contains `manual`, else Local.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# full data-source status overview (read-only, no HTTP):
+python scripts/run_gold_bot_data_sources_probe.py
+python scripts/run_gold_bot_data_sources_probe.py --json
+
+# calendar probe now prints provider status; manual fallback file works too:
+python scripts/run_gold_bot_calendar_probe.py --calendar-file data/gold_bot/economic_calendar.manual.json --window-hours 720 --currency USD
+```
+
+Decision probe + worker print the active provider status (active/fallback/
+missing) in the Macro Context block / banner. `--calendar-file` accepts either
+the sample or the manual file. Tests:
+`python -m pytest tests/test_gold_bot_data_sources.py -q`. Both `.sample.json`
+and `.manual.json` calendars are tracked; runtime journals/status stay
+gitignored.

@@ -136,6 +136,27 @@ def load_macro_events(path: str | None) -> tuple[list[dict], str, list[str]]:
     return events, source, []
 
 
+def load_calendar_or_macro(
+    *,
+    calendar_file: str | None = None,
+    macro_events_file: str | None = None,
+    now: datetime | None = None,
+) -> tuple[list[dict], str, list[str]]:
+    """
+    Unified event loader (LM83A). Prefers the normalized economic-calendar layer
+    when ``calendar_file`` is given; otherwise falls back to the LM77A
+    ``macro_events_file`` (backward compatible). Returns event dicts ready for
+    ``build_macro_context`` plus a source_mode label and warnings.
+    """
+    if calendar_file:
+        # Lazy import keeps macro_context importable on its own (no cycle).
+        from services.gold_bot_economic_calendar import resolve_calendar_provider
+        events, src, warnings = resolve_calendar_provider(calendar_file).fetch(now=now)
+        dicts = [e.to_macro_event_dict() for e in events]
+        return dicts, f"economic_calendar:{src}", warnings
+    return load_macro_events(macro_events_file)
+
+
 def _event_dt(ev: dict, now: datetime) -> datetime | None:
     """Resolve an event time. Supports absolute ISO 'time' or relative 'minutes_from_now'."""
     if "minutes_from_now" in ev:
