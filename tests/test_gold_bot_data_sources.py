@@ -15,7 +15,6 @@ from services.gold_bot_data_sources import (
     PROVIDER_STATUSES,
     FinnhubEconomicCalendarProvider,
     GdeltNewsProvider,
-    MT5HistoricalXauusdProvider,
     ProviderStatus,
     build_data_source_overview,
     group_by_category,
@@ -51,33 +50,35 @@ def test_placeholder_fetch_makes_no_call_and_returns_empty():
     events, src, warns = FinnhubEconomicCalendarProvider().fetch(now=NOW)
     assert events == [] and src == "placeholder"
     assert warns and "placeholder" in warns[0].lower()
-    # historical + news placeholders behave the same
-    assert MT5HistoricalXauusdProvider().fetch(now=NOW)[0] == []
+    # news placeholder behaves the same
     assert GdeltNewsProvider().fetch(now=NOW)[0] == []
 
 
 # ── overview registry ────────────────────────────────────────────────────────────
-def test_overview_includes_real_and_placeholder():
+def test_overview_includes_real_and_placeholder(tmp_path):
     statuses = build_data_source_overview(
         calendar_file="data/gold_bot/economic_calendar.sample.json",
-        manual_file="data/gold_bot/economic_calendar.manual.json", now=NOW)
+        manual_file="data/gold_bot/economic_calendar.manual.json",
+        history_dir=str(tmp_path), now=NOW)            # empty history dir
     by_name = {s.name: s for s in statuses}
     assert by_name["local_json"].status == "active"
     assert by_name["manual_json"].status == "fallback"
     assert by_name["finnhub"].status == "placeholder"
-    assert by_name["mt5_xauusd_history"].status == "placeholder"
+    assert by_name["mt5_xauusd_history"].status == "missing"   # no history files yet
     # at least one of each placeholder category present
     cats = {s.category for s in statuses}
     assert {"economic_calendar", "historical_market", "macro_market", "news"} <= cats
 
 
-def test_overview_missing_files_report_missing():
+def test_overview_missing_files_report_missing(tmp_path):
     statuses = build_data_source_overview(
         calendar_file="data/gold_bot/nope_sample.json",
-        manual_file="data/gold_bot/nope_manual.json", now=NOW)
+        manual_file="data/gold_bot/nope_manual.json",
+        history_dir=str(tmp_path), now=NOW)
     by_name = {s.name: s for s in statuses}
     assert by_name["local_json"].status == "missing"
     assert by_name["manual_json"].status == "missing"
+    assert by_name["mt5_xauusd_history"].status == "missing"
 
 
 def test_group_by_category():

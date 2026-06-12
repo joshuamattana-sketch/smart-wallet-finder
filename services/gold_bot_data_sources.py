@@ -132,13 +132,9 @@ class YFinanceMacroProvider(PlaceholderProvider):
         "yfinance macro (DXY/^TNX/^VIX) - placeholder; no HTTP in this build.")
 
 
-# historical market (LM84A/LM84B)
-class MT5HistoricalXauusdProvider(PlaceholderProvider):
-    spec = _PlaceholderSpec(
-        "mt5_xauusd_history", "historical_market",
-        "MT5 XAUUSD historical backfill - placeholder until LM84A.")
-
-
+# historical market — MT5 XAUUSD is REAL as of LM84A (status lives in
+# gold_bot_historical_market_data.history_status). DXY/yields/VIX stay
+# placeholder until LM84B.
 class DxyHistoricalProvider(PlaceholderProvider):
     spec = _PlaceholderSpec(
         "dxy_history", "historical_market",
@@ -160,8 +156,8 @@ class VixHistoricalProvider(PlaceholderProvider):
 # Order matters only for display.
 PLACEHOLDER_PROVIDERS = (
     MT5CalendarExportProvider, FinnhubEconomicCalendarProvider, TradingEconomicsCalendarProvider,
-    MT5HistoricalXauusdProvider, DxyHistoricalProvider, UsYieldsHistoricalProvider,
-    VixHistoricalProvider, FredMacroProvider, YFinanceMacroProvider,
+    DxyHistoricalProvider, UsYieldsHistoricalProvider, VixHistoricalProvider,
+    FredMacroProvider, YFinanceMacroProvider,
     GdeltNewsProvider, RssNewsProvider,
 )
 
@@ -171,22 +167,26 @@ def build_data_source_overview(
     *,
     calendar_file: str | None = None,
     manual_file: str | None = None,
+    history_dir: str | None = None,
     now: datetime | None = None,
 ) -> list[ProviderStatus]:
     """
-    Full data-source status snapshot: real local + manual economic calendars
-    (their live file status) followed by every placeholder provider. No external
-    calls. Lazy-imports the calendar providers to avoid an import cycle.
+    Full data-source status snapshot: real local + manual economic calendars and
+    the real MT5 XAUUSD history (their live file status) followed by every
+    placeholder provider. No external calls. Lazy-imports the real providers to
+    avoid an import cycle.
     """
     now = now or datetime.now(timezone.utc)
     from services.gold_bot_economic_calendar import (
         LocalJsonEconomicCalendarProvider,
         ManualJsonEconomicCalendarProvider,
     )
+    from services.gold_bot_historical_market_data import DEFAULT_HISTORY_DIR, history_status
 
     statuses: list[ProviderStatus] = [
         LocalJsonEconomicCalendarProvider(calendar_file or DEFAULT_SAMPLE_CALENDAR).status(now),
         ManualJsonEconomicCalendarProvider(manual_file or DEFAULT_MANUAL_CALENDAR).status(now),
+        history_status(history_dir or DEFAULT_HISTORY_DIR, now=now),
     ]
     for cls in PLACEHOLDER_PROVIDERS:
         statuses.append(cls().status(now))

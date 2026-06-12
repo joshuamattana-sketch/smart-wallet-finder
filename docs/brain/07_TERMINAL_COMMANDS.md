@@ -1300,3 +1300,37 @@ the sample or the manual file. Tests:
 `python -m pytest tests/test_gold_bot_data_sources.py -q`. Both `.sample.json`
 and `.manual.json` calendars are tracked; runtime journals/status stay
 gitignored.
+
+## LM84A Historical market backfill (REAL MT5 XAUUSD history)
+
+First real historical provider. `services/gold_bot_historical_market_data.py`
+copies XAUUSD bars from a running MT5 demo terminal (connector's new read-only
+`copy_rates_range`) into `data/gold_bot/history/XAUUSD_<TF>.csv` + `.meta.json`.
+Read-only, NO orders. `HistoricalBar` model (symbol/timeframe/time UTC/OHLC/
+tick_volume/spread/real_volume/source/loaded_at); timeframes M1/M5/M15/H1.
+`MT5HistoricalXauusdProvider` verifies a DEMO account, fetches per timeframe,
+normalizes to UTC, writes CSV + metadata (rows_written/first+last bar/warnings),
+and reports `ProviderStatus` active/missing/fresh/stale from the files. Generated
+CSV/meta are gitignored.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# preview only (no writes, no MT5 needed):
+python scripts/run_gold_bot_history_backfill.py --dry-run
+# write CSV/meta (MT5 demo terminal must be running):
+python scripts/run_gold_bot_history_backfill.py --days 7 --timeframes M1,M5 --overwrite
+python scripts/run_gold_bot_history_backfill.py --days 30 --timeframes M1,M5,M15,H1
+# inspect local history + data-quality scan:
+python scripts/run_gold_bot_history_probe.py --timeframe M1 --tail 5
+# data-sources overview now shows mt5_xauusd_history ACTIVE once files exist:
+python scripts/run_gold_bot_data_sources_probe.py
+```
+
+Backfill flags: `--symbol XAUUSD --timeframes M1,M5,M15,H1 --days 30
+--from-date YYYY-MM-DD --to-date YYYY-MM-DD --out-dir data/gold_bot/history
+--overwrite --dry-run`. Existing files are skipped unless `--overwrite`. If MT5
+returns fewer bars than the naive expectation (limited terminal history /
+weekends), it WARNS in the metadata + probe but never crashes. Tests
+`python -m pytest tests/test_gold_bot_historical_market_data.py -q` (no MT5 —
+injected fetch_fn + temp dirs). History files (`data/gold_bot/history/*.csv|*.json`)
+are gitignored.

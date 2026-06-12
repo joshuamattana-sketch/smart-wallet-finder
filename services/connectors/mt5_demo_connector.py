@@ -317,6 +317,41 @@ class Mt5DemoConnector:
             "close": _safe_float(_rate_field(r, "close", 4)),
         } for r in rates]
 
+    def copy_rates_range(self, symbol: str, timeframe: str,
+                         date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
+        """
+        Read-only historical bars in [date_from, date_to] (tz-aware UTC) as
+        normalized dicts including tick_volume / spread / real_volume. Returns
+        oldest → newest and may be EMPTY (a range can legitimately have no bars,
+        or the terminal may only hold limited history) — the caller decides. No
+        orders, never writes. Raises Mt5ConnectorError only on a hard MT5 fault.
+        """
+        mt5 = self._mt5
+        tf_attr = _TIMEFRAME_ATTR.get(timeframe.upper())
+        if tf_attr is None:
+            raise Mt5ConnectorError(
+                f"Unknown timeframe '{timeframe}'. Supported: {', '.join(_TIMEFRAME_ATTR)}."
+            )
+        tf_const = getattr(mt5, tf_attr, None)
+        if tf_const is None:
+            raise Mt5ConnectorError(f"MT5 module is missing constant {tf_attr}.")
+        rates = mt5.copy_rates_range(symbol, tf_const, date_from, date_to)
+        if rates is None:
+            raise Mt5ConnectorError(
+                f"copy_rates_range returned None for {symbol} {timeframe} "
+                f"({self._last_error()})."
+            )
+        return [{
+            "time": _iso_from_epoch(_rate_field(r, "time", 0)),
+            "open": _safe_float(_rate_field(r, "open", 1)),
+            "high": _safe_float(_rate_field(r, "high", 2)),
+            "low": _safe_float(_rate_field(r, "low", 3)),
+            "close": _safe_float(_rate_field(r, "close", 4)),
+            "tick_volume": _safe_float(_rate_field(r, "tick_volume", 5)),
+            "spread": _safe_float(_rate_field(r, "spread", 6)),
+            "real_volume": _safe_float(_rate_field(r, "real_volume", 7)),
+        } for r in rates]
+
     # ── candles (fail closed: at least one bar required) ─────────────────────
     def read_candles(self, result: ProbeResult, symbol: str, timeframe: str, bars: int) -> None:
         mt5 = self._mt5

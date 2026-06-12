@@ -6,6 +6,10 @@ data/*
 data/gold_bot/*
 !data/gold_bot/*.sample.json
 !data/gold_bot/*.manual.json
+# LM84A generated historical market data — never commit (already covered by
+# data/gold_bot/* ; listed explicitly for intent).
+data/gold_bot/history/*.csv
+data/gold_bot/history/*.json
 __pycache__/
 *.pyc
 .DS_Store
