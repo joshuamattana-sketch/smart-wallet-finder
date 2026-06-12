@@ -157,8 +157,14 @@ def build_binance_aggtrade_ws_url(
     `market="spot"`    → `wss://stream.binance.com:9443/...`
     `market="futures"` → `wss://fstream.binance.com/...` (USD-M perpetuals)
 
-    One symbol   → `…/ws/{symbol}@aggTrade`
-    Many symbols → `…/stream?streams=sym1@aggTrade/sym2@aggTrade/…`
+    Spot, one symbol    → `…/ws/{symbol}@aggTrade`            (LM63B, unchanged)
+    Spot, many symbols  → `…/stream?streams=s1@aggTrade/…`
+    Futures, any count  → `…/stream?streams=s1@aggTrade/…`    (LM64C)
+
+    LM64C: USD-M futures ALWAYS uses the combined-stream endpoint. The
+    single-stream `/ws/{symbol}@aggTrade` form on fstream.binance.com
+    connects but closes without delivering any events; the combined
+    `/stream?streams=…` form is reliable for one or many symbols alike.
 
     Raises:
         ValueError: if no valid symbols are supplied, OR if `market` is not
@@ -169,7 +175,8 @@ def build_binance_aggtrade_ws_url(
     cleaned = _clean_symbols(symbols)
     if not cleaned:
         raise ValueError("at least one valid Binance symbol is required")
-    if len(cleaned) == 1:
+    is_spot = cfg is _MARKET_CONFIG["spot"]
+    if len(cleaned) == 1 and is_spot:
         return cfg["ws_single"].format(stream=f"{cleaned[0].lower()}@aggTrade")
     streams = "/".join(f"{s.lower()}@aggTrade" for s in cleaned)
     return cfg["ws_combined"].format(streams=streams)

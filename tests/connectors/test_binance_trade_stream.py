@@ -1352,8 +1352,10 @@ class TestSupabaseEnvReady:
 
 class TestFuturesUrlBuilder:
     def test_single_symbol_futures_endpoint(self):
+        # LM64C: futures always uses the combined-stream endpoint — the
+        # /ws/ single-stream form on fstream connects but delivers nothing.
         url = build_binance_aggtrade_ws_url(["BTCUSDT"], market="futures")
-        assert url == "wss://fstream.binance.com/ws/btcusdt@aggTrade"
+        assert url == "wss://fstream.binance.com/stream?streams=btcusdt@aggTrade"
 
     def test_multi_symbol_futures_combined_endpoint(self):
         url = build_binance_aggtrade_ws_url(
