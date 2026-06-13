@@ -39,6 +39,10 @@ data/gold_bot/safety/*.csv
 data/gold_bot/sessions/*.json
 data/gold_bot/sessions/*.jsonl
 data/gold_bot/sessions/*.csv
+# LM89A trade outcome feedback files — never commit.
+data/gold_bot/trade_outcomes/*.json
+data/gold_bot/trade_outcomes/*.jsonl
+data/gold_bot/trade_outcomes/*.csv
 __pycache__/
 *.pyc
 .DS_Store

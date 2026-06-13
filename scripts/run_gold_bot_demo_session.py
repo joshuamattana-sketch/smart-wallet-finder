@@ -56,6 +56,8 @@ def parse_args(argv=None):
     p.add_argument("--macro-events-file", default=None, dest="macro_events_file")
     p.add_argument("--confirm-demo-session", action="store_true", dest="confirm_demo_session",
                    help="ARM the session: allow demo orders (still gated by the worker demo flags).")
+    p.add_argument("--no-sync-outcomes", action="store_false", dest="sync_outcomes", default=True,
+                   help="Skip the post-session MT5 trade-outcome feedback sync (armed sessions only).")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
 
@@ -69,7 +71,7 @@ def main(argv=None) -> int:
         max_runtime_loss_pct=args.max_runtime_loss_pct,
         use_learning_modifiers=args.use_learning_modifiers,
         calendar_file=args.calendar_file, macro_events_file=args.macro_events_file,
-        confirm_demo_session=args.confirm_demo_session,
+        confirm_demo_session=args.confirm_demo_session, sync_outcomes=args.sync_outcomes,
     )
     result = DemoSessionRunner(cfg).run()
     if args.json_output:

@@ -1626,3 +1626,50 @@ report written; armed → supervisor blocked every attempt (`mt5_health_guard` s
 tick), **0 sent**, auto-stopped `consecutive_safety_blocks`. Tests
 `python -m pytest tests/test_gold_bot_demo_session_runner.py -q` (fake worker, no
 MT5/internet).
+
+## LM89A Trade outcome feedback loop (real demo P&L → safety + learning)
+
+`services/gold_bot_trade_outcomes.py` reads MT5 **demo** deal history for the bot's
+own trades (filtered by symbol + magic 810810), reconstructs entry/exit into
+`TradeOutcome` records (win/loss/breakeven/open, exit_reason sl|tp|manual_close|
+unknown from the exit comment), and feeds the REAL outcomes back into (a) the LM87A
+safety supervisor loss-streak state — making that guard real, not a placeholder —
+and (b) the LM86A learning journal as `demo_trade_outcome` events (the dataset for a
+later scorecard-ingestion patch). **This patch SENDS NO ORDERS and changes no
+strategy logic — it only reads history and writes local feedback files.**
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# read-only: reconstruct + print bot demo trades (writes nothing):
+python scripts/run_gold_bot_trade_outcomes_probe.py --symbol XAUUSD --magic 810810
+
+# write outcomes + learning feedback for the latest session window:
+python scripts/run_gold_bot_trade_outcomes_probe.py --session-file data/gold_bot/sessions/session_latest.json --write
+
+# explicit window / JSON:
+python scripts/run_gold_bot_trade_outcomes_probe.py --from-time 2026-06-13T00:00:00 --to-time 2026-06-13T23:59:59 --json
+```
+
+Session integration: an ARMED demo session auto-syncs outcomes after it ends
+(default on; `--no-sync-outcomes` to skip; observe sessions skip with reason
+`observe_session`). The session report gains `outcomes_synced`, `outcomes_count`,
+`outcome_wins/losses/breakeven/open`, `outcome_realized_pnl`, `outcome_file`,
+`safety_state_updated`, `outcome_sync_reason`; a `outcome_sync` JSONL event is
+appended.
+
+```powershell
+# armed demo session — syncs real outcomes into safety + learning afterwards:
+python scripts/run_gold_bot_demo_session.py --confirm-demo-session --duration-minutes 5 --max-trades 3 --risk-mode scalp --use-learning-modifiers
+# same, but skip the outcome sync:
+python scripts/run_gold_bot_demo_session.py --confirm-demo-session --duration-minutes 5 --max-trades 3 --risk-mode scalp --use-learning-modifiers --no-sync-outcomes
+```
+
+Outcome rules: pnl (net = profit+commission+swap) > +0.01 → win; < -0.01 → loss;
+else breakeven; no exit deal → open. Partial closes are aggregated with a warning.
+Generated `data/gold_bot/trade_outcomes/outcomes_<ts>.json` + `outcomes_latest.json`
++ `outcomes_events.jsonl` are gitignored; learning feedback appends to
+`data/gold_bot/learning/learning_events.jsonl`. Live-verified: probe read the real
+MetaQuotes-Demo account (5 deals scanned, 0 match magic 810810 — bot hasn't traded
+yet); synthetic 3-loss run armed the supervisor cooldown + wrote `demo_trade_outcome`
+journal rows. Tests `python -m pytest tests/test_gold_bot_trade_outcomes.py -q`
+(fake deals, no MT5/internet).

@@ -380,3 +380,32 @@ def write_scorecard(out_dir: str | Path, scorecard: dict, *, symbol: str, timefr
             "global_expectancy_points": g["expectancy_points"], "global_winrate": g["winrate"],
         }, default=str) + "\n")
     return {"named": named, "latest": latest, "preview": preview, "events": events}
+
+
+# ── LM89A: real demo-trade outcome feedback ────────────────────────────────────────
+LEARNING_EVENTS_FILE = "learning_events.jsonl"
+
+
+def append_demo_trade_outcome(outcome: Any, *, learning_dir: str | Path = DEFAULT_LEARNING_DIR,
+                              now: datetime | None = None) -> Path:
+    """
+    Append one real demo-trade outcome (a TradeOutcome, LM89A) to
+    learning_events.jsonl as a `demo_trade_outcome` event. This is the REAL-trade
+    feedback dataset for a later scorecard ingestion patch (LM89B) - it does not
+    retrain anything here. Read-only w.r.t. scorecards; append-only on the journal.
+    """
+    now = now or datetime.now(timezone.utc)
+    d = Path(learning_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    g = (lambda k: getattr(outcome, k, None))
+    row = {
+        "event": "demo_trade_outcome", "recorded_at": now.isoformat(),
+        "trade_id": g("trade_id"), "setup": g("setup"), "side": g("side"),
+        "confidence": g("confidence"), "learning_modifier": g("learning_modifier"),
+        "risk_mode": g("risk_mode"), "pnl": g("pnl"), "pnl_points": g("pnl_points"),
+        "outcome": g("outcome"), "exit_reason": g("exit_reason"),
+        "session_id": g("session_id"), "source": "mt5_demo",
+    }
+    with (d / LEARNING_EVENTS_FILE).open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, default=str) + "\n")
+    return d / LEARNING_EVENTS_FILE

@@ -61,12 +61,16 @@ class FakeWorker:
         return 0
 
 
-def _runner(cfg, tmp_path, entries, holder=None, **fwkw):
+def _runner(cfg, tmp_path, entries, holder=None, *, outcome_sync_fn=None, **fwkw):
+    # Default to a stub so a test NEVER triggers the real MT5 outcome sync.
+    outcome_sync_fn = outcome_sync_fn or (lambda **k: {"synced": False, "reason": "test_stub"})
+
     def factory(worker_cfg, hook):
         if holder is not None:
             holder["cfg"] = worker_cfg
         return FakeWorker(worker_cfg, hook, entries, **fwkw)
     return DemoSessionRunner(cfg, worker_factory=factory, sessions_dir=tmp_path,
+                             outcome_sync_fn=outcome_sync_fn,
                              now_fn=lambda: NOW, printer=lambda *_a: None)
 
 
@@ -210,7 +214,8 @@ def test_runner_never_disables_supervisor(tmp_path):
     assert not hasattr(holder["cfg"], "disable_safety_supervisor")
     src = (_REPO / "services" / "gold_bot_demo_session_runner.py").read_text(encoding="utf-8")
     assert "disable_safety_supervisor" not in src    # no off switch
-    assert "supervisor=" not in src                  # runner never overrides the worker's supervisor
+    # the worker the runner builds gets NO supervisor override -> it constructs its own always-on one
+    assert "GoldBotWorker(worker_cfg, connector=self._connector, iteration_hook=hook" in src
 
 
 def test_no_live_trading_or_network_in_sources():
@@ -260,3 +265,60 @@ def test_session_config_armed_property():
     assert DemoSessionConfig(confirm_demo_session=True).armed is True
     assert DemoSessionConfig(confirm_demo_session=True, dry_run=True).armed is False
     assert DemoSessionConfig().armed is False
+
+
+# ── LM89A: post-session outcome sync ──────────────────────────────────────────────
+def test_observe_session_skips_outcome_sync(tmp_path):
+    called = []
+
+    def sync_fn(**kw):
+        called.append(kw)
+        return {"synced": True}
+
+    cfg = DemoSessionConfig(max_iterations=1, duration_minutes=600)   # not armed
+    r = _runner(cfg, tmp_path, [_entry()], outcome_sync_fn=sync_fn).run()
+    assert called == []                                              # never invoked in observe
+    assert r.report["outcomes_synced"] is False
+    assert r.report["outcome_sync_reason"] == "observe_session"
+
+
+def test_armed_session_records_outcome_summary(tmp_path):
+    captured = {}
+
+    def sync_fn(*, session_id, from_time, to_time):
+        captured["session_id"] = session_id
+        return {"synced": True, "outcomes_count": 2, "wins": 1, "losses": 1, "breakeven": 0,
+                "open": 0, "realized_pnl": 20.0, "outcome_file": "outcomes_x.json",
+                "safety_state_updated": True, "reason": "ok", "warnings": []}
+
+    cfg = DemoSessionConfig(max_iterations=1, duration_minutes=600, confirm_demo_session=True)
+    r = _runner(cfg, tmp_path, [_entry(decision="LONG", status="demo_order_sent")],
+                outcome_sync_fn=sync_fn).run()
+    rep = r.report
+    assert rep["outcomes_synced"] is True and rep["outcomes_count"] == 2
+    assert rep["outcome_wins"] == 1 and rep["outcome_losses"] == 1
+    assert rep["outcome_realized_pnl"] == 20.0 and rep["safety_state_updated"] is True
+    assert rep["outcome_file"] == "outcomes_x.json"
+    assert captured["session_id"] == rep["session_id"]
+    events = [json.loads(x) for x in r.events_path.read_text().strip().splitlines()]
+    assert any(e["event"] == "outcome_sync" for e in events)
+
+
+def test_no_sync_outcomes_flag_skips(tmp_path):
+    called = []
+    cfg = DemoSessionConfig(max_iterations=1, duration_minutes=600,
+                            confirm_demo_session=True, sync_outcomes=False)
+    r = _runner(cfg, tmp_path, [_entry()], outcome_sync_fn=lambda **k: called.append(k)).run()
+    assert called == []
+    assert r.report["outcomes_synced"] is False
+    assert r.report["outcome_sync_reason"] == "sync_outcomes_disabled"
+
+
+def test_outcome_sync_error_is_safe(tmp_path):
+    def boom(**kw):
+        raise RuntimeError("mt5 down")
+
+    cfg = DemoSessionConfig(max_iterations=1, duration_minutes=600, confirm_demo_session=True)
+    r = _runner(cfg, tmp_path, [_entry()], outcome_sync_fn=boom).run()
+    assert r.report["outcomes_synced"] is False
+    assert "sync_error" in r.report["outcome_sync_reason"]

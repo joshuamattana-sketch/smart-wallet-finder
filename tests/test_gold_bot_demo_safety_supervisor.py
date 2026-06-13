@@ -285,3 +285,56 @@ def test_supervisor_source_has_no_mt5_orders_or_http():
     src = (_REPO / "services" / "gold_bot_demo_safety_supervisor.py").read_text(encoding="utf-8")
     for forbidden in ("MetaTrader5", ".order_send(", "import requests", "urllib", "socket("):
         assert forbidden not in src
+
+
+# ── LM89A: real trade-outcome loss streak ───────────────────────────────────────
+class _Outcome:
+    def __init__(self, outcome):
+        self.outcome = outcome
+
+
+def test_record_trade_result_loss_increments_via_outcome(tmp_path):
+    sup = _sup(tmp_path)
+    sup.record_trade_result(_Outcome("loss"), now=NOW)
+    sup.record_trade_result("loss", now=NOW)            # string also accepted
+    assert sup.load_state()["consecutive_losses"] == 2
+
+
+def test_record_trade_result_win_resets(tmp_path):
+    sup = _sup(tmp_path)
+    sup.record_trade_result("loss", now=NOW)
+    sup.record_trade_result("loss", now=NOW)
+    sup.record_trade_result(_Outcome("win"), now=NOW)
+    assert sup.load_state()["consecutive_losses"] == 0
+
+
+def test_record_trade_result_breakeven_reduces(tmp_path):
+    sup = _sup(tmp_path)
+    sup.save_state({"recent_trades": [], "last_trade_at": None, "consecutive_losses": 2,
+                    "cooldown_until": None}, now=NOW)
+    sup.record_trade_result("breakeven", now=NOW)
+    assert sup.load_state()["consecutive_losses"] == 1
+
+
+def test_record_trade_result_open_is_noop(tmp_path):
+    sup = _sup(tmp_path)
+    sup.save_state({"recent_trades": [], "last_trade_at": None, "consecutive_losses": 1,
+                    "cooldown_until": None}, now=NOW)
+    sup.record_trade_result(_Outcome("open"), now=NOW)
+    assert sup.load_state()["consecutive_losses"] == 1     # unchanged
+
+
+def test_record_trade_result_arms_cooldown_after_max_losses(tmp_path):
+    sup = _sup(tmp_path, SupervisorConfig(max_consecutive_losses=3,
+                                          cooldown_minutes_after_loss_streak=30))
+    for _ in range(3):
+        sup.record_trade_result("loss", now=NOW)
+    state = sup.load_state()
+    assert state["consecutive_losses"] == 3
+    assert state["cooldown_until"] is not None
+    # the loss-streak now actively blocks execution
+    dec = sup.evaluate_execution(_ctx())
+    assert dec.allowed is False and dec.reason == "loss_streak_cooldown"
+    # and a safety event was written
+    events = [json.loads(l) for l in (tmp_path / "safety_events.jsonl").read_text().strip().splitlines()]
+    assert any(e.get("context") == "loss_streak_from_outcomes" for e in events)

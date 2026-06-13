@@ -336,14 +336,50 @@ class DemoSafetySupervisor:
         state["last_trade_at"] = now.isoformat()
         self.save_state(state, now=now)
 
-    def record_trade_result(self, *, won: bool, now: datetime | None = None) -> dict:
+    @staticmethod
+    def _result_label(outcome: Any, won: bool | None) -> str:
+        """Map a TradeOutcome / str / legacy `won` bool to win|loss|breakeven|skip."""
+        if won is not None:
+            return "win" if won else "loss"
+        if outcome is None:
+            return "skip"
+        s = (outcome if isinstance(outcome, str) else getattr(outcome, "outcome", "")).lower()
+        return s if s in ("win", "loss", "breakeven") else "skip"
+
+    def record_trade_result(self, outcome: Any = None, *, won: bool | None = None,
+                            now: datetime | None = None) -> dict:
         """
-        Update the consecutive-loss counter from a known outcome. Worker V1 does
-        not have per-trade outcomes inline (placeholder); history/replay wiring can
-        call this later. Returns the updated state.
+        LM89A: update the consecutive-loss counter from a REAL trade outcome (a
+        TradeOutcome, an outcome string, or the legacy `won` bool). A loss that
+        reaches max_consecutive_losses arms the cooldown + writes a safety event;
+        a win resets the streak; a breakeven reduces it by one. open/unknown ->
+        no change. Persists to safety_state.json. Returns the updated state.
         """
         now = now or datetime.now(timezone.utc)
+        label = self._result_label(outcome, won)
         state = self.load_state()
-        state["consecutive_losses"] = 0 if won else int(state.get("consecutive_losses", 0)) + 1
+        n = int(state.get("consecutive_losses", 0))
+        if label == "loss":
+            n += 1
+        elif label == "win":
+            n = 0
+        elif label == "breakeven":
+            n = max(0, n - 1)
+        else:
+            return state                       # open / unknown -> no change
+        state["consecutive_losses"] = n
+
+        cooldown_started = False
+        if label == "loss" and n >= self.config.max_consecutive_losses:
+            until = (now + timedelta(minutes=self.config.cooldown_minutes_after_loss_streak)).isoformat()
+            state["cooldown_until"] = until
+            cooldown_started = True
         self.save_state(state, now=now)
+        if cooldown_started:
+            self.record_event(
+                SafetyDecision(False, BLOCK, "loss_streak_cooldown",
+                               details={"consecutive_losses": n, "source": "trade_outcome"},
+                               cooldown_until=state["cooldown_until"],
+                               actions=[BLOCK_EXECUTION, PAUSE_DEMO]),
+                now=now, context="loss_streak_from_outcomes")
         return state

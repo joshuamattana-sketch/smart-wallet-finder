@@ -65,6 +65,7 @@ class DemoSessionConfig:
     macro_events_file: str | None = None
     dry_run: bool = False
     confirm_demo_session: bool = False
+    sync_outcomes: bool = True          # LM89A: post-session MT5 outcome feedback (armed only)
 
     @property
     def armed(self) -> bool:
@@ -92,11 +93,13 @@ class DemoSessionRunner:
     def __init__(self, cfg: DemoSessionConfig, *,
                  worker_factory: Callable[[WorkerConfig, Callable[[dict], str | None]], Any] | None = None,
                  connector: Any | None = None, sessions_dir: Path | str = DEFAULT_SESSIONS_DIR,
+                 outcome_sync_fn: Callable[..., dict] | None = None,
                  now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  printer: Callable[[str], None] = print) -> None:
         self.cfg = cfg
         self._worker_factory = worker_factory
         self._connector = connector
+        self._outcome_sync_fn = outcome_sync_fn
         self.sessions_dir = Path(sessions_dir)
         self._now = now_fn
         self._print = printer
@@ -151,9 +154,11 @@ class DemoSessionRunner:
         stop_reason = (self._stop_reason or getattr(worker, "stop_reason", None)
                        or ("max_iterations_reached" if worker_cfg.max_iterations else "session_complete"))
         report = self._build_report(worker, worker_cfg, started, ended, stop_reason)
+        self._apply_outcome_sync(report, started, ended)      # LM89A post-session feedback
         self._emit("session_stop", {"stop_reason": stop_reason,
                                     "iterations": self._agg["iterations"],
-                                    "orders_sent": self._agg["orders_sent"]})
+                                    "orders_sent": self._agg["orders_sent"],
+                                    "outcomes_synced": report.get("outcomes_synced")})
         if self._events_fh is not None:
             self._events_fh.close()
             self._events_fh = None
@@ -318,6 +323,61 @@ class DemoSessionRunner:
             "generated_at": self._now().isoformat(),
         }
 
+    # ── LM89A: post-session trade outcome sync ───────────────────────────────────
+    def _apply_outcome_sync(self, report: dict, started: datetime, ended: datetime) -> None:
+        """
+        After an ARMED demo session, read real MT5 demo deal history for the bot's
+        trades and feed outcomes into the supervisor + learning journal. Observe /
+        unconfirmed sessions skip with a reason. Never sends orders; never raises.
+        """
+        defaults = {"outcomes_synced": False, "outcomes_count": 0, "outcome_wins": 0,
+                    "outcome_losses": 0, "outcome_breakeven": 0, "outcome_open": 0,
+                    "outcome_realized_pnl": None, "outcome_file": None,
+                    "safety_state_updated": False, "outcome_sync_reason": None}
+        if not self.cfg.armed:
+            defaults["outcome_sync_reason"] = "observe_session"
+            report.update(defaults)
+            return
+        if not self.cfg.sync_outcomes:
+            defaults["outcome_sync_reason"] = "sync_outcomes_disabled"
+            report.update(defaults)
+            return
+
+        from datetime import timedelta
+        buf = timedelta(minutes=5)
+        try:
+            sync_fn = self._outcome_sync_fn or self._default_outcome_sync
+            res = sync_fn(session_id=self._session_id, from_time=started - buf,
+                          to_time=ended + buf) or {}
+        except Exception as exc:                  # noqa: BLE001 - feedback must not break the session
+            defaults["outcome_sync_reason"] = f"sync_error: {exc}"
+            report.update(defaults)
+            return
+
+        report.update({
+            "outcomes_synced": bool(res.get("synced")),
+            "outcomes_count": res.get("outcomes_count", 0),
+            "outcome_wins": res.get("wins", 0), "outcome_losses": res.get("losses", 0),
+            "outcome_breakeven": res.get("breakeven", 0), "outcome_open": res.get("open", 0),
+            "outcome_realized_pnl": res.get("realized_pnl"),
+            "outcome_file": res.get("outcome_file"),
+            "safety_state_updated": bool(res.get("safety_state_updated")),
+            "outcome_sync_reason": res.get("reason"),
+        })
+        report["warnings"] = list(report.get("warnings", [])) + list(res.get("warnings", []))
+        self._emit("outcome_sync", {k: report[k] for k in (
+            "outcomes_synced", "outcomes_count", "outcome_wins", "outcome_losses",
+            "outcome_breakeven", "outcome_open", "outcome_realized_pnl",
+            "safety_state_updated", "outcome_sync_reason")})
+
+    def _default_outcome_sync(self, *, session_id, from_time, to_time) -> dict:
+        from services.gold_bot_demo_safety_supervisor import DemoSafetySupervisor
+        from services.gold_bot_trade_outcomes import DEFAULT_MAGIC, sync_session_outcomes
+        return sync_session_outcomes(
+            symbol=self.cfg.symbol, magic=DEFAULT_MAGIC, session_id=session_id,
+            from_time=from_time, to_time=to_time, connector=self._connector,
+            supervisor=DemoSafetySupervisor(), write=True, now=self._now())
+
     # ── output ──────────────────────────────────────────────────────────────────
     def _emit(self, event: str, data: dict) -> None:
         if self._events_fh is None:
@@ -358,6 +418,13 @@ class DemoSessionRunner:
                     f"   blocked_by_safety {d['blocked_by_safety_count']} {d['blocked_reasons'] or ''}")
         self._print(f" equity       : start {d['starting_equity']}  end {d['ending_equity']}  "
                     f"realized {d['realized_pnl']}  runtime_loss {d['runtime_loss_pct']}%")
+        if d.get("outcomes_synced"):
+            self._print(f" outcomes     : synced {d['outcomes_count']}  "
+                        f"W {d['outcome_wins']}/L {d['outcome_losses']}/BE {d['outcome_breakeven']}/"
+                        f"open {d['outcome_open']}  realized {d['outcome_realized_pnl']}  "
+                        f"safety_state_updated {d['safety_state_updated']}")
+        else:
+            self._print(f" outcomes     : not synced ({d.get('outcome_sync_reason')})")
         for w in d["warnings"]:
             self._print(f"   warning - {w}")
         self._print(f" report       : {report_path}")
