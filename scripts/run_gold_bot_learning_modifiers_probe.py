@@ -79,20 +79,22 @@ def main(argv=None) -> int:
     for w in warnings + active_warn:
         print(f"   warning - {w}")
 
-    print("\n Evaluated (from preview):")
+    print("\n Evaluated (candidate modifiers from the scorecard preview - NOT active unless promoted):")
     for setup, m in sorted(evaluated.items()):
         flag = "ACCEPT" if m.status == ACTIVE else m.status.upper()
+        suffix = "" if args.promote else "  (preview only - not active unless promoted)"
         print(f"   [{flag:^18}] {setup:<22} mod {m.confidence_modifier:+d}  "
-              f"samples {m.sample_count}  {m.reason}")
+              f"samples {m.sample_count}  {m.reason}{suffix}")
 
     if not args.promote:
         if active_now:
-            print("\n Currently ACTIVE demo modifiers (on disk):")
+            print("\n Currently ACTIVE demo modifiers (what decisions use, only with --use-learning-modifiers):")
             for s, e in sorted(active_now.items()):
                 print(f"   {s:<22} {e['confidence_modifier']:+d}")
         else:
             print("\n No active_demo_modifiers.json yet - run with --promote to create it.")
-        print("\n Preview only - nothing written. (use --promote to activate, demo-only).")
+        print("\n Preview only - candidates above are NOT active unless promoted "
+              "(use --promote to activate, demo-only). Live trading stays locked.")
         return 0
 
     print(f"\n Promoted {payload['active_count']} active modifier(s) -> "

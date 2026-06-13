@@ -396,7 +396,8 @@ def render_markdown(review: SessionReview) -> str:
           _row("Scorecard status", learn.get("scorecard_status")),
           _row("Active modifiers", learn.get("active_modifiers") or "-"),
           _row("Latest cycle", f"{learn.get('latest_cycle_event')} - {learn.get('latest_cycle_reason')}"),
-          _row("Real demo used", f"{learn.get('real_trades_used')} ({learn.get('real_trade_count')} trades)"),
+          _row("Real demo outcomes", f"{learn.get('real_trade_count') or 0} trades"
+               + ("; replay-dominant" if not learn.get('real_trade_count') else "; included in learning")),
           _row("Setup status", learn.get("setup_status_breakdown")),
           ""]
     L += ["## Key Findings", ""] + ([f"- {x}" for x in review.key_findings] or ["- (none)"]) + [""]

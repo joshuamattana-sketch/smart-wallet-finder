@@ -2,8 +2,10 @@
 scripts/run_gold_bot_learning_scorecard.py
 --------------------------------------------
 LM86A - Build a learning scorecard from replay JSONL (LM85A). READ-ONLY, OFFLINE:
-no MT5, no orders, no HTTP. Produces explainable setup scorecards; any modifier
-output is a PREVIEW ONLY and is NOT wired into live decisions.
+no MT5, no orders, no HTTP. Produces explainable setup scorecards; the modifier
+output (setup_modifiers.preview.json) is a PREVIEW ONLY and is not active. Active
+modifiers live in active_demo_modifiers.json and apply only with
+--use-learning-modifiers. Live trading stays locked.
 
 Run from repo root (needs replay output first - see LM85A):
     python scripts/run_gold_bot_learning_scorecard.py --dry-run
@@ -161,9 +163,21 @@ def main(argv=None) -> int:
 
     print(f"\n output       : {paths['named']}")
     print(f"                {paths['latest']}")
-    print(f"                {paths['preview']}  (PREVIEW ONLY - not used by live decisions)")
-    print(" live impact  : NONE. Learning modifiers are not wired into the decision engine "
-          "or worker (owner-approved gate is a later patch).")
+    print(f"                {paths['preview']}")
+
+    rg = scorecard.get("real_global") or {}
+    real_count = rg.get("trade_count") or 0
+    print("\n Impact:")
+    print("   scorecard         : read-only preview")
+    print("   preview modifiers : written to setup_modifiers.preview.json, not active")
+    print("   active modifiers  : read from active_demo_modifiers.json")
+    print("   decision impact   : active modifiers apply only when --use-learning-modifiers is passed")
+    if real_count > 0:
+        print(f"   real demo         : {real_count} trades included with weight "
+              f"{scorecard.get('real_trade_weight')}")
+    else:
+        print("   real demo         : 0 trades - learning is replay-dominant")
+    print("   live trading      : locked")
     return 0
 
 

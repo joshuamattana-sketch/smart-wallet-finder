@@ -9,9 +9,10 @@ buckets, direction / timeframe / risk-mode / session / macro slices, and a
 NO_TRADE missed-opportunity analysis.
 
 STRICTLY OFFLINE + READ-ONLY: reads local replay JSONL only. NO MT5, NO orders,
-NO network. It produces a `setup_modifiers.preview.json` but that is a PREVIEW
-ONLY - it is deliberately NOT wired into the decision engine or worker. Live
-trading behavior is unchanged until a future owner-approved gate enables it.
+NO network. It produces a `setup_modifiers.preview.json` that is a PREVIEW ONLY -
+the preview file is never read by the decision engine. Decisions use the ACTIVE
+modifiers in `active_demo_modifiers.json` (separate, promoted explicitly) and only
+when --use-learning-modifiers is passed. Live trading stays locked either way.
 """
 
 from __future__ import annotations
