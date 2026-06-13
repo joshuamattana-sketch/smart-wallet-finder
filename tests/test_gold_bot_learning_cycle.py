@@ -289,3 +289,32 @@ def test_cli_args_parse_overrides():
     assert args.horizon == 30
     assert args.min_improvement_points == 25.0
     assert args.rollback is True and args.dry_run is True
+
+
+# ── LM89B: cycle includes real demo trades ──────────────────────────────────────────
+def test_cycle_includes_real_trades(tmp_path):
+    ldir = tmp_path / "learning"
+    ldir.mkdir(parents=True)
+    (ldir / "learning_events.jsonl").write_text("\n".join(json.dumps({
+        "event": "demo_trade_outcome", "source": "mt5_demo", "trade_id": i, "setup": "momentum",
+        "outcome": "loss", "pnl": -10.0, "pnl_points": -10.0, "risk_mode": "balanced"})
+        for i in range(4)), encoding="utf-8")
+
+    def rr(*, use_learning, modifiers_file):
+        return WORSE if use_learning else BASELINE
+
+    def sr():
+        (ldir / "setup_modifiers.preview.json").write_text(json.dumps(_PREVIEW), encoding="utf-8")
+
+    r = run_cycle(learning_dir=ldir, replay_out_dir=tmp_path / "replay", replay_runner=rr,
+                  scorecard_runner=sr, now=NOW, include_real_trades=True, real_trade_weight=2.0,
+                  min_real_trades=1)
+    assert r.real_trades_used is True
+    assert r.real_trade_count == 4 and r.real_trade_weight == 2.0
+    summ = json.loads(Path(r.cycle_summary_path).read_text())
+    assert summ["real_trades_used"] is True and summ["real_trade_count"] == 4
+
+
+def test_cycle_default_no_real_trades(tmp_path):
+    r, _ldir = _run(tmp_path, BASELINE, WORSE)
+    assert r.real_trades_used is False and r.real_trade_count == 0

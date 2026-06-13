@@ -43,6 +43,11 @@ data/gold_bot/sessions/*.csv
 data/gold_bot/trade_outcomes/*.json
 data/gold_bot/trade_outcomes/*.jsonl
 data/gold_bot/trade_outcomes/*.csv
+# LM89B real-trade learning blend outputs (already covered by data/gold_bot/* ;
+# listed explicitly for intent) — never commit.
+data/gold_bot/learning/real_trade_*.json
+data/gold_bot/learning/real_trade_*.jsonl
+data/gold_bot/learning/real_trade_*.csv
 __pycache__/
 *.pyc
 .DS_Store

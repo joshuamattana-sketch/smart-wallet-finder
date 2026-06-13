@@ -1673,3 +1673,46 @@ MetaQuotes-Demo account (5 deals scanned, 0 match magic 810810 — bot hasn't tr
 yet); synthetic 3-loss run armed the supervisor cooldown + wrote `demo_trade_outcome`
 journal rows. Tests `python -m pytest tests/test_gold_bot_trade_outcomes.py -q`
 (fake deals, no MT5/internet).
+
+## LM89B Real-trade learning ingestion (blend replay + real demo P&L)
+
+The learning system now READS the LM89A `demo_trade_outcome` events from
+`learning_events.jsonl` and blends real demo fills into the scorecard / learning
+cycle. Replay stays the base signal; real demo outcomes carry a higher weight
+(they include actual execution/spread/slippage) but **cannot dominate a small
+sample**. Learning stays demo-only + confidence-only — no volume/lot change, no
+orders, no live trading.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# inspect the real demo-trade dataset (read-only; safe with no data yet):
+python scripts/run_gold_bot_real_trade_learning_probe.py
+python scripts/run_gold_bot_real_trade_learning_probe.py --min-real-trades 5 --json
+
+# scorecard blending replay + real demo:
+python scripts/run_gold_bot_learning_scorecard.py --horizon 15 --min-samples 10 --include-real-trades --real-trade-weight 2.0 --min-real-trades 5
+
+# learning cycle blending real demo (default OFF; enable once demo sessions have trades):
+python scripts/run_gold_bot_learning_cycle.py --timeframe M1 --risk-mode balanced --max-bars 500 --horizon 15 --min-samples 10 --include-real-trades --real-trade-weight 2.0
+```
+
+Weighting:
+`combined = (replay_exp*replay_n + real_avg_pts*real_n*weight) / (replay_n + real_n*weight)`.
+With `weight 2.0`, 8 demo trades count as 16 vs a 445-trade replay sample — real
+demo nudges, doesn't flip. Below `--min-real-trades` (default 5) a setup is marked
+`insufficient` and a contradiction with replay adds a reason warning.
+
+Scorecard / preview gain per setup: `replay_trade_count`, `real_trade_count`,
+`real_avg_pnl[_points]`, `combined_expectancy`, `combined_winrate`,
+`real_sample_quality`, `recommended_status_combined`. Modifier reasons read e.g.
+`"combined replay+demo: replay exp -45.0pt over 607, demo exp -3.4pt over 7,
+combined -44.06pt"`. Cycle summary gains `real_trades_used` / `real_trade_count` /
+`real_trade_weight`.
+
+Generated (gitignored): `data/gold_bot/learning/real_trade_scorecard_latest.json`,
+`real_trade_learning_summary.json`, `real_trade_learning_events.jsonl`. Duplicates
+(by trade_id) and open/unknown outcomes are ignored (use `--include-open` to keep
+open). Live-verified: probe is safe with no demo outcomes (prints a hint, exits 0);
+scorecard blended real replay (fvg_retest 607) with 7 synthetic demo trades →
+combined -44.06pt; tests `python -m pytest tests/test_gold_bot_real_trade_learning.py -q`
+(fake events, no MT5/internet).

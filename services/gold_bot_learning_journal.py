@@ -271,7 +271,8 @@ def _group(rows: Iterable[dict], keyfn: Callable[[dict], str], *, primary_h: int
 # ── scorecard build ──────────────────────────────────────────────────────────────
 def build_scorecard(rows: list[dict], *, horizon: int = 15, min_samples: int = 20,
                     missed_threshold: float = 150.0, top: int = 10,
-                    warnings: list[str] | None = None) -> dict:
+                    warnings: list[str] | None = None, real_stats: dict | None = None,
+                    real_trade_weight: float = 2.0) -> dict:
     glob = _Acc()
     for r in rows:
         glob.add(r, missed_threshold)
@@ -300,7 +301,7 @@ def build_scorecard(rows: list[dict], *, horizon: int = 15, min_samples: int = 2
     weak_avoid = [s for s, v in by_setup.items()
                   if v["recommended_status"] in ("weak", "avoid")]
 
-    return {
+    scorecard = {
         "horizon": horizon, "min_samples": min_samples,
         "missed_move_threshold_points": missed_threshold,
         "rows": len(rows),
@@ -318,6 +319,9 @@ def build_scorecard(rows: list[dict], *, horizon: int = 15, min_samples: int = 2
         "warnings": list(warnings or []),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if real_stats is not None:
+        merge_real_into_scorecard(scorecard, real_stats, real_trade_weight=real_trade_weight)
+    return scorecard
 
 
 def build_setup_modifiers_preview(scorecard: dict, *, source_scorecard: str | None = None) -> dict:
@@ -332,23 +336,52 @@ def build_setup_modifiers_preview(scorecard: dict, *, source_scorecard: str | No
         "_note": "PREVIEW - promote to active_demo_modifiers.json (demo-only) before use; "
                  "not read by live decisions.",
     }
+    use_combined = bool(scorecard.get("include_real_trades"))
     for setup, v in scorecard.get("by_setup", {}).items():
-        status = v["recommended_status"]
-        if status not in _STATUS_MODIFIER:
-            continue
-        preview[setup] = {
-            "setup": setup,
-            "confidence_modifier": _STATUS_MODIFIER[status],
-            "status": status,
-            "sample_count": v["trade_count"],
-            "expectancy_points": v["expectancy_points"],
-            "winrate": v["winrate"],
-            "horizon": horizon,
-            "source_scorecard": source_scorecard,
-            "reason": f"{status}: expectancy {v['expectancy_points']}pt at horizon "
-                      f"{horizon} over {v['trade_count']} samples",
-        }
+        if use_combined and "recommended_status_combined" in v:
+            entry = _combined_preview_entry(setup, v, horizon, source_scorecard)
+        else:
+            status = v["recommended_status"]
+            if status not in _STATUS_MODIFIER:
+                continue
+            entry = {
+                "setup": setup, "confidence_modifier": _STATUS_MODIFIER[status], "status": status,
+                "sample_count": v["trade_count"], "expectancy_points": v["expectancy_points"],
+                "winrate": v["winrate"], "horizon": horizon, "source_scorecard": source_scorecard,
+                "reason": f"{status}: expectancy {v['expectancy_points']}pt at horizon "
+                          f"{horizon} over {v['trade_count']} samples",
+            }
+        if entry is not None:
+            preview[setup] = entry
     return preview
+
+
+def _combined_preview_entry(setup: str, v: dict, horizon, source_scorecard) -> dict | None:
+    """LM89B preview entry using combined replay+demo metrics, with a real-evidence reason."""
+    status = v["recommended_status_combined"]
+    if status not in _STATUS_MODIFIER:
+        return None
+    rep_n, real_n = v.get("replay_trade_count", 0), v.get("real_trade_count", 0)
+    rep_exp, real_pts = v.get("expectancy_points"), v.get("real_avg_pnl_points")
+    combined = v.get("combined_expectancy")
+    if real_n:
+        reason = (f"combined replay+demo: replay exp {rep_exp}pt over {rep_n}, "
+                  f"demo exp {real_pts}pt over {real_n}, combined {combined}pt")
+    else:
+        reason = (f"{status}: combined {combined}pt over {rep_n} replay (no demo trades yet)")
+    if v.get("real_contradicts_replay") and v.get("real_sample_quality") == "insufficient":
+        reason += " | warning: real demo contradicts replay - sample small"
+    return {
+        "setup": setup, "confidence_modifier": _STATUS_MODIFIER[status], "status": status,
+        "sample_count": rep_n + real_n, "expectancy_points": combined,
+        "winrate": v.get("combined_winrate"), "horizon": horizon,
+        "source_scorecard": source_scorecard,
+        "replay_trade_count": rep_n, "real_trade_count": real_n,
+        "real_avg_pnl": v.get("real_avg_pnl"), "real_avg_pnl_points": real_pts,
+        "real_sample_quality": v.get("real_sample_quality"),
+        "real_trade_weight": v.get("real_trade_weight"),
+        "reason": reason,
+    }
 
 
 # ── output ────────────────────────────────────────────────────────────────────────
@@ -409,3 +442,235 @@ def append_demo_trade_outcome(outcome: Any, *, learning_dir: str | Path = DEFAUL
     with (d / LEARNING_EVENTS_FILE).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, default=str) + "\n")
     return d / LEARNING_EVENTS_FILE
+
+
+# ── LM89B: real demo-trade ingestion (read demo_trade_outcome -> stats -> blend) ────
+DEMO_OUTCOME_EVENT = "demo_trade_outcome"
+DEMO_OUTCOME_SOURCE = "mt5_demo"
+DEFAULT_MIN_REAL_TRADES = 5
+DEFAULT_REAL_TRADE_WEIGHT = 2.0
+_CLOSED = ("win", "loss", "breakeven")
+
+
+def default_events_file(learning_dir: str | Path = DEFAULT_LEARNING_DIR) -> Path:
+    return Path(learning_dir) / LEARNING_EVENTS_FILE
+
+
+def load_demo_trade_outcomes(events_file: str | Path = None, *, learning_dir: str | Path = DEFAULT_LEARNING_DIR,
+                             include_open: bool = False) -> tuple[list[dict], list[str], int]:
+    """
+    Read `demo_trade_outcome` rows (LM89A) from learning_events.jsonl. Returns
+    (outcomes, warnings, duplicates_ignored). Filters to source mt5_demo, dedups by
+    trade_id, and skips open/unknown unless include_open. Tolerates bad lines.
+    """
+    p = Path(events_file) if events_file else default_events_file(learning_dir)
+    if not p.exists():
+        return [], [f"no learning events file: {p}"], 0
+    seen: set = set()
+    out: list[dict] = []
+    warnings: list[str] = []
+    duplicates = 0
+    for ln, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            warnings.append(f"{p.name}:{ln} bad JSON - skipped.")
+            continue
+        if row.get("event") != DEMO_OUTCOME_EVENT:
+            continue
+        if row.get("source") not in (DEMO_OUTCOME_SOURCE, None):
+            continue
+        outcome = (row.get("outcome") or "unknown")
+        if outcome not in _CLOSED and not include_open:
+            continue
+        tid = row.get("trade_id")
+        if tid is not None and tid in seen:
+            duplicates += 1
+            continue
+        if tid is not None:
+            seen.add(tid)
+        out.append({
+            "trade_id": tid, "setup": row.get("setup") or "unknown",
+            "side": row.get("side"), "confidence": _to_num(row.get("confidence")),
+            "learning_modifier": row.get("learning_modifier"),
+            "risk_mode": row.get("risk_mode") or "unknown",
+            "pnl": _to_num(row.get("pnl")), "pnl_points": _to_num(row.get("pnl_points")),
+            "outcome": outcome, "exit_reason": row.get("exit_reason"),
+            "session_id": row.get("session_id"),
+            "_tkey": row.get("exit_time") or row.get("recorded_at") or row.get("timestamp") or "",
+        })
+    return out, warnings, duplicates
+
+
+def _real_quality(n: int, min_real: int) -> str:
+    if n < min_real:
+        return "insufficient"
+    if n >= max(min_real * 4, 20):
+        return "strong"
+    return "usable"
+
+
+class _RealAcc:
+    """Aggregates real demo outcomes for one group (setup / risk / side / bucket)."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def add(self, o: dict) -> None:
+        self.rows.append(o)
+
+    def summary(self, min_real: int) -> dict:
+        rows = sorted(self.rows, key=lambda r: r.get("_tkey") or "")
+        n = len(rows)
+        wins = sum(r["outcome"] == "win" for r in rows)
+        losses = sum(r["outcome"] == "loss" for r in rows)
+        be = sum(r["outcome"] == "breakeven" for r in rows)
+        pnls = [r["pnl"] for r in rows if r["pnl"] is not None]
+        pts = [r["pnl_points"] for r in rows if r["pnl_points"] is not None]
+        confs = [r["confidence"] for r in rows if r["confidence"] is not None]
+        cur = mx = 0
+        for r in rows:
+            if r["outcome"] == "loss":
+                cur += 1
+                mx = max(mx, cur)
+            elif r["outcome"] == "win":
+                cur = 0
+        return {
+            "trade_count": n, "win_count": wins, "loss_count": losses, "breakeven_count": be,
+            "winrate": round(wins / (wins + losses), 3) if (wins + losses) else None,
+            "realized_pnl": round(sum(pnls), 2) if pnls else 0.0,
+            "avg_pnl": round(sum(pnls) / len(pnls), 2) if pnls else None,
+            "avg_pnl_points": round(sum(pts) / len(pts), 1) if pts else None,
+            "avg_confidence": round(sum(confs) / len(confs), 1) if confs else None,
+            "loss_streak_max": mx,
+            "last_trade_time": rows[-1]["_tkey"] if rows else None,
+            "sample_quality": _real_quality(n, min_real),
+        }
+
+
+def _real_group(outcomes: list[dict], keyfn, *, min_real: int) -> dict:
+    accs: dict[str, _RealAcc] = {}
+    for o in outcomes:
+        accs.setdefault(str(keyfn(o)), _RealAcc()).add(o)
+    return {k: accs[k].summary(min_real) for k in sorted(accs)}
+
+
+def build_real_trade_stats(outcomes: list[dict], *, min_real_trades: int = DEFAULT_MIN_REAL_TRADES,
+                           duplicates_ignored: int = 0, warnings: list[str] | None = None) -> dict:
+    """Aggregate real demo outcomes globally + by setup / risk_mode / side / confidence bucket."""
+    glob = _RealAcc()
+    for o in outcomes:
+        glob.add(o)
+    return {
+        "min_real_trades": min_real_trades,
+        "count": len(outcomes),
+        "duplicates_ignored": duplicates_ignored,
+        "global": glob.summary(min_real_trades),
+        "by_setup": _real_group(outcomes, lambda o: o["setup"], min_real=min_real_trades),
+        "by_risk_mode": _real_group(outcomes, lambda o: o["risk_mode"], min_real=min_real_trades),
+        "by_side": _real_group(outcomes, lambda o: o["side"] or "unknown", min_real=min_real_trades),
+        "by_confidence_bucket": _real_group(outcomes, lambda o: _conf_bucket(o["confidence"]),
+                                            min_real=min_real_trades),
+        "warnings": list(warnings or []),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _blend(replay_val: float | None, replay_n: int, real_val: float | None, real_n: int,
+           weight: float) -> float | None:
+    """Sample-weighted blend; real outcomes carry `weight`x their count (still can't dominate
+    a much larger replay sample). Returns None only when neither side has a value."""
+    rn, xn = max(0, replay_n or 0), max(0, real_n or 0)
+    eff = xn * weight
+    if replay_val is None and real_val is None:
+        return None
+    den = rn + eff
+    if den <= 0:
+        return None
+    num = (replay_val or 0.0) * rn + (real_val or 0.0) * eff
+    return round(num / den, 3)
+
+
+def merge_real_into_scorecard(scorecard: dict, real_stats: dict, *,
+                              real_trade_weight: float = DEFAULT_REAL_TRADE_WEIGHT) -> dict:
+    """
+    Fold real demo stats into each setup of an existing replay scorecard, adding
+    combined_expectancy / combined_winrate / recommended_status_combined etc. The
+    replay signal stays the base; real demo is weighted higher (execution-real) but
+    can't dominate a tiny sample. Returns the same scorecard (mutated + returned).
+    """
+    real_by_setup = real_stats.get("by_setup", {})
+    min_samples = scorecard.get("min_samples", 20)
+    for setup, v in scorecard.get("by_setup", {}).items():
+        rep_n = v.get("trade_count", 0)
+        rep_exp = v.get("expectancy_points")
+        rep_wr = v.get("winrate")
+        rs = real_by_setup.get(setup, {})
+        real_n = rs.get("trade_count", 0)
+        real_pts = rs.get("avg_pnl_points")
+        real_wr = rs.get("winrate")
+        combined_exp = _blend(rep_exp, rep_n, real_pts, real_n, real_trade_weight)
+        combined_wr = _blend(rep_wr, rep_n, real_wr, real_n, real_trade_weight)
+        combined_n = rep_n + real_n
+        contradicts = (rep_exp is not None and real_pts is not None
+                       and (rep_exp >= 0) != (real_pts >= 0))
+        v.update({
+            "replay_trade_count": rep_n,
+            "real_trade_count": real_n,
+            "real_avg_pnl": rs.get("avg_pnl"),
+            "real_avg_pnl_points": real_pts,
+            "real_winrate": real_wr,
+            "real_realized_pnl": rs.get("realized_pnl"),
+            "real_sample_quality": rs.get("sample_quality", "insufficient"),
+            "real_trade_weight": real_trade_weight,
+            "combined_expectancy": combined_exp,
+            "combined_winrate": combined_wr,
+            "real_contradicts_replay": contradicts,
+            "recommended_status_combined": recommended_status(
+                combined_n, combined_exp, combined_wr, min_samples),
+        })
+    scorecard["include_real_trades"] = True
+    scorecard["real_trade_weight"] = real_trade_weight
+    scorecard["real_global"] = real_stats.get("global")
+    scorecard["real_trade_count"] = real_stats.get("count", 0)
+    scorecard["real_duplicates_ignored"] = real_stats.get("duplicates_ignored", 0)
+    return scorecard
+
+
+def write_real_trade_blend(out_dir: str | Path, scorecard: dict, real_stats: dict, *,
+                           now: datetime | None = None) -> dict[str, Path]:
+    """
+    LM89B: persist the real-trade blend artifacts (gitignored):
+      * real_trade_scorecard_latest.json  - real stats + combined per-setup view
+      * real_trade_learning_summary.json  - compact global summary
+      * real_trade_learning_events.jsonl  - one summary line per build (append)
+    """
+    now = now or datetime.now(timezone.utc)
+    d = Path(out_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    combined = {s: {k: v.get(k) for k in (
+                    "replay_trade_count", "real_trade_count", "real_avg_pnl_points",
+                    "combined_expectancy", "combined_winrate", "real_sample_quality",
+                    "real_contradicts_replay", "recommended_status_combined")}
+                for s, v in scorecard.get("by_setup", {}).items() if "real_trade_count" in v}
+    g = real_stats.get("global", {})
+    scorecard_path = d / "real_trade_scorecard_latest.json"
+    summary_path = d / "real_trade_learning_summary.json"
+    events_path = d / "real_trade_learning_events.jsonl"
+    scorecard_path.write_text(json.dumps({
+        "generated_at": now.isoformat(), "real_trade_weight": scorecard.get("real_trade_weight"),
+        "real_global": g, "by_setup": real_stats.get("by_setup"),
+        "by_risk_mode": real_stats.get("by_risk_mode"), "combined_by_setup": combined,
+    }, indent=2, default=str), encoding="utf-8")
+    summary = {"generated_at": now.isoformat(), "real_trade_count": real_stats.get("count", 0),
+               "duplicates_ignored": real_stats.get("duplicates_ignored", 0),
+               "winrate": g.get("winrate"), "realized_pnl": g.get("realized_pnl"),
+               "avg_pnl_points": g.get("avg_pnl_points"), "sample_quality": g.get("sample_quality"),
+               "real_trade_weight": scorecard.get("real_trade_weight")}
+    summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    with events_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"event": "real_trade_blend", **summary}, default=str) + "\n")
+    return {"scorecard": scorecard_path, "summary": summary_path, "events": events_path}

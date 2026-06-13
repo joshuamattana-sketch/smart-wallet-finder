@@ -207,3 +207,21 @@ def test_cli_no_replay_files_errors(tmp_path):
     import scripts.run_gold_bot_learning_scorecard as L
     rc = L.main(["--replay-dir", str(tmp_path / "empty"), "--out-dir", str(tmp_path / "out")])
     assert rc == 1
+
+
+# ── LM89B: real demo-trade blending into the scorecard ──────────────────────────────
+def test_build_scorecard_blends_real_stats(tmp_path):
+    from services.gold_bot_learning_journal import build_real_trade_stats
+    rows = [_row("momentum", "LONG", 75, 200.0, "win") for _ in range(25)]   # replay promising
+    real_outcomes = [{"setup": "momentum", "outcome": "loss", "pnl": -30.0, "pnl_points": -30.0,
+                      "risk_mode": "scalp", "side": "LONG", "confidence": 75, "_tkey": ""}
+                     for _ in range(10)]
+    real = build_real_trade_stats(real_outcomes, min_real_trades=5)
+    sc = build_scorecard(rows, horizon=15, min_samples=10, real_stats=real, real_trade_weight=2.0)
+    v = sc["by_setup"]["momentum"]
+    assert sc["include_real_trades"] is True and sc["real_trade_weight"] == 2.0
+    assert v["replay_trade_count"] == 25 and v["real_trade_count"] == 10
+    assert v["combined_expectancy"] < v["expectancy_points"]   # demo losses pull it down
+    assert "recommended_status_combined" in v
+    preview = build_setup_modifiers_preview(sc, source_scorecard="x.json")
+    assert "combined replay+demo" in preview["momentum"]["reason"]

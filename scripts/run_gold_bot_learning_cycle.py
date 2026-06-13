@@ -61,6 +61,11 @@ def parse_args(argv=None):
                    dest="min_trade_count_ratio")
     p.add_argument("--learning-dir", default=str(DEFAULT_LEARNING_DIR), dest="learning_dir")
     p.add_argument("--replay-out-dir", default=str(DEFAULT_REPLAY_DIR), dest="replay_out_dir")
+    # LM89B real demo-trade blending (default off for backward compatibility).
+    p.add_argument("--include-real-trades", action="store_true", dest="include_real_trades",
+                   help="Blend real demo_trade_outcome events into the cycle scorecard (demo-only).")
+    p.add_argument("--real-trade-weight", type=float, default=2.0, dest="real_trade_weight")
+    p.add_argument("--min-real-trades", type=int, default=5, dest="min_real_trades")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="Print planned steps + validate files. Writes nothing.")
     p.add_argument("--rollback", action="store_true",
@@ -102,6 +107,8 @@ def main(argv=None) -> int:
             min_improvement_points=args.min_improvement_points,
             min_trade_count_ratio=args.min_trade_count_ratio,
             learning_dir=args.learning_dir, replay_out_dir=args.replay_out_dir,
+            include_real_trades=args.include_real_trades,
+            real_trade_weight=args.real_trade_weight, min_real_trades=args.min_real_trades,
             dry_run=args.dry_run)
     except CycleError as exc:
         print(f"LEARNING CYCLE FAILED: {exc}", file=sys.stderr)
@@ -140,6 +147,9 @@ def main(argv=None) -> int:
     verdict = "ACCEPTED" if result.accepted else "REJECTED"
     print(f"\n verdict   : {verdict}")
     print(f" reason    : {result.reason}")
+    if result.real_trades_used:
+        print(f" real demo : blended {result.real_trade_count} demo trade(s) "
+              f"(weight {result.real_trade_weight})")
     print(f"\n active modifiers : {result.active_modifiers_path}")
     print(f" candidate file   : {result.candidate_modifiers_path}")
     if result.backup_modifiers_path:

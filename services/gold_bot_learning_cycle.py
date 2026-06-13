@@ -201,6 +201,9 @@ class CycleResult:
     warnings: list[str] = field(default_factory=list)
     dry_run: bool = False
     planned_steps: list[str] = field(default_factory=list)
+    real_trades_used: bool = False
+    real_trade_count: int = 0
+    real_trade_weight: float = 2.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -215,6 +218,9 @@ class CycleResult:
             "cycle_summary_path": self.cycle_summary_path,
             "warnings": self.warnings, "dry_run": self.dry_run,
             "planned_steps": self.planned_steps,
+            "real_trades_used": self.real_trades_used,
+            "real_trade_count": self.real_trade_count,
+            "real_trade_weight": self.real_trade_weight,
         }
 
 
@@ -243,10 +249,14 @@ def default_replay_runner(*, symbol: str, timeframe: str, risk_mode: str, max_ba
 
 def default_scorecard_runner(*, symbol: str, timeframe: str, risk_mode: str, horizon: int,
                              min_samples: int, replay_out_dir: str | Path,
-                             learning_dir: str | Path) -> Callable[[], None]:
-    """Returns a callable() that builds + writes the LM86A scorecard/preview into learning_dir."""
+                             learning_dir: str | Path, include_real_trades: bool = False,
+                             real_trade_weight: float = 2.0, min_real_trades: int = 5
+                             ) -> Callable[[], None]:
+    """Returns a callable() that builds + writes the LM86A scorecard/preview into learning_dir.
+    With include_real_trades it blends LM89A demo_trade_outcome events (LM89B)."""
     from services.gold_bot_learning_journal import (
-        build_scorecard, load_replay_rows, write_scorecard,
+        build_real_trade_stats, build_scorecard, load_demo_trade_outcomes,
+        load_replay_rows, write_real_trade_blend, write_scorecard,
     )
 
     def runner() -> None:
@@ -256,9 +266,18 @@ def default_scorecard_runner(*, symbol: str, timeframe: str, risk_mode: str, hor
             raise CycleError(
                 f"scorecard: no replay rows in {replay_out_dir} for "
                 f"symbol={symbol} timeframe={timeframe} risk={risk_mode}.")
-        scorecard = build_scorecard(rows, horizon=horizon, min_samples=min_samples, warnings=warns)
+        real_stats = None
+        if include_real_trades:
+            outcomes, rt_warn, dups = load_demo_trade_outcomes(learning_dir=learning_dir)
+            real_stats = build_real_trade_stats(outcomes, min_real_trades=min_real_trades,
+                                                duplicates_ignored=dups, warnings=rt_warn)
+            warns = warns + rt_warn
+        scorecard = build_scorecard(rows, horizon=horizon, min_samples=min_samples, warnings=warns,
+                                    real_stats=real_stats, real_trade_weight=real_trade_weight)
         write_scorecard(learning_dir, scorecard, symbol=symbol, timeframe=timeframe,
                         risk_mode=risk_mode)
+        if real_stats is not None:
+            write_real_trade_blend(learning_dir, scorecard, real_stats)
 
     return runner
 
@@ -284,7 +303,8 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
               replay_out_dir: str | Path = DEFAULT_REPLAY_DIR,
               history_dir: str | Path | None = None, macro_history_dir: str | Path | None = None,
               expiry_days: int | None = DEFAULT_EXPIRY_DAYS, dry_run: bool = False,
-              now: datetime | None = None,
+              include_real_trades: bool = False, real_trade_weight: float = 2.0,
+              min_real_trades: int = 5, now: datetime | None = None,
               replay_runner: Callable[..., dict] | None = None,
               scorecard_runner: Callable[[], None] | None = None) -> CycleResult:
     """
@@ -327,7 +347,16 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
         replay_out_dir=replay_out_dir)
     scorecard_runner = scorecard_runner or default_scorecard_runner(
         symbol=symbol, timeframe=timeframe, risk_mode=risk_mode, horizon=horizon,
-        min_samples=min_samples, replay_out_dir=replay_out_dir, learning_dir=learning_dir)
+        min_samples=min_samples, replay_out_dir=replay_out_dir, learning_dir=learning_dir,
+        include_real_trades=include_real_trades, real_trade_weight=real_trade_weight,
+        min_real_trades=min_real_trades)
+
+    real_trade_count = 0
+    if include_real_trades:
+        from services.gold_bot_learning_journal import load_demo_trade_outcomes
+        _ro, _rw, _ = load_demo_trade_outcomes(learning_dir=learning_dir)
+        real_trade_count = len(_ro)
+        warnings += _rw
 
     # 1. baseline replay (no learning)
     baseline_summary = replay_runner(use_learning=False, modifiers_file=None)
@@ -373,7 +402,9 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
         candidate_modifiers_path=str(candidate_path),
         rejected_modifiers_path=str(rejected_path) if rejected_path else None,
         backup_modifiers_path=str(backup_path) if backup_path else None,
-        warnings=warnings, planned_steps=planned)
+        warnings=warnings, planned_steps=planned,
+        real_trades_used=include_real_trades, real_trade_count=real_trade_count,
+        real_trade_weight=real_trade_weight)
 
     summary_path = _write_cycle_summary(learning_dir, result, symbol=symbol, timeframe=timeframe,
                                         risk_mode=risk_mode, now=now)

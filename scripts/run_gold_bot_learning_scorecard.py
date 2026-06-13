@@ -25,8 +25,11 @@ if str(_REPO_ROOT) not in sys.path:
 from services.gold_bot_learning_journal import (  # noqa: E402
     DEFAULT_LEARNING_DIR,
     DEFAULT_REPLAY_DIR,
+    build_real_trade_stats,
     build_scorecard,
+    load_demo_trade_outcomes,
     load_replay_rows,
+    write_real_trade_blend,
     write_scorecard,
 )
 
@@ -46,6 +49,13 @@ def parse_args(argv=None):
     p.add_argument("--missed-move-threshold-points", type=float, default=150.0,
                    dest="missed_threshold")
     p.add_argument("--top", type=int, default=10)
+    # LM89B real demo-trade blending (default off for backward compatibility).
+    p.add_argument("--include-real-trades", action="store_true", dest="include_real_trades",
+                   help="Blend real demo_trade_outcome events into the scorecard (demo-only).")
+    p.add_argument("--real-trade-weight", type=float, default=2.0, dest="real_trade_weight")
+    p.add_argument("--min-real-trades", type=int, default=5, dest="min_real_trades")
+    p.add_argument("--learning-events-file", default=None, dest="learning_events_file",
+                   help="learning_events.jsonl (default data/gold_bot/learning/learning_events.jsonl).")
     p.add_argument("--dry-run", action="store_true", dest="dry_run")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
@@ -82,11 +92,25 @@ def main(argv=None) -> int:
             print("\n Dry-run only - no files written. Never calls MT5, never sends orders.")
         return 0
 
+    real_stats = None
+    if args.include_real_trades:
+        events_file = args.learning_events_file or (Path(args.out_dir) / "learning_events.jsonl")
+        outcomes, rt_warn, dups = load_demo_trade_outcomes(events_file)
+        real_stats = build_real_trade_stats(outcomes, min_real_trades=args.min_real_trades,
+                                            duplicates_ignored=dups, warnings=rt_warn)
+        warnings = warnings + rt_warn
+        if not outcomes:
+            warnings.append("--include-real-trades set but no demo_trade_outcome events found "
+                            "(run a confirmed demo session + outcome sync first).")
+
     scorecard = build_scorecard(rows, horizon=args.horizon, min_samples=args.min_samples,
                                 missed_threshold=args.missed_threshold, top=args.top,
-                                warnings=warnings)
+                                warnings=warnings, real_stats=real_stats,
+                                real_trade_weight=args.real_trade_weight)
     paths = write_scorecard(args.out_dir, scorecard, symbol=args.symbol,
                             timeframe=args.timeframe, risk_mode=args.risk_mode)
+    if real_stats is not None:
+        paths.update(write_real_trade_blend(args.out_dir, scorecard, real_stats))
 
     if args.json_output:
         print(json.dumps({"scorecard": scorecard,
@@ -106,6 +130,15 @@ def main(argv=None) -> int:
           f"L/S {g['long_count']}/{g['short_count']}  avg_conf {g['avg_confidence']}")
     print(f"         winrate {g['winrate']}  expectancy {g['expectancy_points']}pt  "
           f"status {g['recommended_status']}")
+
+    if scorecard.get("include_real_trades"):
+        rg = scorecard.get("real_global") or {}
+        print(f"\n REAL demo (weight {scorecard['real_trade_weight']}): trades {rg.get('trade_count')}  "
+              f"W/L/BE {rg.get('win_count')}/{rg.get('loss_count')}/{rg.get('breakeven_count')}  "
+              f"winrate {rg.get('winrate')}  realized {rg.get('realized_pnl')}  "
+              f"avg_pts {rg.get('avg_pnl_points')}  quality {rg.get('sample_quality')}")
+        print(f"         duplicates ignored {scorecard.get('real_duplicates_ignored')}  "
+              "(combined_* per setup; status uses combined when real present)")
 
     print(f"\n TOP setups by expectancy (h{scorecard['horizon']}, >= {args.min_samples} trades):")
     if not scorecard["top_setups_by_expectancy"]:
