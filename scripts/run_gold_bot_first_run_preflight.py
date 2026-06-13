@@ -35,6 +35,10 @@ def parse_args(argv=None):
         prog="run_gold_bot_first_run_preflight",
         description="Read-only GO/NO-GO preflight for the first market-open demo run.",
     )
+    p.add_argument("--environment", choices=["paper", "demo", "live"], default="demo",
+                   help="Execution environment (LM93A). live is hard-locked.")
+    p.add_argument("--allow-live-trading", action="store_true", dest="allow_live_trading",
+                   help="No-op safety flag; live stays hard-locked in this build.")
     p.add_argument("--skip-mt5", action="store_true", dest="skip_mt5",
                    help="Skip the MT5 connector probe (weekend/offline prep).")
     p.add_argument("--skip-safety", action="store_true", dest="skip_safety")
@@ -56,6 +60,10 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.environment == "live":
+        print("error: live environment is hard-locked and not implemented "
+              "(LIVE_NOT_IMPLEMENTED). This tool runs demo/paper only.", file=sys.stderr)
+        return 2
     cfg = PreflightConfig(
         skip_mt5=args.skip_mt5, skip_safety=args.skip_safety,
         duration_minutes=args.duration_minutes, max_trades=args.max_trades, risk_mode=args.risk_mode,
@@ -74,6 +82,9 @@ def main(argv=None) -> int:
     print(" GOLD BOT FIRST MARKET-OPEN PREFLIGHT   read-only, no orders")
     print("=" * 70)
     print(f" Overall: {pf.overall}")
+    print(f" Execution environment: {pf.environment}")
+    print(f" Execution mode       : {pf.execution_mode} (preflight itself is read-only/observe)")
+    print(f" Live trading         : {'LOCKED' if pf.live_locked else 'enabled'}")
     print("\n Checks:")
     for c in pf.checks:
         print(f"   [{c['status']:^4}] {c['name']:<18} {c['detail']}")

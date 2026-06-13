@@ -1894,3 +1894,35 @@ with `--check-discord-env`); value never read/printed. Generated
 → GO (MT5 demo connected, read-only); mocked stale tick → NO-GO with reasons +
 troubleshooting. Tests `python -m pytest tests/test_gold_bot_first_run_preflight.py -q`
 (subprocess + safety/macro mocked, no MT5/internet).
+
+## LM93A Execution environment abstraction (demo only; live hard-locked)
+
+`services/gold_bot_execution_environment.py` replaces scattered "demo" naming with a
+clear model: **environment** (`paper`|`demo`|`live`) × **mode** (`observe`|`execute`).
+`ExecutionContext` + `assert_execution_allowed` gate codes: `OBSERVE_ONLY` /
+`PAPER_NO_BROKER` / `DEMO_ALLOWED` / `LIVE_NOT_IMPLEMENTED` / `UNKNOWN_ACCOUNT`. **It
+is an ADDITIONAL gate — never replaces the confirm flags, safety supervisor or risk
+gate.** Live is hard-locked: even with `LUMORA_GOLD_ALLOW_LIVE_TRADING=I_UNDERSTAND_LIVE_RISK`
++ `--allow-live-trading`, the gate returns `LIVE_NOT_IMPLEMENTED`; `--environment live`
+makes every CLI exit 2. Full reference: `docs/gold_bot/EXECUTION_ENVIRONMENTS.md`.
+
+Legacy mapping (commands unchanged): `--mode observe` → demo/observe, `--mode demo`
+→ demo/execute (still needs the confirm flags). New optional flags on worker /
+demo-session / daily-cycle / preflight: `--environment` + `--allow-live-trading`
+(no-op). Framing now appears in: worker banner (`execution : environment: demo | …
+| live: locked`) + journal `execution_context`; session report `environment` /
+`execution_mode` / `live_locked` + banner; supervisor decision `details.execution`;
+daily-cycle plan (`environ. : demo | execution: plan | live: locked`); preflight
+(`Execution environment: demo` / `Live trading: LOCKED`).
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_execution_environment.py -q
+python scripts/run_gold_bot_daily_cycle.py                # plan shows environment/live framing
+python scripts/run_gold_bot_worker.py --mode observe --risk-mode scalp --max-iterations 1   # legacy flag still works
+```
+
+No live trading enabled, no orders, no MT5 required in tests. Live-verified: context
+matrix (demo/observe→OBSERVE_ONLY, demo/execute→DEMO_ALLOWED, paper→PAPER_NO_BROKER,
+live→LIVE_NOT_IMPLEMENTED), CLIs refuse `--environment live`, 417 existing gold_bot
+tests still green. Tests `python -m pytest tests/test_gold_bot_execution_environment.py -q`.

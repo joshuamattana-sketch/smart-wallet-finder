@@ -56,6 +56,10 @@ def parse_args(argv=None):
     p.add_argument("--macro-events-file", default=None, dest="macro_events_file")
     p.add_argument("--confirm-demo-session", action="store_true", dest="confirm_demo_session",
                    help="ARM the session: allow demo orders (still gated by the worker demo flags).")
+    p.add_argument("--environment", choices=["paper", "demo", "live"], default="demo",
+                   help="Execution environment (LM93A). live is hard-locked.")
+    p.add_argument("--allow-live-trading", action="store_true", dest="allow_live_trading",
+                   help="No-op safety flag; live stays hard-locked in this build.")
     p.add_argument("--no-sync-outcomes", action="store_false", dest="sync_outcomes", default=True,
                    help="Skip the post-session MT5 trade-outcome feedback sync (armed sessions only).")
     p.add_argument("--json", action="store_true", dest="json_output")
@@ -64,6 +68,10 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.environment == "live":
+        print("error: live environment is hard-locked and not implemented "
+              "(LIVE_NOT_IMPLEMENTED). This tool runs demo/paper only.", file=sys.stderr)
+        return 2
     cfg = DemoSessionConfig(
         symbol=args.symbol, risk_mode=args.risk_mode, timeframe=args.timeframe,
         interval_seconds=args.interval_seconds, duration_minutes=args.duration_minutes,

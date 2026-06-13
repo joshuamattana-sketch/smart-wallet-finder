@@ -39,6 +39,10 @@ from services.connectors.mt5_demo_connector import (
     ProbeResult,
 )
 from services.gold_bot_decision_engine import decide
+from services.gold_bot_execution_environment import (
+    build_execution_context,
+    describe_execution_context,
+)
 from services.gold_bot_demo_safety_supervisor import (
     DEFAULT_EVENTS_PATH as SAFETY_EVENTS_PATH,
     DEFAULT_STATE_PATH as SAFETY_STATE_PATH,
@@ -66,7 +70,8 @@ class CriticalSafetyError(Exception):
 
 @dataclass
 class WorkerConfig:
-    mode: str = "observe"                 # observe | demo
+    mode: str = "observe"                 # observe | demo (legacy; maps to environment/execution_mode)
+    environment: str = "demo"             # LM93A: paper | demo | live (live hard-locked)
     risk_mode: str = "balanced"
     interval_seconds: float = DEFAULT_INTERVAL_SECONDS
     max_iterations: int | None = None
@@ -266,6 +271,7 @@ class GoldBotWorker:
 
         # ── LM87A demo safety supervisor: runs every iteration (no off switch) ──
         acct = self._safe_account_snapshot(connector)
+        ec = self._exec_context(connector)
         safety_dec = self.supervisor.evaluate_execution(SafetyExecContext(
             now=self._now(), risk_mode=self.cfg.risk_mode,
             account_is_demo=bool(connector.demo_verified), symbol_selected=bool(symbol),
@@ -274,6 +280,8 @@ class GoldBotWorker:
             daily_realized_pnl=today_pnl, tick_fresh=self._tick_fresh(probe),
             kill_switch=self.safety.kill_switch,
             macro_lockout=(macro.event_risk_state == "lockout"), decision=idea.decision,
+            environment=ec.environment, execution_mode=ec.mode, account_type=ec.account_type,
+            live_locked=True,
         ))
 
         exec_status, risk_dec, order_sent = self._maybe_execute(
@@ -312,6 +320,7 @@ class GoldBotWorker:
             "open_positions": open_xau,
             "today_pnl": today_pnl,
             "equity": (acct or {}).get("equity"),
+            "execution_context": self._exec_context(connector).to_dict(),
             "execution_status": exec_status,
             "order_sent": order_sent,
             "risk": risk_dec,
@@ -465,6 +474,12 @@ class GoldBotWorker:
             return "demo execution ARMED (--auto-execute-demo --confirm-demo-order)"
         return "demo (orders blocked: missing --auto-execute-demo / --confirm-demo-order)"
 
+    def _exec_context(self, connector: Any | None = None):
+        """LM93A execution-environment framing (demo only; live hard-locked)."""
+        acct = ({"demo_verified": getattr(connector, "demo_verified", None)}
+                if connector is not None else None)
+        return build_execution_context(self.cfg.environment, self.cfg.mode, account_info=acct)
+
     # ── output ─────────────────────────────────────────────────────────────────
     def _print_banner(self) -> None:
         cfg = self.cfg
@@ -476,8 +491,9 @@ class GoldBotWorker:
         self._print(f" risk-mode    : {cfg.risk_mode}    timeframe {cfg.timeframe}  bars {cfg.bars}")
         self._print(f" interval     : {cfg.interval_seconds}s    max-iterations {maxit}")
         self._print(f" execution    : {self._execution_label()}")
-        self._print(f" live trading : NEVER    demo-only {self.safety.mt5_demo_only}    "
+        self._print(f" live trading : LOCKED   demo-only {self.safety.mt5_demo_only}    "
                     f"kill-switch {self.safety.kill_switch}")
+        self._print(f" execution    : {describe_execution_context(self._exec_context())}")
         sc = self.supervisor.config
         self._print(f" safety super : ALWAYS ON (no off switch)  max-open {sc.max_open_positions}  "
                     f"<={sc.max_trades_per_hour}/h  gap {sc.min_seconds_between_trades}s  "

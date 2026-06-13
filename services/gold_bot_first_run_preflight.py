@@ -77,6 +77,9 @@ class Preflight:
     generated_at: str
     overall: str           # GO | NO-GO
     go: bool
+    environment: str = "demo"
+    execution_mode: str = "execute_candidate"   # the GO command arms a demo session
+    live_locked: bool = True
     checks: list[dict] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
     go_command: str = ""

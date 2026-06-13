@@ -296,6 +296,9 @@ class DemoSessionRunner:
             "mode": worker_cfg.mode, "armed": self.cfg.armed,
             "safety_supervisor": "always_on",
             "live_trading": "never",
+            "environment": "demo",
+            "execution_mode": "execute" if self.cfg.armed else "observe",
+            "live_locked": True,
             "started_at": started.isoformat(), "ended_at": ended.isoformat(),
             "duration_seconds": round((ended - started).total_seconds(), 1),
             "symbol": self.cfg.symbol, "risk_mode": self.cfg.risk_mode,
@@ -397,6 +400,7 @@ class DemoSessionRunner:
         self._print("   LEARNING CONFIDENCE-ONLY")
         self._print("=" * 64)
         self._print(f" symbol/TF    : {self.cfg.symbol} / {self.cfg.timeframe}   risk {self.cfg.risk_mode}")
+        self._print(f" environment  : demo | execution: {'execute' if armed else 'observe'} | live: locked")
         self._print(f" duration     : {self.cfg.duration_minutes} min   interval {self.cfg.interval_seconds}s"
                     f"   max-trades {self.cfg.max_trades}   max-iter {self.cfg.max_iterations}")
         self._print(f" learning     : {'enabled' if self.cfg.use_learning_modifiers else 'disabled'}"

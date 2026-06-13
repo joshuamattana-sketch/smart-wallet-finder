@@ -41,6 +41,10 @@ def parse_args(argv=None):
         prog="run_gold_bot_daily_cycle",
         description="Sequence the existing Gold Bot demo-learning-review scripts (plan by default).",
     )
+    p.add_argument("--environment", choices=["paper", "demo", "live"], default="demo",
+                   help="Execution environment (LM93A). live is hard-locked.")
+    p.add_argument("--allow-live-trading", action="store_true", dest="allow_live_trading",
+                   help="No-op safety flag; live stays hard-locked in this build.")
     p.add_argument("--execute", action="store_true",
                    help="Actually run the safe offline steps (still no demo trades without --confirm-demo-session).")
     p.add_argument("--confirm-demo-session", action="store_true", dest="confirm_demo_session",
@@ -105,6 +109,10 @@ def _fmt_cmd(cmd) -> str:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.environment == "live":
+        print("error: live environment is hard-locked and not implemented "
+              "(LIVE_NOT_IMPLEMENTED). This tool runs demo/paper only.", file=sys.stderr)
+        return 2
     cfg = _cfg(args)
     run = run_cycle(cfg, out_dir=Path(args.out_dir))
 
@@ -116,7 +124,10 @@ def main(argv=None) -> int:
     print("=" * 74)
     print(f" GOLD BOT DAILY CYCLE   ({mode})   offline orchestrator, demo-only")
     print("=" * 74)
+    exec_word = ("session" if (cfg.execute and cfg.confirm_demo_session)
+                 else "offline" if cfg.execute else "plan")
     print(f" run id   : {run.run_id}")
+    print(f" environ. : demo | execution: {exec_word} | live: locked")
     print(f" trading  : {'ARMED (demo session + safety supervisor)' if (cfg.execute and cfg.confirm_demo_session) else 'OFF (no demo trades)'}")
     print(f" discord  : {'SEND' if cfg.send_discord else 'preview only'}")
     for w in run.warnings:

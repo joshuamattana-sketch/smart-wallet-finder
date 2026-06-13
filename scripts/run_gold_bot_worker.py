@@ -41,6 +41,10 @@ def parse_args(argv=None):
     )
     p.add_argument("--mode", choices=["observe", "demo"], default="observe",
                    help="observe = never send; demo = may send only with the execute+confirm flags.")
+    p.add_argument("--environment", choices=["paper", "demo", "live"], default="demo",
+                   help="Execution environment (LM93A). live is hard-locked.")
+    p.add_argument("--allow-live-trading", action="store_true", dest="allow_live_trading",
+                   help="No-op safety flag; live stays hard-locked in this build.")
     p.add_argument("--risk-mode", choices=list(RISK_MODES), default="balanced", dest="risk_mode")
     p.add_argument("--interval-seconds", type=float, default=10.0, dest="interval_seconds")
     p.add_argument("--max-iterations", type=int, default=None, dest="max_iterations",
@@ -82,10 +86,21 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
+def _refuse_live(args) -> bool:
+    if getattr(args, "environment", "demo") == "live":
+        print("error: live environment is hard-locked and not implemented "
+              "(LIVE_NOT_IMPLEMENTED). This tool runs demo/paper only.", file=sys.stderr)
+        return True
+    return False
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if _refuse_live(args):
+        return 2
     cfg = WorkerConfig(
-        mode=args.mode, risk_mode=args.risk_mode, interval_seconds=args.interval_seconds,
+        mode=args.mode, environment=args.environment, risk_mode=args.risk_mode,
+        interval_seconds=args.interval_seconds,
         max_iterations=args.max_iterations, symbol=args.symbol, timeframe=args.timeframe,
         bars=args.bars, calendar_file=args.calendar_file,
         macro_events_file=args.macro_events_file, dxy_bias=args.dxy_bias,

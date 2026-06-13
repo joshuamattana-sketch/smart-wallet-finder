@@ -115,6 +115,11 @@ class SafetyExecContext:
     kill_switch: bool = False
     macro_lockout: bool = False
     decision: str = "NO_TRADE"
+    # LM93A execution-environment framing (optional; never weakens any check).
+    environment: str | None = None
+    execution_mode: str | None = None
+    account_type: str | None = None
+    live_locked: bool | None = None
 
 
 def _parse_iso(s: str | None) -> datetime | None:
@@ -309,6 +314,9 @@ class DemoSafetySupervisor:
         all_failures = failures + warnings
         details = {"checks": all_failures, "loss_pct": loss_pct,
                    "spread_ceiling": ceiling, "open_positions": ctx.open_positions}
+        if ctx.environment is not None:
+            details["execution"] = {"environment": ctx.environment, "mode": ctx.execution_mode,
+                                    "account_type": ctx.account_type, "live_locked": ctx.live_locked}
         if failures:
             first = failures[0]
             cooldown = first.get("detail", {}).get("cooldown_until")
