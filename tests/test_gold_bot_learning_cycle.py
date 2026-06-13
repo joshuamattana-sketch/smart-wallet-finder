@@ -250,9 +250,11 @@ def test_no_mt5_imported_during_injected_cycle(tmp_path):
 
 
 def test_service_sources_have_no_mt5_orders_or_http():
+    # call/import-shaped so the FORBIDDEN_MODIFIER_KEYS contract constant (which
+    # lists "order_send" as a forbidden *key* string) is not a false positive.
     for fname in ("gold_bot_learning_cycle.py", "gold_bot_learning_modifiers.py"):
         src = (_REPO / "services" / fname).read_text(encoding="utf-8")
-        for forbidden in ("MetaTrader5", "order_send", "import requests", "urllib", "socket("):
+        for forbidden in ("MetaTrader5", ".order_send(", "import requests", "urllib", "socket("):
             assert forbidden not in src, f"{fname} must not reference {forbidden}"
 
 

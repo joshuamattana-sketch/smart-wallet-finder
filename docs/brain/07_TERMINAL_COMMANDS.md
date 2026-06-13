@@ -1529,3 +1529,52 @@ Live-verified: real M1 balanced cycle → baseline exp -41.1pt / candidate exp
 -50.7pt → **REJECTED** (expectancy -9.6pt, need ≥ +10pt), active modifiers kept,
 no backup written. Tests
 `python -m pytest tests/test_gold_bot_learning_cycle.py -q` (no MT5/internet).
+
+## LM87A Demo safety supervisor (runtime guard, demo-only, no off switch)
+
+`services/gold_bot_demo_safety_supervisor.py` runs before/around every worker
+iteration and enforces HARD demo limits so autonomous demo execution can't run
+away. It is a SECOND layer on top of (never a replacement for) the risk gate,
+macro lockout and kill switch — it can only BLOCK/downgrade, never send orders,
+enable live trading, change volume/lot, or bypass any control. **There is no off
+switch** (no `--disable-safety-supervisor`).
+
+Guards: learning-modifier contract (demo_only / mode demo_auto_learning / not
+expired / no forbidden keys live·live_trading·order_send·volume·lot·leverage·bypass
+/ clamp -20..+12), open-position (max 1), no-stacking, trade-frequency
+(<=6/h + >=120s gap), loss-streak (3 → 30m cooldown), daily-drawdown (warn 4% /
+block 7%), spread (balanced 35pt / scalp 25pt), MT5 health (demo + symbol
+selected + fresh tick + free margin), macro-lockout respect, kill-switch respect.
+An invalid/expired modifier file DISABLES learning for the run (in-memory only —
+files are never deleted) and the worker continues safely.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# inspect the supervisor (read-only, offline):
+python scripts/run_gold_bot_safety_probe.py
+python scripts/run_gold_bot_safety_probe.py --json
+
+# observe worker shows the supervisor banner + per-iteration safety status:
+python scripts/run_gold_bot_worker.py --mode observe --risk-mode scalp --use-learning-modifiers --max-iterations 3 --interval-seconds 5
+
+# demo mode WITHOUT the execute flags still sends nothing:
+python scripts/run_gold_bot_worker.py --mode demo --risk-mode scalp --use-learning-modifiers --max-iterations 1 --interval-seconds 5
+
+# intentional demo execution STILL requires the existing explicit flags:
+python scripts/run_gold_bot_worker.py --mode demo --risk-mode scalp --use-learning-modifiers --auto-execute-demo --confirm-demo-order --max-iterations 1
+```
+
+Worker CLI additions (limits only — the supervisor always runs):
+`--max-open-positions 1 --max-trades-per-hour 6 --min-seconds-between-trades 120
+--max-consecutive-losses 3 --cooldown-minutes-after-loss-streak 30
+--max-spread-points <override>`.
+
+When the supervisor blocks an armed demo order the worker journals
+`execution_status = blocked_by_safety_supervisor` with the blocker reason in the
+`safety` field, and appends `data/gold_bot/safety/safety_events.jsonl`. State
+(recent trades, loss streak, cooldown) lives in
+`data/gold_bot/safety/safety_state.json`. Both are gitignored. Live-verified
+(fake connector): armed demo + kill switch → heartbeat
+`blocked_by_safety_supervisor` / `safety - CRITICAL kill_switch`, nothing sent.
+Tests `python -m pytest tests/test_gold_bot_demo_safety_supervisor.py tests/test_gold_bot_worker.py -q`
+(no MT5/internet).

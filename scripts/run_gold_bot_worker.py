@@ -68,6 +68,16 @@ def parse_args(argv=None):
                    help="Active demo modifiers JSON (default data/gold_bot/learning/active_demo_modifiers.json).")
     p.add_argument("--no-status-file", action="store_true", dest="no_status_file",
                    help="Do not write data/gold_bot/worker_status.json.")
+    # LM87A demo safety supervisor limits (the supervisor itself has NO off switch).
+    p.add_argument("--max-open-positions", type=int, default=1, dest="max_open_positions")
+    p.add_argument("--max-trades-per-hour", type=int, default=6, dest="max_trades_per_hour")
+    p.add_argument("--min-seconds-between-trades", type=int, default=120,
+                   dest="min_seconds_between_trades")
+    p.add_argument("--max-consecutive-losses", type=int, default=3, dest="max_consecutive_losses")
+    p.add_argument("--cooldown-minutes-after-loss-streak", type=int, default=30,
+                   dest="cooldown_minutes_after_loss_streak")
+    p.add_argument("--max-spread-points", type=float, default=None, dest="max_spread_points",
+                   help="Override the per-risk-mode spread ceiling (balanced 35 / scalp 25).")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
 
@@ -85,6 +95,12 @@ def main(argv=None) -> int:
         use_learning_modifiers=args.use_learning_modifiers,
         learning_modifiers_file=args.learning_modifiers_file, json_output=args.json_output,
         write_status=not args.no_status_file,
+        max_open_positions=args.max_open_positions,
+        max_trades_per_hour=args.max_trades_per_hour,
+        min_seconds_between_trades=args.min_seconds_between_trades,
+        max_consecutive_losses=args.max_consecutive_losses,
+        cooldown_minutes_after_loss_streak=args.cooldown_minutes_after_loss_streak,
+        max_spread_points=args.max_spread_points,
     )
     return GoldBotWorker(cfg).run()
 

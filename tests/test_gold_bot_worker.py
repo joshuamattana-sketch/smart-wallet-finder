@@ -109,6 +109,8 @@ def _worker(cfg, conn, tmp_path, safety=None):
         cfg, connector=conn, safety=safety or SafetyConfig(),
         journal_path=tmp_path / "worker_journal.jsonl",
         status_path=tmp_path / "worker_status.json",
+        safety_state_path=tmp_path / "safety_state.json",
+        safety_events_path=tmp_path / "safety_events.jsonl",
         sleep_fn=lambda s: None, now_fn=lambda: NOW, printer=lambda *_a: None,
     )
 
@@ -163,13 +165,37 @@ def test_demo_with_flags_sends_order(tmp_path):
 
 
 def test_kill_switch_blocks_demo_order(tmp_path):
+    # Kill switch is now caught by the safety supervisor BEFORE the risk gate.
     conn = FakeConnector()
     cfg = WorkerConfig(mode="demo", max_iterations=1, interval_seconds=0,
                        auto_execute_demo=True, confirm_demo_order=True)
     w = _worker(cfg, conn, tmp_path, safety=SafetyConfig(kill_switch=True))
     w.run()
     assert conn.sent_orders == []
-    assert w.iterations[0]["execution_status"] == "risk_blocked"
+    e = w.iterations[0]
+    assert e["execution_status"] == "blocked_by_safety_supervisor"
+    assert e["safety"]["reason"] == "kill_switch"
+    assert e["safety"]["severity"] == "critical"
+
+
+def test_worker_journal_carries_safety_decision(tmp_path):
+    conn = FakeConnector()
+    w = _worker(WorkerConfig(max_iterations=1, interval_seconds=0), conn, tmp_path)
+    w.run()
+    sf = w.iterations[0]["safety"]
+    assert sf["allowed"] is True and sf["severity"] == "info"     # observe, all clear
+    assert "continue_observe" in sf["actions"]
+
+
+def test_worker_config_exposes_safety_options(tmp_path):
+    cfg = WorkerConfig(max_open_positions=2, max_trades_per_hour=10,
+                       min_seconds_between_trades=60, max_consecutive_losses=5,
+                       cooldown_minutes_after_loss_streak=15, max_spread_points=40.0)
+    sc = cfg.supervisor_config()
+    assert sc.max_open_positions == 2 and sc.max_trades_per_hour == 10
+    assert sc.min_seconds_between_trades == 60 and sc.max_consecutive_losses == 5
+    assert sc.cooldown_minutes_after_loss_streak == 15 and sc.max_spread_points == 40.0
+    assert not hasattr(WorkerConfig(), "disable_safety_supervisor")   # no off switch
 
 
 # ── macro lockout blocks new trades ────────────────────────────────────────────
@@ -229,6 +255,8 @@ def test_journal_and_status_written(tmp_path):
     w = GoldBotWorker(
         WorkerConfig(max_iterations=2, interval_seconds=0), connector=conn,
         safety=SafetyConfig(), journal_path=jp, status_path=sp,
+        safety_state_path=tmp_path / "safety_state.json",
+        safety_events_path=tmp_path / "safety_events.jsonl",
         sleep_fn=lambda s: None, now_fn=lambda: NOW, printer=lambda *_a: None,
     )
     w.run()
@@ -247,6 +275,8 @@ def test_max_iterations_respected(tmp_path):
         WorkerConfig(max_iterations=4, interval_seconds=5), connector=conn,
         safety=SafetyConfig(), journal_path=tmp_path / "j.jsonl",
         status_path=tmp_path / "s.json",
+        safety_state_path=tmp_path / "safety_state.json",
+        safety_events_path=tmp_path / "safety_events.jsonl",
         sleep_fn=lambda s: sleeps.append(s), now_fn=lambda: NOW, printer=lambda *_a: None,
     )
     w.run()
@@ -268,13 +298,20 @@ def test_worker_accepts_learning_flags_observe_no_orders(tmp_path):
     assert w.iterations[0]["decision"] == "LONG"
 
 
-def test_worker_applies_learning_modifier_in_observe(tmp_path):
+def _valid_modifier_file(tmp_path, *, mod=4, expires_at="2026-12-31T00:00:00+00:00"):
+    """A demo modifier file that PASSES the LM87A safety contract."""
     import json as _json
-    conn = FakeConnector()
     mf = tmp_path / "active_demo_modifiers.json"
-    mods = {s: {"confidence_modifier": 4, "status": "active", "reason": "x"}
+    mods = {s: {"setup": s, "confidence_modifier": mod, "status": "active", "reason": "x"}
             for s in ("momentum", "scalp_momentum", "scalp_retest", "liquidity_sweep_reclaim")}
-    mf.write_text(_json.dumps({"modifiers": mods}), encoding="utf-8")
+    mf.write_text(_json.dumps({"safety": "demo_only", "mode": "demo_auto_learning",
+                               "expires_at": expires_at, "modifiers": mods}), encoding="utf-8")
+    return mf
+
+
+def test_worker_applies_learning_modifier_in_observe(tmp_path):
+    conn = FakeConnector()
+    mf = _valid_modifier_file(tmp_path)
     cfg = WorkerConfig(mode="observe", risk_mode="scalp", max_iterations=1, interval_seconds=0,
                        use_learning_modifiers=True, learning_modifiers_file=str(mf))
     w = _worker(cfg, conn, tmp_path)
@@ -284,3 +321,17 @@ def test_worker_applies_learning_modifier_in_observe(tmp_path):
     assert e["decision"] in ("LONG", "SHORT")
     assert e["learning"].get("learning_mode") == "observe"
     assert e["learning"]["learning_modifier"] == 4
+    assert w._learning_safety["allowed"] is True
+
+
+def test_worker_disables_learning_on_expired_contract(tmp_path):
+    # Expired file → supervisor disables learning; worker keeps running, no modifier applied.
+    conn = FakeConnector()
+    mf = _valid_modifier_file(tmp_path, expires_at="2020-01-01T00:00:00+00:00")
+    cfg = WorkerConfig(mode="observe", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       use_learning_modifiers=True, learning_modifiers_file=str(mf))
+    w = _worker(cfg, conn, tmp_path)
+    assert w.run() == 0
+    assert w._learning_safety["allowed"] is False
+    assert w._learning_modifiers == {}
+    assert not w.iterations[0]["learning"]    # no modifier applied (empty dict)

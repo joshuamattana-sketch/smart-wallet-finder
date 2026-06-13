@@ -31,6 +31,10 @@ data/gold_bot/learning/cycles/*.json
 data/gold_bot/learning/cycles/*.jsonl
 data/gold_bot/learning/*.backup.json
 data/gold_bot/learning/rejected_demo_modifiers.json
+# LM87A demo safety supervisor state/events — never commit.
+data/gold_bot/safety/*.json
+data/gold_bot/safety/*.jsonl
+data/gold_bot/safety/*.csv
 __pycache__/
 *.pyc
 .DS_Store

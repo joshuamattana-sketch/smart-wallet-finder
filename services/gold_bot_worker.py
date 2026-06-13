@@ -39,6 +39,13 @@ from services.connectors.mt5_demo_connector import (
     ProbeResult,
 )
 from services.gold_bot_decision_engine import decide
+from services.gold_bot_demo_safety_supervisor import (
+    DEFAULT_EVENTS_PATH as SAFETY_EVENTS_PATH,
+    DEFAULT_STATE_PATH as SAFETY_STATE_PATH,
+    DemoSafetySupervisor,
+    SafetyExecContext,
+    SupervisorConfig,
+)
 from services.gold_bot_lot_calculator import calc_auto_volume, resolve_risk_pct
 from services.gold_bot_macro_context import build_macro_context, load_calendar_or_macro
 from services.gold_bot_risk_gate import SafetyConfig, evaluate_risk_plan
@@ -78,6 +85,23 @@ class WorkerConfig:
     learning_modifiers_file: str | None = None
     json_output: bool = False
     write_status: bool = True
+    # LM87A demo safety supervisor limits (no off switch — supervisor always runs).
+    max_open_positions: int = 1
+    max_trades_per_hour: int = 6
+    min_seconds_between_trades: int = 120
+    max_consecutive_losses: int = 3
+    cooldown_minutes_after_loss_streak: int = 30
+    max_spread_points: float | None = None   # None -> per-risk-mode ceiling
+
+    def supervisor_config(self) -> SupervisorConfig:
+        return SupervisorConfig(
+            max_open_positions=self.max_open_positions,
+            max_trades_per_hour=self.max_trades_per_hour,
+            min_seconds_between_trades=self.min_seconds_between_trades,
+            max_consecutive_losses=self.max_consecutive_losses,
+            cooldown_minutes_after_loss_streak=self.cooldown_minutes_after_loss_streak,
+            max_spread_points=self.max_spread_points,
+        )
 
 
 class GoldBotWorker:
@@ -95,6 +119,9 @@ class GoldBotWorker:
         now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         printer: Callable[[str], None] = print,
         max_consecutive_failures: int = MAX_CONSECUTIVE_FAILURES,
+        supervisor: DemoSafetySupervisor | None = None,
+        safety_state_path: Path | str = SAFETY_STATE_PATH,
+        safety_events_path: Path | str = SAFETY_EVENTS_PATH,
     ) -> None:
         self.cfg = cfg
         self.safety = safety if safety is not None else SafetyConfig.from_env()
@@ -105,6 +132,10 @@ class GoldBotWorker:
         self._now = now_fn
         self._print = printer
         self.max_consecutive_failures = max_consecutive_failures
+        # LM87A: the demo safety supervisor ALWAYS runs — there is no off switch.
+        self.supervisor = supervisor or DemoSafetySupervisor(
+            cfg.supervisor_config(), state_path=safety_state_path, events_path=safety_events_path)
+        self._learning_safety: dict | None = None
 
         self._symbol: str | None = None
         self._connected = False
@@ -218,13 +249,25 @@ class GoldBotWorker:
             candles, symbol=symbol, timeframe=self.cfg.timeframe.upper(),
             risk_mode=self.cfg.risk_mode, spread_points=spread_points, point=point,
             has_open_position=open_xau > 0, macro=macro,
-            use_learning_modifiers=self.cfg.use_learning_modifiers,
+            use_learning_modifiers=bool(self.cfg.use_learning_modifiers and self._learning_modifiers),
             learning_modifiers=self._learning_modifiers,
             learning_mode=("demo" if self.cfg.mode == "demo" else "observe"),
         )
 
+        # ── LM87A demo safety supervisor: runs every iteration (no off switch) ──
+        acct = self._safe_account_snapshot(connector)
+        safety_dec = self.supervisor.evaluate_execution(SafetyExecContext(
+            now=self._now(), risk_mode=self.cfg.risk_mode,
+            account_is_demo=bool(connector.demo_verified), symbol_selected=bool(symbol),
+            open_positions=open_xau, spread_points=spread_points,
+            equity=acct.get("equity"), free_margin=acct.get("margin_free"),
+            daily_realized_pnl=today_pnl, tick_fresh=self._tick_fresh(probe),
+            kill_switch=self.safety.kill_switch,
+            macro_lockout=(macro.event_risk_state == "lockout"), decision=idea.decision,
+        ))
+
         exec_status, risk_dec, order_sent = self._maybe_execute(
-            connector, idea, symbol, meta, point, today_pnl
+            connector, idea, symbol, meta, point, today_pnl, safety_dec, acct
         )
 
         # close_on_no_trade is a recognised PLACEHOLDER in worker V1: no close is
@@ -261,6 +304,7 @@ class GoldBotWorker:
             "execution_status": exec_status,
             "order_sent": order_sent,
             "risk": risk_dec,
+            "safety": safety_dec.to_dict(),
             "note": note,
             "account_server": probe.account_server,
             "account_login": probe.account_login,
@@ -277,16 +321,24 @@ class GoldBotWorker:
     # ── execution (guarded; mirrors the probe's sizing + risk path) ───────────
     def _maybe_execute(
         self, connector: Any, idea: Any, symbol: str, meta: dict, point: float,
-        today_pnl: float | None,
+        today_pnl: float | None, safety_dec: Any, acct: dict,
     ) -> tuple[str, dict | None, bool]:
         if idea.decision not in ("LONG", "SHORT") or not idea.should_execute_demo:
             return ("no_trade", None, False)
 
+        will_send = (self.cfg.mode == "demo" and self.cfg.auto_execute_demo
+                     and self.cfg.confirm_demo_order)
+
+        # The demo safety supervisor has VETO authority over any actual send. It
+        # never overrides observe (which sends nothing anyway) but is recorded.
+        if will_send and not safety_dec.allowed:
+            self.supervisor.record_event(safety_dec, now=self._now(), context="execution_preflight")
+            return ("blocked_by_safety_supervisor", None, False)   # detail in entry["safety"]
+
         side = "buy" if idea.decision == "LONG" else "sell"
         levels = connector.compute_levels(symbol, side, idea.sl_points, idea.tp_points)
         order_type, entry_price, sl = levels["order_type"], levels["price"], levels["sl"]
-        acct = connector.account_snapshot()
-        equity = acct.get("equity") or 0.0
+        equity = (acct or {}).get("equity") or 0.0
         rp = resolve_risk_pct(mode=self.cfg.risk_mode, override_pct=None, allow_high_demo_risk=False)
         target = equity * rp.pct / 100.0
 
@@ -311,12 +363,10 @@ class GoldBotWorker:
         risk_dec = evaluate_risk_plan(
             config=self.safety, account_is_demo=connector.demo_verified, side=side,
             volume=lot.volume, sl_present=True, tp_present=True, est_sl_loss=est_loss,
-            require_risk_calc=True, margin_required=margin, free_margin=acct.get("margin_free"),
+            require_risk_calc=True, margin_required=margin, free_margin=(acct or {}).get("margin_free"),
             equity=equity, daily_realized_pnl=today_pnl or 0.0, trades_today=0, risk_pct=rp.pct,
         )
 
-        will_send = (self.cfg.mode == "demo" and self.cfg.auto_execute_demo
-                     and self.cfg.confirm_demo_order)
         if not will_send:
             status = ("simulated_opportunity" if self.cfg.mode == "observe"
                       else "demo_blocked_missing_flags")
@@ -335,11 +385,34 @@ class GoldBotWorker:
             return ("order_check_rejected", risk_dec.to_dict(), False)
         send = connector.send_demo_order(request)
         sent_ok = getattr(send, "retcode", None) == check_done
+        if sent_ok:
+            self.supervisor.register_trade_sent(now=self._now())   # feed the frequency guard
         return ("demo_order_sent" if sent_ok else "demo_order_failed", risk_dec.to_dict(), sent_ok)
+
+    # ── supervisor input helpers ───────────────────────────────────────────────
+    def _safe_account_snapshot(self, connector: Any) -> dict:
+        """Equity/free-margin for the supervisor; never breaks the loop if absent."""
+        try:
+            return connector.account_snapshot() or {}
+        except Exception:  # noqa: BLE001 - snapshot is advisory for safety math
+            return {}
+
+    def _tick_fresh(self, probe: ProbeResult) -> bool:
+        """True if the last tick is recent (or its time is unknown — fail open on info)."""
+        from services.gold_bot_demo_safety_supervisor import TICK_STALE_SECONDS, _parse_iso
+        t = _parse_iso(getattr(probe, "tick_time", None))
+        if t is None:
+            return True
+        return (self._now() - t).total_seconds() <= TICK_STALE_SECONDS
 
     # ── helpers ────────────────────────────────────────────────────────────────
     def _load_learning_modifiers(self) -> None:
-        """Load demo-only learning modifiers when enabled (default off). Fail-soft."""
+        """
+        Load demo-only learning modifiers when enabled (default off). Fail-soft.
+        The safety supervisor validates the file against the demo contract FIRST;
+        an invalid/expired/forbidden file disables learning for this run (in-memory
+        only — files are never deleted here).
+        """
         self._learning_modifiers, self._learning_warns = {}, []
         if not self.cfg.use_learning_modifiers:
             return
@@ -347,12 +420,22 @@ class GoldBotWorker:
             DEFAULT_ACTIVE_MODIFIERS_PATH, load_active_modifiers,
         )
         path = self.cfg.learning_modifiers_file or DEFAULT_ACTIVE_MODIFIERS_PATH
+
+        decision = self.supervisor.evaluate_learning(path, enabled=True, now=self._now())
+        self._learning_safety = decision.to_dict()
+        if not decision.allowed:
+            self.supervisor.record_event(decision, now=self._now(), context="learning_contract")
+            self._print(f"[learning] DISABLED by safety supervisor — {decision.reason}")
+            for vio in decision.details.get("violations", []):
+                self._print(f"           contract - {vio}")
+            return
+
         self._learning_modifiers, self._learning_warns = load_active_modifiers(path)
         for w in self._learning_warns:
             self._print(f"[learning] warning - {w}")
         if self._learning_modifiers:
             self._print(f"[learning] {len(self._learning_modifiers)} demo modifier(s) active "
-                        f"(confidence-only).")
+                        f"(confidence-only, contract OK).")
 
     def _read_today_pnl(self, connector: Any, probe: ProbeResult, symbol: str) -> float | None:
         """Best-effort: history read must never break the loop."""
@@ -384,6 +467,10 @@ class GoldBotWorker:
         self._print(f" execution    : {self._execution_label()}")
         self._print(f" live trading : NEVER    demo-only {self.safety.mt5_demo_only}    "
                     f"kill-switch {self.safety.kill_switch}")
+        sc = self.supervisor.config
+        self._print(f" safety super : ALWAYS ON (no off switch)  max-open {sc.max_open_positions}  "
+                    f"<={sc.max_trades_per_hour}/h  gap {sc.min_seconds_between_trades}s  "
+                    f"loss-streak {sc.max_consecutive_losses}->{sc.cooldown_minutes_after_loss_streak}m")
         self._print(f" calendar     : {cfg.calendar_file or '(none)'}")
         if cfg.calendar_file:
             from services.gold_bot_economic_calendar import resolve_calendar_provider
@@ -418,6 +505,10 @@ class GoldBotWorker:
             self._print(f"      learning- conf {lr['original_confidence']} "
                         f"{lr['learning_modifier']:+d} -> {lr['final_confidence']} "
                         f"({lr['learning_mode']})")
+        sf = e.get("safety")
+        if sf and (not sf["allowed"] or sf["severity"] != "info"):
+            cd = f" cooldown_until {sf['cooldown_until']}" if sf.get("cooldown_until") else ""
+            self._print(f"      safety  - {sf['severity'].upper()} {sf['reason']}{cd}")
         if e["risk"] is not None:
             rd = e["risk"]
             self._print(f"      risk    - {'APPROVED' if rd['approved'] else 'BLOCKED'} "

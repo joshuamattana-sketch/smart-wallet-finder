@@ -47,6 +47,12 @@ HARD_MAX_MODIFIER = 12
 
 DEFAULT_MIN_SAMPLES = 20
 
+# LM87A demo safety contract: keys that must NEVER appear in an active modifier
+# file (top level or per-setup). Modifiers are CONFIDENCE-ONLY - anything that
+# could touch live trading, order routing, or sizing is a hard contract failure.
+FORBIDDEN_MODIFIER_KEYS = ("live", "live_trading", "order_send", "volume", "lot",
+                           "leverage", "bypass")
+
 # Statuses
 ACTIVE = "active"
 INACTIVE = "inactive"
@@ -344,3 +350,52 @@ def modifiers_expired(path: str | Path = DEFAULT_ACTIVE_MODIFIERS_PATH, *,
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return now > dt, exp
+
+
+def contract_violations(payload: Any, *, now: datetime | None = None) -> list[str]:
+    """
+    LM87A: validate an active demo modifier payload against the demo-only,
+    confidence-only contract. Returns a list of human-readable violations (empty
+    == passes). Checks: safety == demo_only, mode == demo_auto_learning, not
+    expired, no forbidden keys (top level or per-setup), and every
+    confidence_modifier within the hard clamp [-20, +12]. Pure; never raises.
+    """
+    now = now or datetime.now(timezone.utc)
+    if not isinstance(payload, dict):
+        return ["payload is not a JSON object"]
+    v: list[str] = []
+    if payload.get("safety") != "demo_only":
+        v.append(f"safety != demo_only (got {payload.get('safety')!r})")
+    if payload.get("mode") != "demo_auto_learning":
+        v.append(f"mode != demo_auto_learning (got {payload.get('mode')!r})")
+    exp = payload.get("expires_at")
+    if exp:
+        try:
+            dt = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if now > dt:
+                v.append(f"expired at {exp}")
+        except ValueError:
+            v.append(f"unparseable expires_at {exp!r}")
+    for k in FORBIDDEN_MODIFIER_KEYS:
+        if k in payload:
+            v.append(f"forbidden key '{k}' at top level")
+    mods = payload.get("modifiers")
+    if isinstance(mods, dict):
+        for setup, e in mods.items():
+            if not isinstance(e, dict):
+                continue
+            for k in FORBIDDEN_MODIFIER_KEYS:
+                if k in e:
+                    v.append(f"forbidden key '{k}' in modifier '{setup}'")
+            cm = e.get("confidence_modifier")
+            try:
+                cmv = float(cm)
+            except (TypeError, ValueError):
+                v.append(f"modifier '{setup}' confidence_modifier not numeric: {cm!r}")
+                continue
+            if cmv < HARD_MIN_MODIFIER or cmv > HARD_MAX_MODIFIER:
+                v.append(f"modifier '{setup}' confidence_modifier {cm} out of clamp "
+                         f"[{HARD_MIN_MODIFIER}, {HARD_MAX_MODIFIER}]")
+    return v
