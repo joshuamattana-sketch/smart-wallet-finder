@@ -121,6 +121,7 @@ class TradeIdea:
     confidence_components: dict[str, Any] = field(default_factory=dict)
     market_state: dict[str, Any] = field(default_factory=dict)
     macro: dict[str, Any] = field(default_factory=dict)
+    learning: dict[str, Any] = field(default_factory=dict)
     should_execute_demo: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -566,6 +567,40 @@ def _apply_macro(
     return idea
 
 
+def _apply_learning(idea: TradeIdea, modifiers: dict, *, mode: str, min_conf: int) -> TradeIdea:
+    """
+    Fold a DEMO-ONLY learning confidence modifier into a directional idea (LM86B).
+    Only nudges confidence / gating — never volume, never bypasses macro lockout
+    or risk. A NO_TRADE (incl. macro lockout) is left untouched, so a learning
+    BOOST can never revive a blocked decision.
+    """
+    if not modifiers or idea.decision not in ("LONG", "SHORT"):
+        return idea
+    m = modifiers.get(idea.strategy)
+    if not m:
+        return idea
+    delta = int(max(-20, min(12, int(round(float(m.get("confidence_modifier", 0)))))))
+    if delta == 0:
+        return idea
+    original = idea.confidence
+    final = max(0, min(100, original + delta))
+    idea.reasons.append(
+        f"learning modifier: {idea.strategy} {delta:+d} ({m.get('reason', 'demo auto-learning')}).")
+    idea.learning = {
+        "original_confidence": original, "learning_modifier": delta, "final_confidence": final,
+        "learning_modifier_source": m.get("source_scorecard") or m.get("source"),
+        "learning_mode": mode,
+    }
+    if final < min_conf:
+        idea.blockers.append(
+            f"learning pulled confidence to {final} < min {min_conf} for {idea.risk_mode}.")
+        idea.decision = "NO_TRADE"
+        idea.strategy = "learning_low_confidence"
+        idea.should_execute_demo = False
+    idea.confidence = final
+    return idea
+
+
 def decide(
     candles: list[dict],
     *,
@@ -577,18 +612,31 @@ def decide(
     has_open_position: bool,
     macro: MacroContext | None = None,
     ignore_event_lockout: bool = False,
+    use_learning_modifiers: bool = False,
+    learning_modifiers: dict | None = None,
+    learning_modifiers_file: str | None = None,
+    learning_mode: str = "off",
 ) -> TradeIdea:
     """
     Public entry point. Runs the pure technical engine, then (optionally) folds
-    in the macro/news/event context. With ``macro=None`` the result is identical
-    to the technical engine — macro is purely additive.
+    in the macro/news/event context, then (optionally) a DEMO-ONLY learning
+    confidence modifier. With macro=None and use_learning_modifiers=False the
+    result is identical to the technical engine — both layers are purely additive
+    and default OFF. Learning never bypasses macro lockout, spread, or risk.
     """
     idea = _decide_core(
         candles, symbol=symbol, timeframe=timeframe, risk_mode=risk_mode,
         spread_points=spread_points, point=point, has_open_position=has_open_position,
     )
-    if macro is None:
-        return idea
     mode = risk_mode.lower()
-    return _apply_macro(idea, macro, mode=mode, min_conf=MIN_CONFIDENCE.get(mode, 55),
-                        ignore_lockout=ignore_event_lockout)
+    min_conf = MIN_CONFIDENCE.get(mode, 55)
+    if macro is not None:
+        idea = _apply_macro(idea, macro, mode=mode, min_conf=min_conf,
+                            ignore_lockout=ignore_event_lockout)
+    if use_learning_modifiers:
+        mods = learning_modifiers
+        if mods is None and learning_modifiers_file:
+            from services.gold_bot_learning_modifiers import load_active_modifiers
+            mods, _w = load_active_modifiers(learning_modifiers_file)
+        idea = _apply_learning(idea, mods or {}, mode=learning_mode, min_conf=min_conf)
+    return idea

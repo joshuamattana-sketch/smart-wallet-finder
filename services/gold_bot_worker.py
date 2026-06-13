@@ -74,6 +74,8 @@ class WorkerConfig:
     auto_execute_demo: bool = False
     confirm_demo_order: bool = False
     close_on_no_trade: bool = False       # placeholder in V1 (see _run_iteration)
+    use_learning_modifiers: bool = False  # LM86B demo-only confidence learning (default off)
+    learning_modifiers_file: str | None = None
     json_output: bool = False
     write_status: bool = True
 
@@ -109,6 +111,8 @@ class GoldBotWorker:
         self._macro_events: list[dict] = []
         self._macro_source = "none"
         self._macro_warns: list[str] = []
+        self._learning_modifiers: dict = {}
+        self._learning_warns: list[str] = []
         self.iterations: list[dict] = []   # in-memory record (handy for tests)
 
         # Last-known snapshot, so 'stopped'/'error' status keeps real values.
@@ -129,6 +133,7 @@ class GoldBotWorker:
                 calendar_file=self.cfg.calendar_file,
                 macro_events_file=self.cfg.macro_events_file, now=self._now(),
             )
+            self._load_learning_modifiers()
             connector = self._injected_connector or Mt5DemoConnector()
             probe = ProbeResult()
             self._write_status("running")
@@ -213,6 +218,9 @@ class GoldBotWorker:
             candles, symbol=symbol, timeframe=self.cfg.timeframe.upper(),
             risk_mode=self.cfg.risk_mode, spread_points=spread_points, point=point,
             has_open_position=open_xau > 0, macro=macro,
+            use_learning_modifiers=self.cfg.use_learning_modifiers,
+            learning_modifiers=self._learning_modifiers,
+            learning_mode=("demo" if self.cfg.mode == "demo" else "observe"),
         )
 
         exec_status, risk_dec, order_sent = self._maybe_execute(
@@ -240,6 +248,7 @@ class GoldBotWorker:
             "decision": idea.decision,
             "strategy": idea.strategy,
             "confidence": idea.confidence,
+            "learning": idea.learning,
             "macro_event_state": macro.event_risk_state,
             "macro_bias": macro.macro_bias,
             "macro_next_event": macro.next_event_name,
@@ -329,6 +338,22 @@ class GoldBotWorker:
         return ("demo_order_sent" if sent_ok else "demo_order_failed", risk_dec.to_dict(), sent_ok)
 
     # ── helpers ────────────────────────────────────────────────────────────────
+    def _load_learning_modifiers(self) -> None:
+        """Load demo-only learning modifiers when enabled (default off). Fail-soft."""
+        self._learning_modifiers, self._learning_warns = {}, []
+        if not self.cfg.use_learning_modifiers:
+            return
+        from services.gold_bot_learning_modifiers import (
+            DEFAULT_ACTIVE_MODIFIERS_PATH, load_active_modifiers,
+        )
+        path = self.cfg.learning_modifiers_file or DEFAULT_ACTIVE_MODIFIERS_PATH
+        self._learning_modifiers, self._learning_warns = load_active_modifiers(path)
+        for w in self._learning_warns:
+            self._print(f"[learning] warning - {w}")
+        if self._learning_modifiers:
+            self._print(f"[learning] {len(self._learning_modifiers)} demo modifier(s) active "
+                        f"(confidence-only).")
+
     def _read_today_pnl(self, connector: Any, probe: ProbeResult, symbol: str) -> float | None:
         """Best-effort: history read must never break the loop."""
         try:
@@ -367,6 +392,12 @@ class GoldBotWorker:
         self._print(f" macro events : {cfg.macro_events_file or '(none)'}")
         self._print(f" biases       : DXY {cfg.dxy_bias} | Yields {cfg.yields_bias} | "
                     f"Geo {cfg.geopolitical_risk}")
+        learn_mode = "demo" if cfg.mode == "demo" else "observe"
+        self._print(f" learning     : {'enabled' if cfg.use_learning_modifiers else 'disabled'}"
+                    f"  (demo-only, confidence-only)")
+        if cfg.use_learning_modifiers:
+            self._print(f" modifier file: {cfg.learning_modifiers_file or '(default active_demo_modifiers.json)'}")
+            self._print(f" learning mode: {learn_mode}    demo-only true")
         self._print(f" journal      : {self.journal_path}")
         if self.safety.kill_switch:
             self._print(" WARNING      : GOLD_BOT_KILL_SWITCH active — all orders blocked.")
@@ -382,6 +413,11 @@ class GoldBotWorker:
         )
         for b in idea.blockers:
             self._print(f"      blocker - {b}")
+        if idea.learning:
+            lr = idea.learning
+            self._print(f"      learning- conf {lr['original_confidence']} "
+                        f"{lr['learning_modifier']:+d} -> {lr['final_confidence']} "
+                        f"({lr['learning_mode']})")
         if e["risk"] is not None:
             rd = e["risk"]
             self._print(f"      risk    - {'APPROVED' if rd['approved'] else 'BLOCKED'} "

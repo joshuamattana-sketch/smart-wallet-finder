@@ -1437,3 +1437,41 @@ Reads `data/gold_bot/replay/*.jsonl` (risk_mode pulled from the sibling
 run LM85A). All learning outputs (`data/gold_bot/learning/*.json|*.jsonl|*.csv`)
 are gitignored. Tests `python -m pytest tests/test_gold_bot_learning_journal.py -q`
 (no MT5/internet). LIVE TRADING UNCHANGED — learning is analysis only.
+
+## LM86B Demo auto learning modifiers (preview -> active, demo-only)
+
+`services/gold_bot_learning_modifiers.py` promotes the LM86A preview into an
+ACTIVE demo modifier set the decision engine / replay / worker may OPTIONALLY
+apply. DEMO-ONLY autonomy: no per-setup approval, but modifiers only nudge
+CONFIDENCE — they can NEVER enable live trading or bypass macro lockout / kill
+switch / daily-loss / margin / risk gate, and never change volume. Values are
+clamped twice: promotion [-12,+8], hard [-20,+12]. `decide()` gains
+`use_learning_modifiers` (default False), `learning_modifiers`/
+`learning_modifiers_file`, `learning_mode`; when on it adds an explainable
+`reason` and `idea.learning` = {original_confidence, learning_modifier,
+final_confidence, learning_modifier_source, learning_mode}, clamps 0-100, and may
+fall to NO_TRADE (`learning_low_confidence`) — but a NO_TRADE / macro lockout is
+NEVER revived by a boost.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# inspect which preview modifiers would activate (read-only):
+python scripts/run_gold_bot_learning_modifiers_probe.py
+# auto-promote preview -> active_demo_modifiers.json (demo-only, no approval):
+python scripts/run_gold_bot_learning_modifiers_probe.py --promote --min-samples 10
+
+# compare replay WITHOUT vs WITH learning:
+python scripts/run_gold_bot_replay.py --timeframe M1 --max-bars 500 --risk-mode balanced --horizons 5,15,30
+python scripts/run_gold_bot_replay.py --timeframe M1 --max-bars 500 --risk-mode balanced --horizons 5,15,30 --use-learning-modifiers
+
+# observe worker with learning (still sends nothing; demo exec needs the demo flags too):
+python scripts/run_gold_bot_worker.py --mode observe --risk-mode scalp --use-learning-modifiers --max-iterations 3 --interval-seconds 5
+```
+
+Worker banner shows learning enabled/disabled + modifier file + learning mode +
+demo-only. Demo execution STILL requires `--mode demo --auto-execute-demo
+--confirm-demo-order` on a verified demo account through the risk gate — learning
+changes none of that. Generated `data/gold_bot/learning/active_demo_modifiers.json`
++ `modifier_events.jsonl` are gitignored. Missing/invalid modifier file → warn +
+continue without modifiers. Tests
+`python -m pytest tests/test_gold_bot_learning_modifiers.py -q` (no MT5/internet).

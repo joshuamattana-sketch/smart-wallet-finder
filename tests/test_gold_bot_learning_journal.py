@@ -168,7 +168,7 @@ def test_modifiers_preview_is_preview_only(tmp_path):
     rows, _f, _w = load_replay_rows(_make_replay(tmp_path, _dataset()))
     sc = build_scorecard(rows, horizon=15, min_samples=20)
     preview = build_setup_modifiers_preview(sc)
-    assert "_note" in preview and "not used by live" in preview["_note"].lower()
+    assert "_note" in preview and "not read by live" in preview["_note"].lower()
     assert preview["momentum"]["confidence_modifier"] == 5
     assert preview["fvg_retest"]["confidence_modifier"] == -8
 

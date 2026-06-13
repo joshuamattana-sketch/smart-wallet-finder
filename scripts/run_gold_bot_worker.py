@@ -62,6 +62,10 @@ def parse_args(argv=None):
     p.add_argument("--confirm-demo-order", action="store_true", dest="confirm_demo_order")
     p.add_argument("--close-on-no-trade", action="store_true", dest="close_on_no_trade",
                    help="Placeholder in V1 (surfaced, never sends a close).")
+    p.add_argument("--use-learning-modifiers", action="store_true", dest="use_learning_modifiers",
+                   help="Apply demo-only learned confidence modifiers (default off; never live).")
+    p.add_argument("--learning-modifiers-file", default=None, dest="learning_modifiers_file",
+                   help="Active demo modifiers JSON (default data/gold_bot/learning/active_demo_modifiers.json).")
     p.add_argument("--no-status-file", action="store_true", dest="no_status_file",
                    help="Do not write data/gold_bot/worker_status.json.")
     p.add_argument("--json", action="store_true", dest="json_output")
@@ -77,7 +81,9 @@ def main(argv=None) -> int:
         macro_events_file=args.macro_events_file, dxy_bias=args.dxy_bias,
         yields_bias=args.yields_bias, geopolitical_risk=args.geopolitical_risk,
         auto_execute_demo=args.auto_execute_demo, confirm_demo_order=args.confirm_demo_order,
-        close_on_no_trade=args.close_on_no_trade, json_output=args.json_output,
+        close_on_no_trade=args.close_on_no_trade,
+        use_learning_modifiers=args.use_learning_modifiers,
+        learning_modifiers_file=args.learning_modifiers_file, json_output=args.json_output,
         write_status=not args.no_status_file,
     )
     return GoldBotWorker(cfg).run()

@@ -186,6 +186,31 @@ def test_missing_history_raises_with_hint(tmp_path):
         assert "backfill" in str(exc).lower()
 
 
+def test_replay_with_learning_modifiers_no_mt5(tmp_path):
+    import sys
+    _write_history(tmp_path, _bars(160))
+    md = tmp_path / "learning"
+    md.mkdir()
+    (md / "active_demo_modifiers.json").write_text(json.dumps({"modifiers": {
+        "momentum": {"confidence_modifier": 5, "status": "active", "reason": "x"}}}), encoding="utf-8")
+    sys.modules.pop("MetaTrader5", None)
+    res = run_replay(history_dir=tmp_path, macro_history_dir=tmp_path / "nomacro",
+                     out_dir=tmp_path / "replay", warmup_bars=30, max_bars=20,
+                     use_learning_modifiers=True,
+                     learning_modifiers_file=str(md / "active_demo_modifiers.json"))
+    assert res.summary["used_learning_modifiers"] is True
+    assert res.summary["learning_modifiers_count"] == 1
+    assert "MetaTrader5" not in sys.modules
+
+
+def test_replay_learning_off_by_default(tmp_path):
+    _write_history(tmp_path, _bars(160))
+    res = run_replay(history_dir=tmp_path, macro_history_dir=tmp_path / "nomacro",
+                     out_dir=tmp_path / "replay", warmup_bars=30, max_bars=20)
+    assert res.summary["used_learning_modifiers"] is False
+    assert res.summary["learning_modifiers_count"] == 0
+
+
 def test_replay_does_not_import_mt5(tmp_path):
     # The MT5 package must never be imported by a replay run.
     import sys

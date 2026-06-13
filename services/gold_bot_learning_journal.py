@@ -320,22 +320,31 @@ def build_scorecard(rows: list[dict], *, horizon: int = 15, min_samples: int = 2
     }
 
 
-def build_setup_modifiers_preview(scorecard: dict) -> dict:
+def build_setup_modifiers_preview(scorecard: dict, *, source_scorecard: str | None = None) -> dict:
     """
-    PREVIEW ONLY. Suggests a confidence nudge per setup from its status. NOT used
-    by the live decision engine or worker - informational until an owner-approved
-    gate enables it.
+    PREVIEW. Suggests a confidence nudge per setup from its status, with the
+    structured fields the LM86B promoter needs (sample_count / expectancy /
+    winrate / status / horizon). This is NOT consumed by live decisions — it must
+    be promoted to active_demo_modifiers.json (demo-only) before any use.
     """
     horizon = scorecard.get("horizon")
     preview: dict[str, Any] = {
-        "_note": "PREVIEW ONLY - not used by live decisions (LEARNING_MODIFIERS_LIVE=False).",
+        "_note": "PREVIEW - promote to active_demo_modifiers.json (demo-only) before use; "
+                 "not read by live decisions.",
     }
     for setup, v in scorecard.get("by_setup", {}).items():
         status = v["recommended_status"]
         if status not in _STATUS_MODIFIER:
             continue
         preview[setup] = {
+            "setup": setup,
             "confidence_modifier": _STATUS_MODIFIER[status],
+            "status": status,
+            "sample_count": v["trade_count"],
+            "expectancy_points": v["expectancy_points"],
+            "winrate": v["winrate"],
+            "horizon": horizon,
+            "source_scorecard": source_scorecard,
             "reason": f"{status}: expectancy {v['expectancy_points']}pt at horizon "
                       f"{horizon} over {v['trade_count']} samples",
         }
@@ -359,8 +368,9 @@ def write_scorecard(out_dir: str | Path, scorecard: dict, *, symbol: str, timefr
     payload = json.dumps(scorecard, indent=2, default=str)
     named.write_text(payload, encoding="utf-8")
     latest.write_text(payload, encoding="utf-8")
-    preview.write_text(json.dumps(build_setup_modifiers_preview(scorecard), indent=2,
-                                  default=str), encoding="utf-8")
+    preview.write_text(json.dumps(
+        build_setup_modifiers_preview(scorecard, source_scorecard=named.name),
+        indent=2, default=str), encoding="utf-8")
     g = scorecard["global"]
     with events.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({

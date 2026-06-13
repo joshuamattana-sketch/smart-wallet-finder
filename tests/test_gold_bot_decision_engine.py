@@ -223,6 +223,50 @@ def test_macro_context_attached_to_idea():
     assert "applied" in idea.macro
 
 
+# ── learning modifiers (LM86B, demo-only, default off) ──────────────────────────
+def test_learning_off_by_default():
+    assert _decide(_rising()).learning == {}
+    # modifiers passed but flag off → ignored
+    idea = _decide(_rising(), learning_modifiers={"momentum": {"confidence_modifier": 12, "reason": "x"}})
+    assert idea.learning == {}
+
+
+def test_learning_modifier_surfaced_with_metadata():
+    plain = _decide(_rising())
+    mods = {"momentum": {"confidence_modifier": 5, "reason": "positive expectancy",
+                         "source_scorecard": "sc.json"}}
+    idea = _decide(_rising(), use_learning_modifiers=True, learning_modifiers=mods,
+                   learning_mode="replay")
+    assert idea.learning["original_confidence"] == plain.confidence
+    assert idea.learning["learning_modifier"] == 5
+    assert idea.learning["final_confidence"] == min(100, plain.confidence + 5)
+    assert idea.learning["learning_mode"] == "replay"
+    assert any("learning modifier" in r for r in idea.reasons)
+
+
+def test_learning_modifier_hard_clamped():
+    idea = _decide(_rising(), use_learning_modifiers=True,
+                   learning_modifiers={"momentum": {"confidence_modifier": 999, "reason": "x"}})
+    assert idea.learning["learning_modifier"] == 12          # hard clamp +12
+
+
+def test_learning_negative_can_block_below_threshold():
+    idea = _decide(_rising(), use_learning_modifiers=True,
+                   learning_modifiers={"momentum": {"confidence_modifier": -999, "reason": "weak"}})
+    # -20 clamp drags confidence under the balanced min → NO_TRADE
+    if idea.decision == "NO_TRADE":
+        assert idea.strategy == "learning_low_confidence"
+    assert idea.learning["learning_modifier"] == -20
+
+
+def test_learning_cannot_revive_macro_lockout():
+    idea = _decide(_rising(), macro=_macro(_lockout_event(20)), use_learning_modifiers=True,
+                   learning_modifiers={"momentum": {"confidence_modifier": 12, "reason": "boost"}})
+    assert idea.decision == "NO_TRADE"
+    assert idea.strategy == "macro_lockout"
+    assert idea.learning == {}                               # learning skipped on a blocked idea
+
+
 # ── market state context ──────────────────────────────────────────────────────
 def test_market_state_has_v2_context():
     ms = compute_market_state(_rising(), spread_points=20, point=POINT)

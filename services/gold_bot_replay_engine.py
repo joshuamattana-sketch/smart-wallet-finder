@@ -197,11 +197,13 @@ def _bar_to_candle(b: HistoricalBar) -> dict[str, Any]:
 
 
 def replay_decide(step: ReplayStep, macro_snapshot: dict, *, symbol: str,
-                  timeframe: str, risk_mode: str, point: float = POINT):
+                  timeframe: str, risk_mode: str, point: float = POINT,
+                  learning_modifiers: dict | None = None, learning_mode: str = "replay"):
     """
     Run the real Decision Engine V2 on the visible (past+current) bars only.
     Builds a MacroContext from the as-of DXY/yields biases (no calendar file).
-    Execution is impossible here: no connector, has_open_position=False.
+    Execution is impossible here: no connector, has_open_position=False. Optional
+    demo-only learning modifiers may nudge confidence (default none).
     """
     candles = [_bar_to_candle(b) for b in step.visible_bars]
     cur = step.current_bar
@@ -212,7 +214,9 @@ def replay_decide(step: ReplayStep, macro_snapshot: dict, *, symbol: str,
         yields_bias=macro_snapshot.get("yields_bias", "unknown"),
     )
     return decide(candles, symbol=symbol, timeframe=timeframe, risk_mode=risk_mode,
-                  spread_points=spread_points, point=point, has_open_position=False, macro=macro)
+                  spread_points=spread_points, point=point, has_open_position=False, macro=macro,
+                  use_learning_modifiers=bool(learning_modifiers),
+                  learning_modifiers=learning_modifiers, learning_mode=learning_mode)
 
 
 # ── Forward return scoring (only AFTER the decision is recorded) ────────────────
@@ -318,10 +322,12 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
                max_bars: int | None = 500, from_time: datetime | None = None,
                to_time: datetime | None = None, risk_mode: str = "balanced",
                horizons: tuple[int, ...] = DEFAULT_HORIZONS, dry_run: bool = False,
+               use_learning_modifiers: bool = False, learning_modifiers_file: str | None = None,
                now: datetime | None = None) -> ReplayResult:
     """
     Run a no-lookahead replay. Reads local history only - NEVER MT5. dry_run
     validates inputs and writes nothing. Raises ReplayError if history is absent.
+    Optional demo-only learning modifiers (LM86B) may nudge confidence; default off.
     """
     now = now or datetime.now(timezone.utc)
     timeframe = timeframe.upper()
@@ -339,6 +345,16 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
                         from_time=from_time, to_time=to_time)
 
     warnings: list[str] = list(macro.warnings)
+    learning_modifiers: dict = {}
+    learning_source = None
+    if use_learning_modifiers:
+        from services.gold_bot_learning_modifiers import (
+            DEFAULT_ACTIVE_MODIFIERS_PATH, load_active_modifiers,
+        )
+        lpath = learning_modifiers_file or DEFAULT_ACTIVE_MODIFIERS_PATH
+        learning_modifiers, lwarn = load_active_modifiers(lpath)
+        warnings += lwarn
+        learning_source = str(lpath)
     planned = clock.planned_steps()
     if planned == 0:
         warnings.append(
@@ -352,6 +368,9 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
         "warmup_bars": warmup_bars, "max_bars": max_bars, "horizons": list(horizons),
         "planned_steps": planned, "macro_loaded": sorted(macro.series.keys()),
         "no_lookahead": True, "calls_mt5": False, "warnings": warnings,
+        "used_learning_modifiers": bool(use_learning_modifiers and learning_modifiers),
+        "learning_modifiers_count": len(learning_modifiers),
+        "learning_modifiers_source": learning_source,
         "generated_at": now.isoformat(),
     }
 
@@ -372,7 +391,8 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
             # ── decision: PAST + CURRENT bars only (no future) ──────────────
             snapshot = macro.snapshot(step.time)
             idea = replay_decide(step, snapshot, symbol=symbol, timeframe=timeframe,
-                                 risk_mode=risk_mode)
+                                 risk_mode=risk_mode, learning_modifiers=learning_modifiers or None,
+                                 learning_mode="replay")
             # ── forward scoring: STRICTLY future bars, AFTER the decision ────
             scores = score_forward(bars, step.index, decision=idea.decision,
                                    sl_points=idea.sl_points, tp_points=idea.tp_points,
@@ -384,6 +404,7 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
                 "decision": idea.decision, "strategy": idea.strategy,
                 "confidence": idea.confidence, "reasons": idea.reasons,
                 "blockers": idea.blockers, "warnings": idea.warnings,
+                "learning": idea.learning,
                 "macro": snapshot, "score": scores,
                 "no_lookahead_visible_bars_count": step.visible_count,
                 "forward_scoring_uses_future_after_decision": True,

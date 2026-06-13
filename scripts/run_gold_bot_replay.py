@@ -57,6 +57,10 @@ def parse_args(argv=None):
     p.add_argument("--to-time", default=None, dest="to_time", help="ISO UTC (optional).")
     p.add_argument("--risk-mode", choices=list(RISK_MODES), default="balanced", dest="risk_mode")
     p.add_argument("--horizons", default="5,15,30", help="Comma list of forward bar counts.")
+    p.add_argument("--use-learning-modifiers", action="store_true", dest="use_learning_modifiers",
+                   help="Apply demo-only learned confidence modifiers (default off).")
+    p.add_argument("--learning-modifiers-file", default=None, dest="learning_modifiers_file",
+                   help="Active demo modifiers JSON (default data/gold_bot/learning/active_demo_modifiers.json).")
     p.add_argument("--dry-run", action="store_true", dest="dry_run")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
@@ -74,6 +78,8 @@ def main(argv=None) -> int:
             macro_history_dir=args.macro_history_dir, out_dir=args.out_dir,
             warmup_bars=args.warmup_bars, max_bars=args.max_bars, from_time=from_time,
             to_time=to_time, risk_mode=args.risk_mode, horizons=horizons, dry_run=args.dry_run,
+            use_learning_modifiers=args.use_learning_modifiers,
+            learning_modifiers_file=args.learning_modifiers_file,
         )
     except ReplayError as exc:
         print(f"REPLAY FAILED: {exc}", file=sys.stderr)
@@ -92,6 +98,8 @@ def main(argv=None) -> int:
     print(f" range       : warmup {s['warmup_bars']}  max-bars {s['max_bars']}  "
           f"horizons {s['horizons']}")
     print(f" macro loaded: {', '.join(s['macro_loaded']) or '(none - macro unknown)'}")
+    print(f" learning     : {'ON' if s.get('used_learning_modifiers') else 'off'}"
+          f"  ({s.get('learning_modifiers_count', 0)} demo modifier(s), confidence-only)")
     print(f" planned     : {s['planned_steps']} step(s)")
     for w in s.get("warnings", []):
         print(f"   warning - {w}")
