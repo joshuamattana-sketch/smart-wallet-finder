@@ -1791,3 +1791,34 @@ Live-verified: preview rendered the real session review (stop consecutive_safety
 3 attempted/0 sent, mt5_health_guard x3, modifiers 3x -8, cycle rejected) with NO
 network call. Tests `python -m pytest tests/test_gold_bot_discord_review_sender.py -q`
 (HTTP mocked, no real network/Discord/MT5).
+
+## LM91A Local read-only Gold Bot status API + panel (web)
+
+`lumora-web/app/api/gold-bot/status/route.ts` (`GET /api/gold-bot/status`,
+`force-dynamic` + `runtime nodejs`) + `lib/gold-bot-status.ts` read the local demo
+artifacts (`data/gold_bot/…`: session_latest, session_review_latest, outcomes_latest,
+safety_state, active_demo_modifiers, scorecard_latest, cycles/cycle_events.jsonl,
+worker_status) and return ONE tolerant status object. A compact READ-ONLY panel
+`components/gold-bot/GoldBotStatusPanel.tsx` is mounted on the existing `/gold-bot`
+page (after the planned-modules band). **STRICT read-only: no trading controls, no
+start/stop/order buttons — the only button reloads status.** The API NEVER calls
+MT5, runs Python/shell, makes external HTTP, or reads secrets / the Discord webhook
+env (Discord send-readiness is reported as `unknown_env_not_checked`). Missing files
+→ flags + warnings, never a crash.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+# then open:
+#   http://localhost:3000/gold-bot                (read-only status panel near the bottom)
+#   http://localhost:3000/api/gold-bot/status     (raw JSON)
+```
+
+Static safety invariants (offline, no Node): `python -m pytest tests/test_gold_bot_status_api.py -q`
+(asserts force-dynamic, no `process.env`/shell/MT5/webhook/external-http in the
+server files, single refresh button + "no trading controls" in the panel). Browser-
+verified against the real local data: panel showed session `consecutive_safety_blocks`,
+orders 3/0/3, blockers `mt5_health_guard x3`, modifiers 3 ACTIVE (-8), scorecard
+`avoid`, latest cycle `REJECTED`; API `readyToSend: unknown_env_not_checked`.

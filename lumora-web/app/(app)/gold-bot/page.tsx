@@ -21,6 +21,7 @@ import { GoldChartInstrument } from "@/components/gold-bot/GoldChartInstrument";
 import { BotBrainRail } from "@/components/gold-bot/BotBrainRail";
 import { CommandFeed } from "@/components/gold-bot/CommandFeed";
 import { PlannedModules } from "@/components/gold-bot/PlannedModules";
+import { GoldBotStatusPanel } from "@/components/gold-bot/GoldBotStatusPanel";
 import { clsx } from "clsx";
 import { Bot, Radar, ShieldHalf } from "lucide-react";
 
@@ -218,6 +219,9 @@ export default function GoldBotPage() {
 
       {/* ── Planned architecture band — limits · funded · execution · review ── */}
       <PlannedModules />
+
+      {/* ── LM91A read-only local status panel (no trading controls) ──────────── */}
+      <GoldBotStatusPanel />
 
       {/* ── Command-room footer strip ───────────────────────────────────────── */}
       <div className="relative overflow-hidden rounded-lg border border-amber-400/[0.1] bg-[#0c0b08]/80 px-3.5 py-2">
