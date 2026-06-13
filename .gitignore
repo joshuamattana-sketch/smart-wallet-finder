@@ -57,6 +57,10 @@ data/gold_bot/reviews/*.csv
 data/gold_bot/runs/*.json
 data/gold_bot/runs/*.jsonl
 data/gold_bot/runs/*.csv
+# LM92B first-run preflight reports — never commit.
+data/gold_bot/preflight/*.json
+data/gold_bot/preflight/*.jsonl
+data/gold_bot/preflight/*.csv
 __pycache__/
 *.pyc
 .DS_Store

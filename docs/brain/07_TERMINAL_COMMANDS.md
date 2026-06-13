@@ -1859,3 +1859,38 @@ mode ran no subprocess; `--execute --skip-session --skip-outcomes --skip-discord
 --include-real-trades` ran learning_cycle + session_review → SUCCESS, log written.
 Tests `python -m pytest tests/test_gold_bot_scheduled_runner.py -q` (subprocess
 mocked, no MT5/internet).
+
+## LM92B First market-open demo run preflight (read-only GO / NO-GO)
+
+`services/gold_bot_first_run_preflight.py` is a READ-ONLY checklist that tells the
+owner GO/NO-GO before a short autonomous demo run. It runs the EXISTING read-only
+probes (MT5 connector probe, safety probe, daily-cycle PLAN) as subprocesses, reads
+local artifacts, checks the kill switch / live flags in-process, and prints the
+exact next command. **Places NO orders, sends NO Discord, prints NO secrets, no MT5
+import.** Full runbook: `docs/gold_bot/FIRST_MARKET_OPEN_DEMO_RUN.md`.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# weekend / offline prep (tick check SKIP, still reaches GO):
+python scripts/run_gold_bot_first_run_preflight.py --skip-mt5 --skip-safety
+# market-open preflight:
+python scripts/run_gold_bot_first_run_preflight.py --use-learning-modifiers --include-real-trades --write
+# PowerShell wrapper (defaults to a full read-only preflight):
+.\scripts\start_gold_bot_first_run_preflight.ps1 -SkipMt5 -SkipSafety
+```
+
+Checks (PASS/WARN/FAIL/SKIP): repo_root · required_scripts · daily_cycle_plan ·
+mt5_demo_tick · safety_probe · kill_switch · macro_lockout · local_artifacts ·
+discord. NO-GO if any BLOCKING check FAILs (required scripts, daily plan, MT5
+stale/closed, safety cooldown/critical, kill switch, macro lockout). On GO it prints
+the conservative `start_gold_bot_daily_cycle.ps1 -Execute -ConfirmDemoSession …`
+command; on NO-GO it prints the reasons + read-only troubleshooting commands.
+Flags: `--skip-mt5 --skip-safety --duration-minutes --max-trades --risk-mode
+--use-learning-modifiers --include-real-trades --send-discord --check-discord-env
+--write --timeout-seconds --json`. Webhook env checked for PRESENCE only (and only
+with `--check-discord-env`); value never read/printed. Generated
+`data/gold_bot/preflight/preflight_<ts>.json` + `preflight_latest.json` (only with
+`--write`) are gitignored. Live-verified: offline prep + full real preflight both
+→ GO (MT5 demo connected, read-only); mocked stale tick → NO-GO with reasons +
+troubleshooting. Tests `python -m pytest tests/test_gold_bot_first_run_preflight.py -q`
+(subprocess + safety/macro mocked, no MT5/internet).
