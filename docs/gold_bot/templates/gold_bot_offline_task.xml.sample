@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  LM96A SAMPLE Windows Task Scheduler definition for the Gold Bot OFFLINE
+  maintenance cycle. THIS IS A TEMPLATE - not machine-specific. Before importing:
+    * replace <REPO_ROOT> with your repo path, e.g. C:\Users\Joshua\Desktop\wallet finder
+    * replace <USER>      with your account, e.g. DESKTOP-XXXX\Joshua
+  Prefer the helper: scripts\create_gold_bot_offline_task.ps1 -Register
+  This task runs offline maintenance only - no demo session, no live trading,
+  no Discord send, no secrets. Import via Task Scheduler > Import Task...
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Lumora Gold Bot offline maintenance cycle (gateway daily_cycle_offline). No demo trading, no live, no Discord send, no secrets.</Description>
+    <URI>\LumoraGoldBotOfflineCycle</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
+      <Repetition>
+        <Interval>PT1H</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>&lt;USER&gt;</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -File "&lt;REPO_ROOT&gt;\scripts\start_gold_bot_offline_cycle.ps1"</Arguments>
+      <WorkingDirectory>&lt;REPO_ROOT&gt;</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

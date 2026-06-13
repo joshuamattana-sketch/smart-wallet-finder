@@ -65,6 +65,11 @@ data/gold_bot/preflight/*.csv
 data/gold_bot/commands/*.json
 data/gold_bot/commands/*.jsonl
 data/gold_bot/commands/*.csv
+# LM96A Windows scheduled-task transcripts/logs — never commit.
+data/gold_bot/task_logs/*.log
+data/gold_bot/task_logs/*.txt
+data/gold_bot/task_logs/*.json
+data/gold_bot/task_logs/*.jsonl
 __pycache__/
 *.pyc
 .DS_Store

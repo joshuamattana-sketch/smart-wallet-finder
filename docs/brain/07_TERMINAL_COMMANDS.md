@@ -2092,3 +2092,40 @@ Live-verified (dev, 1366×900): under-chart gap 506px→139px (≈73% less), col
 681/734/820, chart top y≈514 (first screen); ENV DEMO/EXEC OBSERVE/LIVE LOCKED/LEARNING
 ACTIVE + SCALP + VISUAL MOCK render; Aggressive/Hunt/"PAPER MODE"/"no broker connection"/
 "EXEC DISABLED" all gone; no console errors; lint + build clean.
+
+## LM96A Gold Bot Windows Task Scheduler helper (offline maintenance only)
+
+PowerShell helper to schedule the OFFLINE maintenance cycle on Windows via the LM94A
+gateway. NO demo trading by default, no live, no Discord send, no secrets, no admin.
+The scheduled run is exactly the whitelisted offline gateway action. Full runbook:
+`docs/gold_bot/WINDOWS_TASK_SCHEDULER.md`.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+
+# manual one-off offline cycle (no demo session, Discord preview only)
+.\scripts\start_gold_bot_offline_cycle.ps1
+.\scripts\start_gold_bot_offline_cycle.ps1 -LogTranscript   # -> data/gold_bot/task_logs/*.log (gitignored)
+
+# plan the scheduled task (DEFAULT: nothing registered)
+.\scripts\create_gold_bot_offline_task.ps1 -WhatIfPlan
+
+# register (explicit)
+.\scripts\create_gold_bot_offline_task.ps1 -Register -Frequency Hourly -EveryHours 1
+.\scripts\create_gold_bot_offline_task.ps1 -Register -Frequency Daily -At "09:00"
+.\scripts\create_gold_bot_offline_task.ps1 -Register -Force                 # replace existing
+
+# disable / delete
+Disable-ScheduledTask  -TaskName "LumoraGoldBotOfflineCycle"
+Unregister-ScheduledTask -TaskName "LumoraGoldBotOfflineCycle" -Confirm:$false
+
+# tests (static; no registration, no MT5, no internet)
+python -m pytest tests/test_gold_bot_windows_task_scheduler.py -q
+```
+
+Scheduled run executes: `python scripts/run_gold_bot_command_gateway.py --action
+daily_cycle_offline --execute --include-real-trades --write-log`. Registers in the
+current-user limited context (no admin). Live-verified: `-WhatIfPlan` registers
+nothing (exit 0); the manual wrapper ran the offline cycle SUCCESS exit 0 (demo
+session SKIPPED, Discord preview only, run + command logs written, 0 redactions).
+12 static tests pass.
