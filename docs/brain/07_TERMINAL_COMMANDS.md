@@ -1475,3 +1475,57 @@ changes none of that. Generated `data/gold_bot/learning/active_demo_modifiers.js
 + `modifier_events.jsonl` are gitignored. Missing/invalid modifier file → warn +
 continue without modifiers. Tests
 `python -m pytest tests/test_gold_bot_learning_modifiers.py -q` (no MT5/internet).
+
+## LM86C Automatic learning cycle (replay → learn → adapt, demo-only)
+
+`services/gold_bot_learning_cycle.py` chains **baseline replay → scorecard →
+promote CANDIDATE → candidate replay → compare → keep or rollback**. A candidate
+modifier set only replaces the active one when it OBJECTIVELY beats the baseline;
+otherwise the active set is kept and the candidate is recorded as rejected. This
+is what catches the LM86B regression (learning made h15 avg trade ret ~-41.1pt →
+~-49.8pt) automatically.
+
+OFFLINE + DEMO-ONLY: never calls MT5, never sends orders, no HTTP, no secrets.
+Modifiers stay confidence-only; the macro lockout / risk gate / kill switch /
+volume are never touched. The candidate is staged in
+`candidate_demo_modifiers.json` and never overwrites `active_demo_modifiers.json`
+until the comparison accepts it.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# preview the planned steps + validate files (writes nothing):
+python scripts/run_gold_bot_learning_cycle.py --dry-run
+
+# run the full cycle (needs local history first — LM84A/LM84B):
+python scripts/run_gold_bot_learning_cycle.py --timeframe M1 --risk-mode balanced --max-bars 500 --horizon 15 --min-samples 10
+
+# inspect modifiers (now warns if the active set is expired):
+python scripts/run_gold_bot_learning_modifiers_probe.py
+
+# compare replay WITHOUT vs WITH learning by hand:
+python scripts/run_gold_bot_replay.py --timeframe M1 --max-bars 500 --risk-mode balanced --horizons 5,15,30 --use-learning-modifiers
+
+# undo the last accepted promotion (restore backup):
+python scripts/run_gold_bot_learning_cycle.py --rollback
+```
+
+Accept rules at the selected horizon (defaults): candidate expectancy ≥ baseline
++ `--min-improvement-points 10`; candidate trades ≥ baseline × `--min-trade-count-ratio 0.5`;
+candidate ≥ `--min-trades 30`; winrate not down > 0.05 unless expectancy improved
+strongly (≥ 2× the improvement floor); baseline/candidate with no data → reject
+safely. CLI: `--symbol --timeframe --risk-mode --max-bars --horizons --horizon
+--min-samples --min-trades --min-improvement-points --min-trade-count-ratio
+--learning-dir --replay-out-dir --dry-run --rollback --json`.
+
+Generated (all gitignored): `data/gold_bot/learning/cycles/cycle_<ts>.json`,
+`cycles/cycle_events.jsonl`, `candidate_demo_modifiers.json`,
+`active_demo_modifiers.json`, `active_demo_modifiers.backup.json`,
+`rejected_demo_modifiers.json`. Active/candidate carry metadata: `generated_at`,
+`expires_at` (default now + 7 days), `cycle_id`, `source_scorecard`,
+`baseline_summary`, `candidate_summary`, accept/reject `reason`. Expiry only WARNS
+(probe) — nothing is auto-deleted in this patch.
+
+Live-verified: real M1 balanced cycle → baseline exp -41.1pt / candidate exp
+-50.7pt → **REJECTED** (expectancy -9.6pt, need ≥ +10pt), active modifiers kept,
+no backup written. Tests
+`python -m pytest tests/test_gold_bot_learning_cycle.py -q` (no MT5/internet).

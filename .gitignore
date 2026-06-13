@@ -25,6 +25,12 @@ data/gold_bot/replay/*.csv
 data/gold_bot/learning/*.json
 data/gold_bot/learning/*.jsonl
 data/gold_bot/learning/*.csv
+# LM86C automatic learning cycle output (already covered by data/gold_bot/* ;
+# listed explicitly for intent) — never commit.
+data/gold_bot/learning/cycles/*.json
+data/gold_bot/learning/cycles/*.jsonl
+data/gold_bot/learning/*.backup.json
+data/gold_bot/learning/rejected_demo_modifiers.json
 __pycache__/
 *.pyc
 .DS_Store
