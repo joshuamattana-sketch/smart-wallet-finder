@@ -1754,3 +1754,40 @@ attempted / 0 sent / blocked mt5_health_guard x3, active modifiers (3x -8), the
 LM86C cycle REJECTED (-41.1 -> -50.7pt), and next-actions to check tick/spread.
 Tests `python -m pytest tests/test_gold_bot_session_review.py -q` (fake temp files,
 no MT5/internet).
+
+## LM90B Discord session-review sender (optional, env-only webhook)
+
+`services/gold_bot_discord_review_sender.py` reads the LM90A review files
+(`session_review_latest.json` for structured fields + `.md` optionally) and posts
+a CONCISE session review to Discord. It adds NO trading logic - it only formats +
+transmits the existing digest. **Preview by default (no network); sending requires
+BOTH `--send-discord` AND the env var `LUMORA_GOLD_DISCORD_WEBHOOK_URL`.** The
+webhook is never hardcoded, never committed, never printed in full (redacted to
+`https://discord.com/api/webhooks/...REDACTED`). HTTP is stdlib `urllib` only -
+reuses the LM51B sender, no new dependencies. No MT5, no orders.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# preview only (no send, no env var needed):
+python scripts/run_gold_bot_discord_review.py
+# if no review exists yet, build one first:
+python scripts/run_gold_bot_session_review.py
+python scripts/run_gold_bot_discord_review.py
+
+# send intentionally (webhook ONLY from env, never commit it):
+$env:LUMORA_GOLD_DISCORD_WEBHOOK_URL = "YOUR_WEBHOOK_URL"
+python scripts/run_gold_bot_discord_review.py --send-discord
+Remove-Item Env:LUMORA_GOLD_DISCORD_WEBHOOK_URL
+```
+
+CLI: `--review-md --review-json --send-discord --dry-run --max-findings 5
+--max-actions 5 --timeout-seconds 10 --json`. Behavior: default preview; `--send-discord`
+sends; `--send-discord` + `--dry-run` -> error (exit 2); `--send-discord` without the
+env webhook -> clear error (exit 2, no network); missing review JSON -> "No session
+review found. Run run_gold_bot_session_review.py first." (exit 1). Message: title +
+session/mode/symbol/risk/stop + Decisions/Orders/Outcomes/Safety/Learning lines +
+top-5 key findings + top-5 next actions, hard-capped at Discord's 2000-char limit.
+Live-verified: preview rendered the real session review (stop consecutive_safety_blocks,
+3 attempted/0 sent, mt5_health_guard x3, modifiers 3x -8, cycle rejected) with NO
+network call. Tests `python -m pytest tests/test_gold_bot_discord_review_sender.py -q`
+(HTTP mocked, no real network/Discord/MT5).
