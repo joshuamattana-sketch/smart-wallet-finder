@@ -1962,3 +1962,37 @@ script commands still work unchanged. Live-verified: dry-run preflight →
 without confirm → BLOCKED exit 2; `daily_cycle_offline --execute` → SUCCESS exit 0,
 demo session skipped (no demo trades), discord preview only, run + command logs
 written, 0 redactions.
+
+## LM94B Local Gold Bot web control panel (calls the LM94A gateway; local-only)
+
+Web control panel on `/gold-bot` that triggers the LM94A gateway via
+`POST /api/gold-bot/command`. LOCAL-OWNER tooling: whitelisted actions only, no
+live trading, no order buttons, no free-form command input, no secrets. The route
+validates + caps, then `execFile("python", [argv])` (NEVER a shell, cwd=repo root)
+the existing gateway script; the gateway re-validates and is the final authority.
+
+Buttons: Preflight · Offline Cycle · Build Review · Discord Preview (safe, one
+click) + gated Guarded Demo 5m (confirm checkbox) + Send Discord (confirm checkbox,
+needs `LUMORA_GOLD_DISCORD_WEBHOOK_URL` env — value never read/shown). Result
+console shows status/reason/command/stdout+stderr tail/run log/timestamp.
+
+```powershell
+# Python static safety tests (POST-only, argv-not-shell, caps, whitelist, no secrets/MT5/orders)
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_web_command_api.py -q
+
+# web build + run
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+# open http://localhost:3000/gold-bot   (Gold Bot Controls panel above the read-only status panel)
+```
+
+Try Preflight / Offline Cycle / Build Review / Discord Preview. Do NOT click
+Guarded Demo unless the market is open and you intend it; do NOT Send Discord unless
+the env webhook is set. Local-only guard: non-local hosts get 403 in production
+(dev is always allowed); add real local-token/CSRF auth before any non-local deploy.
+Live-verified over HTTP (dev): preflight execute=false → `planned`; guarded demo
+without confirm → `blocked`; `discord_preview` execute=true → `success` (offline
+preview, 0 redactions). lint + build clean, `/api/gold-bot/command` is ƒ dynamic.

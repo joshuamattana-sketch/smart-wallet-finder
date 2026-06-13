@@ -22,6 +22,7 @@ import { BotBrainRail } from "@/components/gold-bot/BotBrainRail";
 import { CommandFeed } from "@/components/gold-bot/CommandFeed";
 import { PlannedModules } from "@/components/gold-bot/PlannedModules";
 import { GoldBotStatusPanel } from "@/components/gold-bot/GoldBotStatusPanel";
+import { GoldBotControlPanel } from "@/components/gold-bot/GoldBotControlPanel";
 import { clsx } from "clsx";
 import { Bot, Radar, ShieldHalf } from "lucide-react";
 
@@ -58,6 +59,8 @@ const RISK_MODES = ["Safe", "Balanced", "Aggressive"] as const;
 export default function GoldBotPage() {
   const [mode, setMode] = useState<(typeof MODES)[number]>("Watch");
   const [riskMode, setRiskMode] = useState<(typeof RISK_MODES)[number]>("Balanced");
+  // Bumped after a control-panel action so the read-only status panel remounts + refetches.
+  const [statusNonce, setStatusNonce] = useState(0);
 
   // Session clock (UTC, display only: London 07–16, New York 12–21).
   const [utcHour, setUtcHour] = useState<number | null>(null);
@@ -220,8 +223,11 @@ export default function GoldBotPage() {
       {/* ── Planned architecture band — limits · funded · execution · review ── */}
       <PlannedModules />
 
+      {/* ── LM94B local control panel (calls the LM94A gateway; no live, no orders) ── */}
+      <GoldBotControlPanel onAfterRun={() => setStatusNonce((n) => n + 1)} />
+
       {/* ── LM91A read-only local status panel (no trading controls) ──────────── */}
-      <GoldBotStatusPanel />
+      <GoldBotStatusPanel key={statusNonce} />
 
       {/* ── Command-room footer strip ───────────────────────────────────────── */}
       <div className="relative overflow-hidden rounded-lg border border-amber-400/[0.1] bg-[#0c0b08]/80 px-3.5 py-2">
