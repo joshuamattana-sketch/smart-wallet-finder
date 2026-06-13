@@ -61,6 +61,10 @@ data/gold_bot/runs/*.csv
 data/gold_bot/preflight/*.json
 data/gold_bot/preflight/*.jsonl
 data/gold_bot/preflight/*.csv
+# LM94A local command gateway run logs — never commit.
+data/gold_bot/commands/*.json
+data/gold_bot/commands/*.jsonl
+data/gold_bot/commands/*.csv
 __pycache__/
 *.pyc
 .DS_Store

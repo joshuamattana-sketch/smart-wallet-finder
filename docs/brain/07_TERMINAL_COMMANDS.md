@@ -1926,3 +1926,39 @@ No live trading enabled, no orders, no MT5 required in tests. Live-verified: con
 matrix (demo/observe→OBSERVE_ONLY, demo/execute→DEMO_ALLOWED, paper→PAPER_NO_BROKER,
 live→LIVE_NOT_IMPLEMENTED), CLIs refuse `--environment live`, 417 existing gold_bot
 tests still green. Tests `python -m pytest tests/test_gold_bot_execution_environment.py -q`.
+
+## LM94A Local command gateway (whitelisted, dry-run default; no arbitrary shell)
+
+Local-only foundation for future one-click website controls. Runs ONE whitelisted
+Gold Bot action as a subprocess with strict caps + redacted logs. **Default is
+dry-run** (validate + print the command, run nothing). No UI, no API route, no live
+trading, no free-form shell, no webhook value read/printed. Full runbook:
+`docs/gold_bot/LOCAL_COMMAND_GATEWAY.md`.
+
+Actions: `preflight` · `daily_cycle_offline` · `daily_cycle_guarded_demo` ·
+`session_review` · `discord_preview` · `discord_send`. Guarded demo needs
+`--confirm-guarded-demo` and obeys caps (duration ≤15/default 5, max_trades ≤5/
+default 3, risk_mode ∈ {safe,balanced,scalp}). `discord_send` needs BOTH
+`--allow-discord-send` AND env `LUMORA_GOLD_DISCORD_WEBHOOK_URL` present.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# dry-run (default): validate + show command, run nothing
+python scripts/run_gold_bot_command_gateway.py --action preflight
+python scripts/run_gold_bot_command_gateway.py --action daily_cycle_guarded_demo --confirm-guarded-demo
+# execute
+python scripts/run_gold_bot_command_gateway.py --action daily_cycle_offline --execute --include-real-trades --write-log
+python scripts/run_gold_bot_command_gateway.py --action session_review --execute --write-log
+python scripts/run_gold_bot_command_gateway.py --action discord_preview --execute --write-log
+# tests (subprocess + env mocked; no MT5/Discord/internet)
+python -m pytest tests/test_gold_bot_command_gateway.py -q
+python -m compileall services/gold_bot_command_gateway.py scripts/run_gold_bot_command_gateway.py
+```
+
+Exit codes: planned/success 0, failed 1, blocked 2. Run logs (gitignored):
+`data/gold_bot/commands/command_<ts>.json|.jsonl` + `command_latest.*`. Old direct
+script commands still work unchanged. Live-verified: dry-run preflight →
+`python scripts/run_gold_bot_first_run_preflight.py` (nothing run); guarded demo
+without confirm → BLOCKED exit 2; `daily_cycle_offline --execute` → SUCCESS exit 0,
+demo session skipped (no demo trades), discord preview only, run + command logs
+written, 0 redactions.
