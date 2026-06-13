@@ -253,3 +253,34 @@ def test_max_iterations_respected(tmp_path):
     assert len(w.iterations) == 4
     # sleeps happen between iterations, not after the last one.
     assert len(sleeps) == 3
+
+
+# ── learning modifiers (LM86B, demo-only) ──────────────────────────────────────
+def test_worker_accepts_learning_flags_observe_no_orders(tmp_path):
+    # Missing modifier file → warning, no crash; observe still sends nothing.
+    conn = FakeConnector()
+    cfg = WorkerConfig(mode="observe", max_iterations=1, interval_seconds=0,
+                       use_learning_modifiers=True,
+                       learning_modifiers_file=str(tmp_path / "nope.json"))
+    w = _worker(cfg, conn, tmp_path)
+    assert w.run() == 0
+    assert conn.sent_orders == []
+    assert w.iterations[0]["decision"] == "LONG"
+
+
+def test_worker_applies_learning_modifier_in_observe(tmp_path):
+    import json as _json
+    conn = FakeConnector()
+    mf = tmp_path / "active_demo_modifiers.json"
+    mods = {s: {"confidence_modifier": 4, "status": "active", "reason": "x"}
+            for s in ("momentum", "scalp_momentum", "scalp_retest", "liquidity_sweep_reclaim")}
+    mf.write_text(_json.dumps({"modifiers": mods}), encoding="utf-8")
+    cfg = WorkerConfig(mode="observe", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       use_learning_modifiers=True, learning_modifiers_file=str(mf))
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    e = w.iterations[0]
+    assert conn.sent_orders == []
+    assert e["decision"] in ("LONG", "SHORT")
+    assert e["learning"].get("learning_mode") == "observe"
+    assert e["learning"]["learning_modifier"] == 4
