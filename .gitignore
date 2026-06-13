@@ -53,6 +53,10 @@ data/gold_bot/reviews/*.md
 data/gold_bot/reviews/*.json
 data/gold_bot/reviews/*.jsonl
 data/gold_bot/reviews/*.csv
+# LM92A scheduled cycle run logs — never commit.
+data/gold_bot/runs/*.json
+data/gold_bot/runs/*.jsonl
+data/gold_bot/runs/*.csv
 __pycache__/
 *.pyc
 .DS_Store

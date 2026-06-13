@@ -1822,3 +1822,40 @@ server files, single refresh button + "no trading controls" in the panel). Brows
 verified against the real local data: panel showed session `consecutive_safety_blocks`,
 orders 3/0/3, blockers `mt5_health_guard x3`, modifiers 3 ACTIVE (-8), scorecard
 `avoid`, latest cycle `REJECTED`; API `readyToSend: unknown_env_not_checked`.
+
+## LM92A Scheduled local runner (one-command demo-learning-review cycle)
+
+`services/gold_bot_scheduled_runner.py` chains the EXISTING safe scripts into one
+repeatable cycle via subprocess — it adds NO trading/strategy logic. Order:
+preflight → demo session → outcome sync → learning cycle → session review → discord
+preview. **DEFAULT = plan/dry-run: prints the steps and runs NOTHING.** Trading
+happens only with BOTH `--execute` AND `--confirm-demo-session` (and even then the
+real session runner + safety supervisor + risk gate still gate every order).
+Discord sends only with `--send-discord`. No webhook value is ever read or logged
+(run logs redact webhook-like strings).
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# plan only (safe default — nothing runs):
+python scripts/run_gold_bot_daily_cycle.py
+# execute the safe OFFLINE steps, no demo trades:
+python scripts/run_gold_bot_daily_cycle.py --execute --skip-session --include-real-trades
+# full guarded loop (demo trades go through the session runner + supervisor):
+python scripts/run_gold_bot_daily_cycle.py --execute --confirm-demo-session --duration-minutes 5 --max-trades 3 --risk-mode scalp --use-learning-modifiers --include-real-trades
+# PowerShell (defaults to plan):
+.\scripts\start_gold_bot_daily_cycle.ps1
+.\scripts\start_gold_bot_daily_cycle.ps1 -Execute -ConfirmDemoSession -DurationMinutes 5 -MaxTrades 3 -RiskMode scalp -UseLearningModifiers -IncludeRealTrades
+```
+
+Flags: `--execute --confirm-demo-session --duration-minutes --max-trades --risk-mode
+--use-learning-modifiers --include-real-trades --real-trade-weight --min-real-trades
+--send-discord --skip-session/--skip-outcomes/--skip-learning-cycle/--skip-review/
+--skip-discord-preview --continue-on-error --dry-run-log --json` (+ `--cycle-*`
+learning overrides). Per step: subprocess `cwd=repo root`, `timeout 900s`, captured
+stdout/stderr tails (redacted). On failure the run STOPS unless `--continue-on-error`.
+Run logs `data/gold_bot/runs/run_<ts>.json` + `.jsonl` + `run_latest.*` are written
+only when executing (or `--dry-run-log`) and are gitignored. Live-verified: plan
+mode ran no subprocess; `--execute --skip-session --skip-outcomes --skip-discord-preview
+--include-real-trades` ran learning_cycle + session_review → SUCCESS, log written.
+Tests `python -m pytest tests/test_gold_bot_scheduled_runner.py -q` (subprocess
+mocked, no MT5/internet).
