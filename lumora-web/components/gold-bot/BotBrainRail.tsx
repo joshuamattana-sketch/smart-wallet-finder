@@ -188,7 +188,19 @@ export function BotBrainRail({ className }: { className?: string }) {
         </p>
       </RailPanel>
 
-      {/* Detector stack */}
+    </div>
+  );
+}
+
+/**
+ * Detector stack — split out of the left rail (LM95C) and rendered UNDER the chart
+ * in the center column, so the center fills the WATCH row instead of leaving a blank
+ * block beside the taller left rail. Presentation only; same staged data.
+ */
+export function BotDetectorRail({ className }: { className?: string }) {
+  return (
+    <div className={clsx("space-y-3", className)}>
+      <style dangerouslySetInnerHTML={{ __html: RAIL_CSS }} />
       <RailPanel
         title="Detectors"
         right={
@@ -198,7 +210,7 @@ export function BotBrainRail({ className }: { className?: string }) {
           </span>
         }
       >
-        <div className="divide-y divide-white/[0.04]">
+        <div className="divide-y divide-white/[0.04] sm:grid sm:grid-cols-2 sm:divide-y-0">
           {DETECTORS.map(({ name, status, note }) => (
             <div key={name} className="lmbb-row flex items-start gap-2.5 px-3 py-2">
               <span

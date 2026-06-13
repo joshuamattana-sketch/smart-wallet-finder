@@ -1996,3 +1996,99 @@ the env webhook is set. Local-only guard: non-local hosts get 403 in production
 Live-verified over HTTP (dev): preflight execute=false → `planned`; guarded demo
 without confirm → `blocked`; `discord_preview` execute=true → `success` (offline
 preview, 0 redactions). lint + build clean, `/api/gold-bot/command` is ƒ dynamic.
+
+## LM95A Gold Bot page hierarchy polish (presentation only; no logic/API/trading change)
+
+Reorganized `/gold-bot` into a clear command-room hierarchy with subtle section
+headers: **OPERATE** (controls + latest gateway result, amber), **OBSERVE**
+(read-only status telemetry, cyan), **LEARN** (strategy instrument + guardrail
+modules, violet), **REPORT** (compact latest review, zinc). Operations + status now
+sit at the top; the chart/brain/feed room + planned modules moved below. New
+presentational `components/gold-bot/GoldBotSectionCard.tsx` (eyebrow + hairline, no
+hooks/data). Review key-findings/next-actions were LIFTED out of the status panel
+into the REPORT card (single `/api/gold-bot/status` fetch, no duplicate copy) via
+new `GoldBotStatusPanel` props `showReview`/`onData` (backward-compatible; the panel
+stays read-only with its one Refresh button). No trading logic, no API change, no
+new commands, no live controls, gateway confirmations unchanged, Heatmap untouched.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_ui_hierarchy.py -q
+
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+# open http://localhost:3000/gold-bot  (OPERATE → OBSERVE → LEARN → REPORT)
+```
+
+Live-verified (dev): the four sections render in order; OBSERVE shows
+session/safety/learning/outcomes (review removed, no duplication); status fetched
+real data once (no fetch loop); controls + gated checkboxes intact; no console
+errors; lint + build clean (`/gold-bot` 17.5 kB, APIs unchanged ƒ dynamic).
+
+## LM95B Gold Bot operations layout fix (compact terminal; no logic/API/trading change)
+
+Re-laid out `/gold-bot` so the command room reads like a trading terminal, not a
+control dump. Sections regrouped **OPERATE → WATCH → LEARN → REPORT**. The controls
+became a COMPACT operations bar (`GoldBotControlPanel` rewritten: one row of small
+toolbar buttons Preflight | Offline Cycle | Build Review | Discord Preview, compact
+guarded Guarded Demo 5m + Send Discord each behind their confirm checkbox, badges
+LOCAL ONLY / DEMO ENV / LIVE LOCKED / GATEWAY, result console now collapsible +
+capped `max-h-[220px]`). New compact `GoldBotStatusStrip.tsx` (pure, one-line:
+session/stop · orders a/s/blk · safety blocker · mods · cycle verdict · W/L/BE) sits
+under WATCH above the chart; the full read-only `GoldBotStatusPanel` moved into a
+collapsed `<details>` under REPORT (still the single `/api/gold-bot/status` fetcher
+feeding the strip + review via onData). The chart/brain/feed room moved UP under
+WATCH. No trading logic, no API change, no new commands, no live controls, gateway
+confirmations unchanged, Heatmap untouched.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_ui_hierarchy.py -q
+
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+# open http://localhost:3000/gold-bot  (compact bar + status strip, chart high)
+```
+
+Live-verified (dev, 1366×900): chart top at y≈557 (visible in the first screen);
+operations bar ≈166px tall with six 25px toolbar buttons (no giant cards); status
+strip renders one line from real data; full status panel collapsed inside REPORT
+`<details>` (open=false); no console errors; lint + build clean (`/gold-bot`
+18.1 kB, APIs still ƒ dynamic).
+
+## LM95C Gold Bot layout + mode-language simplification (presentation/copy only)
+
+Fixed the big empty block under the chart and clarified the mode language. **Layout:**
+the WATCH row was unbalanced (left rail ≈1008px vs chart column ≈502px → ~506px blank
+under the chart). The status strip moved UNDER the chart and the **Detectors** panel
+was split out of `BotBrainRail` (new exported `BotDetectorRail`) and rendered under the
+chart too, so the center column fills the row — gap dropped to ~139px (columns ≈681 /
+734 / 820). Grid already `items-start`; no min-heights. **Mode language:** removed the
+fake Watch/Hunt/Review tabs and the Aggressive risk mode; header now shows clear,
+non-overlapping badges **ENV DEMO · EXEC OBSERVE · LIVE LOCKED · LEARNING ACTIVE**, risk
+chips **Safe / Balanced / Scalp** (matches the gateway), one **"Live locked · demo
+guarded"** badge (no repeated "no live" prose). Chart header → "M5 · Demo environment"
++ **VISUAL MOCK** badge; chart footer → MODE OBSERVE · EXEC DEMO GUARDED. Footer line →
+"RISK CHECKED · MODE OBSERVE · EXECUTION DEMO GUARDED · RISK … · ENV DEMO". No trading
+logic, no API change, no new commands, no live, gateway confirmations intact, Heatmap
+untouched.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_ui_hierarchy.py -q
+
+cd "C:\Users\Joshua\Desktop\wallet finder\lumora-web"
+npm run lint
+npm run build
+npm run dev
+# open http://localhost:3000/gold-bot
+```
+
+Live-verified (dev, 1366×900): under-chart gap 506px→139px (≈73% less), columns
+681/734/820, chart top y≈514 (first screen); ENV DEMO/EXEC OBSERVE/LIVE LOCKED/LEARNING
+ACTIVE + SCALP + VISUAL MOCK render; Aggressive/Hunt/"PAPER MODE"/"no broker connection"/
+"EXEC DISABLED" all gone; no console errors; lint + build clean.

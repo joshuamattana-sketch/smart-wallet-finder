@@ -8,7 +8,7 @@
 // controls, no start/stop, no order buttons. The only button reloads status.
 // Failed fetch / missing files degrade to a calm "no local data yet" state.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { clsx } from "clsx";
 import { RotateCw } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
@@ -56,10 +56,26 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 
 const DASH = "—";
 
-export function GoldBotStatusPanel({ className }: { className?: string }) {
+export function GoldBotStatusPanel({
+  className,
+  showReview = true,
+  onData,
+}: {
+  className?: string;
+  // LM95A: review can be lifted to a dedicated REPORT section to avoid duplication.
+  showReview?: boolean;
+  // LM95A: emits the latest status so a parent REPORT card can render from one fetch.
+  onData?: (status: GoldBotStatus) => void;
+}) {
   const [data, setData] = useState<GoldBotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
+
+  // Held in a ref so a fresh onData identity each render never re-triggers the fetch.
+  const onDataRef = useRef(onData);
+  useEffect(() => {
+    onDataRef.current = onData;
+  }, [onData]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,6 +84,7 @@ export function GoldBotStatusPanel({ className }: { className?: string }) {
       const json = (await res.json()) as GoldBotStatus;
       setData(json);
       setErrored(!json?.ok);
+      onDataRef.current?.(json);
     } catch {
       setData(null);
       setErrored(true);
@@ -220,35 +237,39 @@ export function GoldBotStatusPanel({ className }: { className?: string }) {
             )}
           </Cell>
 
-          <Cell label="Review — findings">
-            {rv?.keyFindings?.length ? (
-              <ul className="space-y-1">
-                {rv.keyFindings.slice(0, 3).map((f, i) => (
-                  <li key={i} className="text-[10.5px] leading-snug text-lm-muted">
-                    • {f}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <Row k="findings" v={<P kind="MISSING" />} />
-            )}
-          </Cell>
+          {showReview ? (
+            <>
+              <Cell label="Review — findings">
+                {rv?.keyFindings?.length ? (
+                  <ul className="space-y-1">
+                    {rv.keyFindings.slice(0, 3).map((f, i) => (
+                      <li key={i} className="text-[10.5px] leading-snug text-lm-muted">
+                        • {f}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Row k="findings" v={<P kind="MISSING" />} />
+                )}
+              </Cell>
 
-          <Cell label="Review — next + digest">
-            {rv?.nextActions?.length ? (
-              <ul className="space-y-1">
-                {rv.nextActions.slice(0, 2).map((a, i) => (
-                  <li key={i} className="text-[10.5px] leading-snug text-lm-muted">
-                    → {a}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <Row k="next actions" v={DASH} />
-            )}
-            <Row k="discord digest" v={dc?.lastReviewExists ? "ready" : <P kind="MISSING" />} />
-            <Row k="sender" v="manual / explicit only" />
-          </Cell>
+              <Cell label="Review — next + digest">
+                {rv?.nextActions?.length ? (
+                  <ul className="space-y-1">
+                    {rv.nextActions.slice(0, 2).map((a, i) => (
+                      <li key={i} className="text-[10.5px] leading-snug text-lm-muted">
+                        → {a}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Row k="next actions" v={DASH} />
+                )}
+                <Row k="discord digest" v={dc?.lastReviewExists ? "ready" : <P kind="MISSING" />} />
+                <Row k="sender" v="manual / explicit only" />
+              </Cell>
+            </>
+          ) : null}
         </div>
 
         <p className="num text-[9px] uppercase tracking-[0.14em] text-lm-muted/70">

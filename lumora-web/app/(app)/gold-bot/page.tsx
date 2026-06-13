@@ -18,13 +18,17 @@ import { useEffect, useState } from "react";
 import { PageShell } from "@/components/ui/PageShell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { GoldChartInstrument } from "@/components/gold-bot/GoldChartInstrument";
-import { BotBrainRail } from "@/components/gold-bot/BotBrainRail";
+import { BotBrainRail, BotDetectorRail } from "@/components/gold-bot/BotBrainRail";
 import { CommandFeed } from "@/components/gold-bot/CommandFeed";
 import { PlannedModules } from "@/components/gold-bot/PlannedModules";
 import { GoldBotStatusPanel } from "@/components/gold-bot/GoldBotStatusPanel";
 import { GoldBotControlPanel } from "@/components/gold-bot/GoldBotControlPanel";
+import { GoldBotStatusStrip } from "@/components/gold-bot/GoldBotStatusStrip";
+import { GoldBotSectionCard } from "@/components/gold-bot/GoldBotSectionCard";
+import { Panel } from "@/components/ui/Panel";
+import type { GoldBotStatus } from "@/lib/gold-bot-status";
 import { clsx } from "clsx";
-import { Bot, Radar, ShieldHalf } from "lucide-react";
+import { Bot, ShieldHalf } from "lucide-react";
 
 const ROOM_CSS = `
 @media (prefers-reduced-motion: no-preference) {
@@ -48,19 +52,16 @@ const ROOM_CSS = `
 }
 `;
 
-// In-room mode tabs — presentation only, no logic behind them yet.
-const MODES = ["Watch", "Hunt", "Review"] as const;
-
-// Risk modes — selectable posture, presentation only. Even Aggressive obeys
-// the hard limits: the Risk Engine always has final authority, no mode can
-// bypass hard stops.
-const RISK_MODES = ["Safe", "Balanced", "Aggressive"] as const;
+// Risk posture — matches the gateway's allowed guarded-demo risk modes
+// (safe / balanced / scalp). Presentation only; the risk gate keeps final authority.
+const RISK_MODES = ["Safe", "Balanced", "Scalp"] as const;
 
 export default function GoldBotPage() {
-  const [mode, setMode] = useState<(typeof MODES)[number]>("Watch");
   const [riskMode, setRiskMode] = useState<(typeof RISK_MODES)[number]>("Balanced");
   // Bumped after a control-panel action so the read-only status panel remounts + refetches.
   const [statusNonce, setStatusNonce] = useState(0);
+  // Latest status, lifted from the OBSERVE panel so the REPORT card renders from one fetch.
+  const [report, setReport] = useState<GoldBotStatus | null>(null);
 
   // Session clock (UTC, display only: London 07–16, New York 12–21).
   const [utcHour, setUtcHour] = useState<number | null>(null);
@@ -78,14 +79,14 @@ export default function GoldBotPage() {
       title={
         <span className="flex items-center gap-2">
           Gold Bot
-          <StatusBadge variant="warning" size="sm">PAPER MODE</StatusBadge>
+          <StatusBadge variant="demo" size="sm">DEMO</StatusBadge>
         </span>
       }
-      context="Private XAUUSD command room · paper only · no live execution"
+      context="Private XAUUSD command room · demo only · live locked"
       status={
         <span className="num flex items-center gap-2 text-[11px] uppercase tracking-wide text-amber-300/90">
           <span className="lmgb-watch inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />
-          Engine · Watching
+          Engine · Observe
         </span>
       }
     >
@@ -129,27 +130,15 @@ export default function GoldBotPage() {
             </span>
           </span>
 
-          {/* mode tabs — segmented, presentation only */}
-          <span className="flex overflow-hidden rounded-md border border-amber-400/[0.18] bg-black/30 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]">
-            {MODES.map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                aria-pressed={mode === m}
-                className={clsx(
-                  "num px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors duration-150",
-                  "focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-amber-300/60",
-                  mode === m
-                    ? "bg-gradient-to-b from-amber-400/[0.2] to-amber-500/[0.08] text-amber-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-                    : "text-lm-muted hover:text-amber-200/70",
-                )}
-              >
-                {m}
-              </button>
-            ))}
+          {/* environment / execution / live / learning — clear, non-overlapping */}
+          <span className="flex flex-wrap items-center gap-1.5">
+            <StatusBadge variant="demo" size="sm">ENV DEMO</StatusBadge>
+            <StatusBadge variant="neutral" size="sm">EXEC OBSERVE</StatusBadge>
+            <StatusBadge variant="neutral" size="sm">LIVE LOCKED</StatusBadge>
+            <StatusBadge variant="live" size="sm">LEARNING ACTIVE</StatusBadge>
           </span>
 
-          {/* risk mode — selectable posture; Risk Engine keeps final authority */}
+          {/* risk posture — safe / balanced / scalp (the gateway's allowed modes) */}
           <span className="flex items-center gap-1.5">
             <ShieldHalf className="h-3.5 w-3.5 text-amber-400/70" />
             <span className="flex overflow-hidden rounded-md border border-amber-400/[0.18] bg-black/30 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]">
@@ -158,14 +147,11 @@ export default function GoldBotPage() {
                   key={m}
                   onClick={() => setRiskMode(m)}
                   aria-pressed={riskMode === m}
-                  title={m === "Aggressive" ? "Riskier paper ideas allowed later — hard stops still apply" : undefined}
                   className={clsx(
                     "num px-2 py-1 text-[9.5px] font-semibold uppercase tracking-wider transition-colors duration-150",
                     "focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-amber-300/60",
                     riskMode === m
-                      ? m === "Aggressive"
-                        ? "bg-gradient-to-b from-rose-400/[0.18] to-rose-500/[0.07] text-rose-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]"
-                        : "bg-gradient-to-b from-amber-400/[0.2] to-amber-500/[0.08] text-amber-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                      ? "bg-gradient-to-b from-amber-400/[0.2] to-amber-500/[0.08] text-amber-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                       : "text-lm-muted hover:text-amber-200/70",
                   )}
                 >
@@ -185,13 +171,7 @@ export default function GoldBotPage() {
             </span>
           </span>
 
-          {/* engine + sessions */}
-          <span className="flex items-center gap-2">
-            <Radar className="h-3.5 w-3.5 text-amber-400/70" />
-            <span className="num text-[10.5px] uppercase tracking-wider text-lm-text-dim">
-              Status <span className="font-semibold text-amber-300">WATCHING</span>
-            </span>
-          </span>
+          {/* sessions */}
           <span className="num flex items-center gap-3 text-[10px] uppercase tracking-wider">
             <span className={clsx("flex items-center gap-1.5", londonOpen ? "text-emerald-400" : "text-lm-muted")}>
               <span className={clsx("h-1 w-1 rounded-full", londonOpen ? "bg-emerald-400" : "bg-zinc-600")} />
@@ -203,45 +183,109 @@ export default function GoldBotPage() {
             </span>
           </span>
 
-          {/* honesty chip */}
+          {/* one small live-locked badge — no repeated 'no live' prose elsewhere */}
           <span className="num ml-auto rounded border border-amber-400/20 bg-amber-400/[0.04] px-2.5 py-1.5 text-[9.5px] uppercase tracking-wider text-amber-200/80">
-            No live execution · no broker connection
+            Live locked · demo guarded
           </span>
         </div>
       </div>
 
-      {/* ── The room — brain | instrument | feed ────────────────────────────── */}
-      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[290px_minmax(0,1fr)_310px]">
-        {/* CENTER first on mobile — the chart is the heart of the room */}
-        <div className="order-1 min-w-0 xl:order-2">
-          <GoldChartInstrument />
+      {/* ── OPERATE — compact gateway operations bar ─────────────────────────── */}
+      <GoldBotSectionCard eyebrow="OPERATE" accent="operate" hint="local gateway · demo">
+        <GoldBotControlPanel onAfterRun={() => setStatusNonce((n) => n + 1)} />
+      </GoldBotSectionCard>
+
+      {/* ── WATCH — compact status strip + the command room (chart sits high) ──── */}
+      <GoldBotSectionCard eyebrow="WATCH" accent="watch" hint="command room">
+        <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[290px_minmax(0,1fr)_310px]">
+          {/* CENTER first on mobile — chart + telemetry strip + detectors fill the column */}
+          <div className="order-1 min-w-0 space-y-2.5 xl:order-2">
+            <GoldChartInstrument />
+            <GoldBotStatusStrip status={report} />
+            <BotDetectorRail />
+          </div>
+          <BotBrainRail className="order-2 xl:order-1" />
+          <CommandFeed className="order-3 xl:order-3" />
         </div>
-        <BotBrainRail className="order-2 xl:order-1" />
-        <CommandFeed className="order-3 xl:order-3" />
-      </div>
+      </GoldBotSectionCard>
 
-      {/* ── Planned architecture band — limits · funded · execution · review ── */}
-      <PlannedModules />
+      {/* ── LEARN — guardrail / planned modules ──────────────────────────────── */}
+      <GoldBotSectionCard eyebrow="LEARN" accent="learn" hint="guardrails">
+        <PlannedModules />
+      </GoldBotSectionCard>
 
-      {/* ── LM94B local control panel (calls the LM94A gateway; no live, no orders) ── */}
-      <GoldBotControlPanel onAfterRun={() => setStatusNonce((n) => n + 1)} />
+      {/* ── REPORT — compact review + collapsible full status detail ──────────── */}
+      <GoldBotSectionCard eyebrow="REPORT" accent="report" hint="review · detail">
+        <div className="space-y-2">
+          <Panel level="subtle" compact className="space-y-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="num mb-1 text-[9px] uppercase tracking-[0.16em] text-lm-muted">
+                  Key findings
+                </div>
+                {report?.review?.keyFindings?.length ? (
+                  <ul className="space-y-1">
+                    {report.review.keyFindings.slice(0, 3).map((f, i) => (
+                      <li key={i} className="text-[10.5px] leading-snug text-lm-muted">
+                        • {f}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[10.5px] text-lm-muted/70">No local review yet.</p>
+                )}
+              </div>
+              <div>
+                <div className="num mb-1 text-[9px] uppercase tracking-[0.16em] text-lm-muted">
+                  Next actions
+                </div>
+                {report?.review?.nextActions?.length ? (
+                  <ul className="space-y-1">
+                    {report.review.nextActions.slice(0, 2).map((a, i) => (
+                      <li key={i} className="text-[10.5px] leading-snug text-lm-muted">
+                        → {a}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[10.5px] text-lm-muted/70">—</p>
+                )}
+              </div>
+            </div>
+            <p className="num text-[9px] uppercase tracking-[0.14em] text-lm-muted/70">
+              discord digest · {report?.discord?.lastReviewExists ? "ready" : "missing"} · sender manual / explicit only
+            </p>
+          </Panel>
 
-      {/* ── LM91A read-only local status panel (no trading controls) ──────────── */}
-      <GoldBotStatusPanel key={statusNonce} />
+          {/* Full read-only telemetry kept available, but collapsed so it never
+              dominates the page. This panel is the single fetcher that feeds the
+              WATCH strip + REPORT card above (via onData). */}
+          <details className="group rounded-md border border-lm-border/60 bg-black/20">
+            <summary className="num cursor-pointer list-none px-3 py-1.5 text-[10px] uppercase tracking-wider text-lm-muted hover:text-lm-text">
+              Full bot status detail
+            </summary>
+            <div className="border-t border-lm-border/50 p-2">
+              <GoldBotStatusPanel
+                key={statusNonce}
+                showReview={false}
+                onData={(s) => setReport(s)}
+              />
+            </div>
+          </details>
+        </div>
+      </GoldBotSectionCard>
 
       {/* ── Command-room footer strip ───────────────────────────────────────── */}
       <div className="relative overflow-hidden rounded-lg border border-amber-400/[0.1] bg-[#0c0b08]/80 px-3.5 py-2">
         <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/20 to-transparent" />
         <div className="num flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[9px] uppercase tracking-[0.16em] text-lm-muted">
           <span>
-            ROOM <span className="text-amber-300/80">PRIVATE</span> · MODE{" "}
-            <span className="text-amber-300/80">{mode.toUpperCase()}</span> · RISK{" "}
-            <span className={riskMode === "Aggressive" ? "text-rose-400/90" : "text-amber-300/80"}>
-              {riskMode.toUpperCase()}
-            </span>{" "}
-            · ACCOUNT <span className="text-amber-300/80">PAPER</span>
+            RISK CHECKED · MODE <span className="text-amber-300/80">OBSERVE</span> · EXECUTION{" "}
+            <span className="text-amber-300/80">DEMO GUARDED</span> · RISK{" "}
+            <span className="text-amber-300/80">{riskMode.toUpperCase()}</span> · ENV{" "}
+            <span className="text-amber-300/80">DEMO</span>
           </span>
-          <span>Risk Engine has final authority · no mode bypasses hard stops · no live trading · no profit guarantees</span>
+          <span>Risk Engine has final authority · live locked · no profit guarantees</span>
         </div>
       </div>
     </PageShell>

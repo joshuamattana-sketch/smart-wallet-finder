@@ -171,12 +171,12 @@ export function GoldChartInstrument({ className }: { className?: string }) {
         {/* Instrument header */}
         <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-amber-400/[0.1] bg-gradient-to-b from-[#12100b]/90 to-[#0c0b08]/80 px-3.5 py-2">
           <span className="num text-[12px] font-bold tracking-[0.1em] text-amber-200">XAUUSD</span>
-          <span className="num text-[9px] uppercase tracking-[0.2em] mt-px text-lm-muted">Gold Spot · M5 · staged session</span>
+          <span className="num text-[9px] uppercase tracking-[0.2em] mt-px text-lm-muted">M5 · Demo environment</span>
           <span className="ml-auto flex items-center gap-2">
             <span className="lm-price text-[15px] leading-none text-amber-200 drop-shadow-[0_0_10px_rgba(252,211,77,0.35)]">
               {LAST.toFixed(1)}
             </span>
-            <StatusBadge variant="warning" size="sm">PAPER</StatusBadge>
+            <StatusBadge variant="demo" size="sm">VISUAL MOCK</StatusBadge>
           </span>
         </div>
 
@@ -310,8 +310,8 @@ export function GoldChartInstrument({ className }: { className?: string }) {
           </span>
           <span className="num flex shrink-0 items-center gap-3 text-[9px] uppercase tracking-wider">
             <span className="text-lm-muted">RISK <span className="text-emerald-400">CHECKED</span></span>
-            <span className="text-lm-muted">MODE <span className="text-amber-300">WATCH</span></span>
-            <span className="text-lm-muted">EXEC <span className="text-rose-400/90">DISABLED</span></span>
+            <span className="text-lm-muted">MODE <span className="text-amber-300">OBSERVE</span></span>
+            <span className="text-lm-muted">EXEC <span className="text-amber-300/90">DEMO GUARDED</span></span>
           </span>
         </div>
       </div>
