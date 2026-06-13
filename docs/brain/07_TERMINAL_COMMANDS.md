@@ -1578,3 +1578,51 @@ When the supervisor blocks an armed demo order the worker journals
 `blocked_by_safety_supervisor` / `safety - CRITICAL kill_switch`, nothing sent.
 Tests `python -m pytest tests/test_gold_bot_demo_safety_supervisor.py tests/test_gold_bot_worker.py -q`
 (no MT5/internet).
+
+## LM88A Demo auto-session runner (bounded MT5 demo session, demo-only)
+
+`services/gold_bot_demo_session_runner.py` composes the worker + demo learning
+modifiers + LM87A safety supervisor into ONE controlled session with hard limits
+(wall-clock duration, max iterations, max trades, max runtime-loss %, auto-stop on
+critical / 3 consecutive safety blocks) and a written report. No strategy logic is
+duplicated — it drives `GoldBotWorker` through a new per-iteration hook. **MT5 DEMO
+ONLY, NEVER LIVE, SAFETY SUPERVISOR ALWAYS ON, LEARNING CONFIDENCE-ONLY.**
+
+OBSERVE-ONLY by default — **sends nothing** unless `--confirm-demo-session` is
+passed, and even then the worker's own demo guards (`--mode demo` +
+`--auto-execute-demo` + `--confirm-demo-order`, verified demo account, risk gate,
+supervisor) still apply.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# observe-only session (no orders), short:
+python scripts/run_gold_bot_demo_session.py --duration-minutes 1 --max-iterations 3
+python scripts/run_gold_bot_demo_session.py --duration-minutes 1 --max-iterations 3 --use-learning-modifiers
+
+# ARMED demo session (intentional only — still gated by every demo guard):
+python scripts/run_gold_bot_demo_session.py --confirm-demo-session --duration-minutes 5 --max-trades 3 --risk-mode scalp --use-learning-modifiers
+
+# PowerShell launchers (default observe; -ConfirmDemoSession to arm):
+.\scripts\start_gold_bot_demo_session.ps1
+.\scripts\start_gold_bot_demo_session.ps1 -ConfirmDemoSession -DurationMinutes 5 -MaxTrades 3
+```
+
+CLI: `--symbol --risk-mode --timeframe --interval-seconds --duration-minutes
+--max-iterations --max-trades --max-runtime-loss-pct --use-learning-modifiers /
+--no-learning-modifiers --calendar-file --macro-events-file --confirm-demo-session
+--json`. Stop reasons: `duration_reached` · `max_iterations_reached` ·
+`max_trades_reached` · `critical_safety` · `consecutive_safety_blocks` ·
+`runtime_loss_limit` · `keyboard_interrupt`.
+
+Report `data/gold_bot/sessions/session_<ts>.json` + `session_latest.json` (session_id,
+started/ended, mode observe|demo, learning enabled + active modifier count,
+iterations, decisions L/S/no_trade, macro_lockout count, demo orders attempted/sent,
+blocked_by_safety count + reasons, start/end equity, realized PnL, stop reason,
+warnings) + event log `session_<ts>.jsonl` (session_start / heartbeat / decision /
+order_attempt / order_sent / safety_block / session_stop). All gitignored.
+
+Live-verified (real demo terminal, Sat market closed): observe → 3 iters, 0 orders,
+report written; armed → supervisor blocked every attempt (`mt5_health_guard` stale
+tick), **0 sent**, auto-stopped `consecutive_safety_blocks`. Tests
+`python -m pytest tests/test_gold_bot_demo_session_runner.py -q` (fake worker, no
+MT5/internet).

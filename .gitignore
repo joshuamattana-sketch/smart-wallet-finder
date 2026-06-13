@@ -35,6 +35,10 @@ data/gold_bot/learning/rejected_demo_modifiers.json
 data/gold_bot/safety/*.json
 data/gold_bot/safety/*.jsonl
 data/gold_bot/safety/*.csv
+# LM88A demo auto-session reports/events — never commit.
+data/gold_bot/sessions/*.json
+data/gold_bot/sessions/*.jsonl
+data/gold_bot/sessions/*.csv
 __pycache__/
 *.pyc
 .DS_Store

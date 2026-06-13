@@ -122,6 +122,7 @@ class GoldBotWorker:
         supervisor: DemoSafetySupervisor | None = None,
         safety_state_path: Path | str = SAFETY_STATE_PATH,
         safety_events_path: Path | str = SAFETY_EVENTS_PATH,
+        iteration_hook: Callable[[dict], str | None] | None = None,
     ) -> None:
         self.cfg = cfg
         self.safety = safety if safety is not None else SafetyConfig.from_env()
@@ -136,6 +137,10 @@ class GoldBotWorker:
         self.supervisor = supervisor or DemoSafetySupervisor(
             cfg.supervisor_config(), state_path=safety_state_path, events_path=safety_events_path)
         self._learning_safety: dict | None = None
+        # LM88A: optional per-iteration hook. Called after each entry is journaled;
+        # if it returns a truthy reason the loop stops gracefully (session bounds).
+        self._iteration_hook = iteration_hook
+        self.stop_reason: str | None = None
 
         self._symbol: str | None = None
         self._connected = False
@@ -175,6 +180,11 @@ class GoldBotWorker:
                     entry = self._run_iteration(connector, probe, i)
                     self.iterations.append(entry)
                     consecutive_failures = 0
+                    if self._iteration_hook is not None:
+                        reason = self._iteration_hook(entry)
+                        if reason:
+                            self.stop_reason = reason
+                            break
                 except CriticalSafetyError:
                     raise
                 except Mt5ConnectorError as exc:
@@ -301,6 +311,7 @@ class GoldBotWorker:
             "blockers": idea.blockers,
             "open_positions": open_xau,
             "today_pnl": today_pnl,
+            "equity": (acct or {}).get("equity"),
             "execution_status": exec_status,
             "order_sent": order_sent,
             "risk": risk_dec,
@@ -548,6 +559,7 @@ class GoldBotWorker:
             "open_positions": self._last_open,
             "today_pnl": self._last_pnl,
             "macro_event_state": self._last_macro_state,
+            "stop_reason": self.stop_reason,
         }
         if "error" in fields:
             payload["error"] = fields["error"]
