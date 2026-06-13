@@ -2129,3 +2129,67 @@ current-user limited context (no admin). Live-verified: `-WhatIfPlan` registers
 nothing (exit 0); the manual wrapper ran the offline cycle SUCCESS exit 0 (demo
 session SKIPPED, Discord preview only, run + command logs written, 0 redactions).
 12 static tests pass.
+
+## LM97A Gold Bot learning output truth fix (copy only; no strategy/math change)
+
+Replaced misleading learning wording. The scorecard no longer prints "live impact:
+NONE. Learning modifiers are not wired into the decision engine or worker"; it now
+prints a truthful Impact block: scorecard = read-only preview · preview modifiers
+written to setup_modifiers.preview.json (not active) · active modifiers read from
+active_demo_modifiers.json · decision impact only with `--use-learning-modifiers` ·
+real demo "0 trades - learning is replay-dominant" (or "N trades included with
+weight X") · live trading locked. The modifier probe now labels evaluated entries
+"candidate modifiers ... NOT active unless promoted" (per-line "(preview only - not
+active unless promoted)") and the active set as "what decisions use, only with
+--use-learning-modifiers". Session review row "Real demo used: True (0 trades)" →
+"Real demo outcomes: 0 trades; replay-dominant". No modifier math, thresholds,
+promotion, or strategy changed; no auto-promote; live stays locked; no UI/API/Heatmap.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_learning_output_truth.py -q
+python scripts/run_gold_bot_learning_scorecard.py --horizon 15 --min-samples 10 --include-real-trades --real-trade-weight 2.0 --min-real-trades 5
+python scripts/run_gold_bot_learning_modifiers_probe.py
+python scripts/run_gold_bot_session_review.py
+```
+
+Live-verified: scorecard Impact block prints "0 trades - learning is replay-dominant"
++ "read-only preview"; probe shows liquidity_sweep_reclaim -3 as a preview candidate
+NOT in the active set (breakout_retest/fvg_retest/momentum -8); review row reads
+"Real demo outcomes | 0 trades; replay-dominant". 8 truth tests + 78 existing
+learning/review tests pass.
+
+## LM98A Gold Bot replay/backtest heartbeat (offline; Discord preview/send every N min)
+
+Long-running REPLAY/OFFLINE runner that refreshes the LM86A scorecard and emits a
+compact Discord progress report every N minutes (default 15). DEFAULT = preview
+(prints, never sends); sending needs BOTH `--send-discord` AND env
+`LUMORA_GOLD_DISCORD_WEBHOOK_URL`. Hard-coded replay/offline · observe · broker
+orders disabled · live locked. No MT5 order senders, no demo session, no arbitrary
+shell, no network unless sending; webhook never printed/logged. Full runbook:
+`docs/gold_bot/REPLAY_BACKTEST_HEARTBEAT.md`.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_replay_backtest_heartbeat.py -q
+
+python scripts/run_gold_bot_replay_backtest_heartbeat.py --once
+python scripts/run_gold_bot_replay_backtest_heartbeat.py --duration-minutes 1 --report-every-minutes 1
+python scripts/run_gold_bot_replay_backtest_heartbeat.py --duration-minutes 60 --report-every-minutes 15
+
+# send (env-gated; never commit the webhook)
+$env:LUMORA_GOLD_DISCORD_WEBHOOK_URL = "YOUR_WEBHOOK_URL"
+python scripts/run_gold_bot_replay_backtest_heartbeat.py --duration-minutes 60 --report-every-minutes 15 --send-discord
+Remove-Item Env:LUMORA_GOLD_DISCORD_WEBHOOK_URL
+
+# PowerShell helper
+.\scripts\start_gold_bot_replay_backtest_heartbeat.ps1 -DurationMinutes 60 -ReportEveryMinutes 15
+.\scripts\start_gold_bot_replay_backtest_heartbeat.ps1 -DurationMinutes 60 -ReportEveryMinutes 15 -SendDiscord
+```
+
+Artifacts (gitignored): `data/gold_bot/replay_heartbeat/heartbeat_*.json|.md` +
+`heartbeat_latest.*`. Live-verified: `--once` built a real report from stored replay
+(36 files / 17,700 rows / 11,776 trades, winrate 27% / exp -45.8pt / avoid; best
+tactics + weak/avoid + buckets; replay-dominant, real demo 0; active modifiers
+breakout_retest/fvg_retest/momentum -8) marked PREVIEW - NOT SENT, log written. 14
+tests pass; send is gated by flag + env (fails safely without env, webhook redacted).
