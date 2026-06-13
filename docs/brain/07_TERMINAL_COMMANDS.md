@@ -1716,3 +1716,41 @@ open). Live-verified: probe is safe with no demo outcomes (prints a hint, exits 
 scorecard blended real replay (fvg_retest 607) with 7 synthetic demo trades →
 combined -44.06pt; tests `python -m pytest tests/test_gold_bot_real_trade_learning.py -q`
 (fake events, no MT5/internet).
+
+## LM90A Session review digest (offline Markdown + JSON report)
+
+`services/gold_bot_session_review.py` joins the artifacts the LM86-LM89 loop
+already writes - the demo session report (LM88A), reconstructed trade outcomes
+(LM89A), safety events + state (LM87A), learning events + cycle summaries
+(LM86A/C/89B), active modifiers + scorecard - into ONE human-readable Markdown +
+machine-readable JSON review. It is the reporting layer that makes the bot's
+autonomous demo behavior legible BEFORE any Discord/UI surface. **Pure offline:
+reads local JSON/JSONL only - no MT5, no orders, no HTTP, no strategy change.**
+Missing optional inputs degrade to warnings (never crash).
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+# preview what would be read/written (no files):
+python scripts/run_gold_bot_session_review.py --dry-run
+# build the review from the latest session:
+python scripts/run_gold_bot_session_review.py
+# or a specific session report + JSON output:
+python scripts/run_gold_bot_session_review.py --session-file data/gold_bot/sessions/session_latest.json --json
+```
+
+CLI: `--session-file --out-dir --learning-dir --safety-dir --trade-outcomes-dir
+--json --dry-run`. No session report -> clear error ("Run run_gold_bot_demo_session.py
+first."). Markdown sections: Summary / Decisions / Orders & Outcomes / Safety /
+Learning / Key Findings / Next Actions / Files Used / Warnings (tables, no raw JSON
+dump). Findings + next-actions are DERIVED only (no hallucination) e.g. "Armed demo
+session sent no orders; blocked by mt5_health_guard (likely stale tick / market
+closed)", "Latest learning candidate was rejected: ...", "Loss-streak cooldown is
+active until ...".
+
+Generated (gitignored): `data/gold_bot/reviews/session_review_<id>.md` + `.json`
++ `session_review_latest.md` + `.json`. Live-verified on the real armed session:
+review correctly showed mode demo, stop `consecutive_safety_blocks`, 3 orders
+attempted / 0 sent / blocked mt5_health_guard x3, active modifiers (3x -8), the
+LM86C cycle REJECTED (-41.1 -> -50.7pt), and next-actions to check tick/spread.
+Tests `python -m pytest tests/test_gold_bot_session_review.py -q` (fake temp files,
+no MT5/internet).

@@ -48,6 +48,11 @@ data/gold_bot/trade_outcomes/*.csv
 data/gold_bot/learning/real_trade_*.json
 data/gold_bot/learning/real_trade_*.jsonl
 data/gold_bot/learning/real_trade_*.csv
+# LM90A session review digests — never commit.
+data/gold_bot/reviews/*.md
+data/gold_bot/reviews/*.json
+data/gold_bot/reviews/*.jsonl
+data/gold_bot/reviews/*.csv
 __pycache__/
 *.pyc
 .DS_Store
