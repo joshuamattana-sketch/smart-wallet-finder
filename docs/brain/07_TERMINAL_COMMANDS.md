@@ -2193,3 +2193,36 @@ Artifacts (gitignored): `data/gold_bot/replay_heartbeat/heartbeat_*.json|.md` +
 tactics + weak/avoid + buckets; replay-dominant, real demo 0; active modifiers
 breakout_retest/fvg_retest/momentum -8) marked PREVIEW - NOT SENT, log written. 14
 tests pass; send is gated by flag + env (fails safely without env, webhook redacted).
+
+## LM98B Gold Bot replay/backtest WORKER heartbeat (runs jobs to grow data offline)
+
+Upgrades LM98A from a reporter to an OFFLINE WORKER: while the market is closed it
+actually RUNS new no-lookahead replay jobs (LM85A `run_replay`, called directly - no
+subprocess/shell) across a timeframe × risk × horizon plan, refreshes the scorecard
+after each, and reports replay-data GROWTH (files/rows/trades deltas) + performance
+every N minutes. Preview by default; sends only with `--send-discord` + a VALID
+`LUMORA_GOLD_DISCORD_WEBHOOK_URL` (bad URL fails safely, no traceback, webhook never
+printed). Replay/offline only - no MT5 orders, no demo session, no live, no arbitrary
+shell. Full runbook: `docs/gold_bot/REPLAY_BACKTEST_WORKER_HEARTBEAT.md`.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_replay_backtest_worker_heartbeat.py -q
+
+python scripts/run_gold_bot_replay_backtest_worker_heartbeat.py --dry-run-plan
+python scripts/run_gold_bot_replay_backtest_worker_heartbeat.py --once --timeframes M1 --risk-modes scalp --horizons 15 --max-bars 1000
+python scripts/run_gold_bot_replay_backtest_worker_heartbeat.py --duration-minutes 240 --report-every-minutes 15 --job-every-minutes 15 --timeframes M1,M5 --risk-modes balanced,scalp --horizons 15,30 --max-bars 1000
+
+$env:LUMORA_GOLD_DISCORD_WEBHOOK_URL="YOUR_WEBHOOK_URL"
+python scripts/run_gold_bot_replay_backtest_worker_heartbeat.py --duration-minutes 240 --report-every-minutes 15 --job-every-minutes 15 --send-discord
+Remove-Item Env:LUMORA_GOLD_DISCORD_WEBHOOK_URL
+
+.\scripts\start_gold_bot_replay_backtest_worker_heartbeat.ps1 -DurationMinutes 240 -ReportEveryMinutes 15 -JobEveryMinutes 15 -Timeframes "M1,M5" -RiskModes "balanced,scalp" -Horizons "15,30" -MaxBars 1000
+```
+
+Artifacts (gitignored): `data/gold_bot/replay_worker/worker_*.json|.md`,
+`worker_events.jsonl`, `worker_latest.*`. Live-verified: `--dry-run-plan` listed 8
+jobs and ran none; `--once M1/scalp/h15/1000` RAN a real replay job and the data GREW
+- Files 37->38 (+1), Rows 17,900->18,900 (+1,000), Trades 11,926->12,713 (+787),
+No-trade +213 - growth deltas + performance shown, PREVIEW - NOT SENT, log written.
+14 worker tests pass; send gated by flag + valid env, invalid webhook fails safely.

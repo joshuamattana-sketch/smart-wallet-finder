@@ -74,6 +74,10 @@ data/gold_bot/task_logs/*.jsonl
 data/gold_bot/replay_heartbeat/*.json
 data/gold_bot/replay_heartbeat/*.jsonl
 data/gold_bot/replay_heartbeat/*.md
+# LM98B replay/backtest worker artifacts — never commit.
+data/gold_bot/replay_worker/*.json
+data/gold_bot/replay_worker/*.jsonl
+data/gold_bot/replay_worker/*.md
 __pycache__/
 *.pyc
 .DS_Store
