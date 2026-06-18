@@ -498,6 +498,25 @@ def test_min_confidence_floor_feeds_basket_entry(tmp_path):
     assert w._basket_entry_floor(50) == 80
 
 
+def test_basket_fails_closed_when_account_read_fails(tmp_path):
+    # Fail closed: if equity can't be read, the basket's risk cap / hard-loss-cap
+    # brake cannot be verified — the worker must NOT open legs blind.
+    conn = FakeConnector()
+
+    def _raise():
+        raise RuntimeError("terminal disconnected")
+
+    conn.account_snapshot = _raise
+    cfg = WorkerConfig(mode="demo", risk_mode="scalp", basket_scalp=True, max_iterations=1,
+                       interval_seconds=0, auto_execute_demo=True, confirm_demo_order=True,
+                       basket_num_positions=3, basket_max_positions=8)
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    assert conn.sent_orders == []                                  # no legs opened blind
+    assert w.iterations[0]["basket"]["reason"] == "equity_unavailable"
+    assert w.iterations[0]["order_sent"] is False
+
+
 def test_hard_mode_helpers(tmp_path):
     from services.gold_bot_risk_gate import MAX_MARGIN_PCT_PER_TRADE
     conn = FakeConnector()

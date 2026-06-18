@@ -61,7 +61,9 @@ from services.gold_bot_basket_scalper import (
     CLOSE_ALL,
     CLOSE_HARD_LOSS,
     HOLD,
+    NONE,
     OPEN,
+    BasketAction,
     BasketConfig,
     aggregate_profit,
     basket_side,
@@ -671,7 +673,13 @@ class GoldBotWorker:
         open_n = len(positions)
         today_pnl = self._read_today_pnl(connector, probe, symbol)
         acct = self._safe_account_snapshot(connector)
-        equity = (acct or {}).get("equity") or 0.0
+        # Fail closed: without a real equity reading we cannot verify the basket risk
+        # cap or the hard-loss-cap brake (decide_basket_action skips the brake when
+        # equity is 0). Track whether equity is trustworthy and act on it below.
+        equity = (acct or {}).get("equity")
+        equity_known = isinstance(equity, (int, float)) and equity > 0
+        if not equity_known:
+            equity = 0.0
         now = self._now()
 
         macro = build_macro_context(
@@ -710,6 +718,16 @@ class GoldBotWorker:
             min_confidence=min_conf, cfg=cfg, in_cooldown=in_cooldown,
             peak_profit=self._basket_peak_profit, pressure=pressure,
             pressure_against_streak=self._pressure_against_count)
+
+        # Fail closed on an unreadable account: an OPEN basket can't have its risk cap
+        # / hard-loss-cap verified, so flatten it; and never open new legs blind.
+        if not equity_known:
+            if positions:
+                self._print("[risk] basket: equity unavailable — force-closing open basket (fail closed)")
+                action = BasketAction(CLOSE_ALL, "equity_unavailable_failsafe",
+                                      aggregate_profit=agg, num_positions=open_n)
+            elif action.kind in (OPEN, ADD):
+                action = BasketAction(NONE, "equity_unavailable")
 
         ec = self._exec_context(connector)
         safety_dec = self.supervisor.evaluate_execution(SafetyExecContext(
@@ -1122,7 +1140,7 @@ class GoldBotWorker:
     # ── output ─────────────────────────────────────────────────────────────────
     def _print_banner(self) -> None:
         cfg = self.cfg
-        maxit = "∞" if cfg.max_iterations is None else str(cfg.max_iterations)
+        maxit = "unlimited" if cfg.max_iterations is None else str(cfg.max_iterations)
         self._print("=" * 64)
         self._print(" GOLD BOT WORKER   (MT5 DEMO ONLY - NEVER LIVE)")
         self._print("=" * 64)

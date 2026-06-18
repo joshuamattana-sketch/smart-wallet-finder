@@ -96,6 +96,12 @@ def parse_args(argv=None):
     p.add_argument("--basket-time-stop-seconds", type=float, default=60.0, dest="basket_time_stop_seconds")
     p.add_argument("--basket-cooldown-seconds-after-loss", type=float, default=60.0,
                    dest="basket_cooldown_seconds_after_loss")
+    p.add_argument("--basket-leg-sl-points", type=int, default=None, dest="basket_leg_sl_points",
+                   help="Wide per-leg disaster SL in points (default: engine SL, which is tight for "
+                        "scalp). The basket's aggregate hard-loss-cap is the real risk brake.")
+    p.add_argument("--basket-leg-tp-points", type=int, default=None, dest="basket_leg_tp_points",
+                   help="Per-leg TP in points (default: engine TP). With a wide SL, let the "
+                        "profit-target / time-stop close the basket instead.")
     # LM101A adaptive exit (demo-only): trailing profit lock + pressure close.
     p.add_argument("--basket-lock-arm-pct", type=float, default=0.4, dest="basket_lock_arm_pct",
                    help="Arm the trailing profit lock once aggregate profit peaks at +this %% equity "
@@ -210,6 +216,8 @@ def main(argv=None) -> int:
         basket_hard_loss_cap_pct=args.basket_hard_loss_cap_pct,
         basket_time_stop_seconds=args.basket_time_stop_seconds,
         basket_cooldown_seconds_after_loss=args.basket_cooldown_seconds_after_loss,
+        basket_leg_sl_points=args.basket_leg_sl_points,
+        basket_leg_tp_points=args.basket_leg_tp_points,
         basket_lock_arm_pct=args.basket_lock_arm_pct,
         basket_lock_floor_frac=args.basket_lock_floor_frac,
         basket_pressure_close=args.basket_pressure_close,
