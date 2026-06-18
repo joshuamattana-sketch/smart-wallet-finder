@@ -318,3 +318,90 @@ def test_cycle_includes_real_trades(tmp_path):
 def test_cycle_default_no_real_trades(tmp_path):
     r, _ldir = _run(tmp_path, BASELINE, WORSE)
     assert r.real_trades_used is False and r.real_trade_count == 0
+
+
+# ── walk-forward (out-of-sample accept/reject) ───────────────────────────────────────
+def _run_wf(tmp_path, *, train_summary, validate_baseline, validate_candidate,
+            preexisting_active=None, **kw):
+    """Drive a walk-forward cycle with a phase-aware injected runner. split_time is
+    pinned (NOW) so no history is read; the injected runner ignores the window."""
+    ldir = tmp_path / "learning"
+    ldir.mkdir(parents=True, exist_ok=True)
+    if preexisting_active is not None:
+        (ldir / ACTIVE_FILE).write_text(json.dumps(preexisting_active), encoding="utf-8")
+    calls = {"replay": [], "scorecard": []}
+
+    def replay_runner(*, use_learning, modifiers_file, phase=None):
+        calls["replay"].append((phase, use_learning))
+        if phase == "train":
+            return train_summary
+        return validate_candidate if use_learning else validate_baseline
+
+    def scorecard_runner(phase=None):
+        calls["scorecard"].append(phase)
+        (ldir / "setup_modifiers.preview.json").write_text(json.dumps(_PREVIEW), encoding="utf-8")
+
+    result = run_cycle(learning_dir=ldir, replay_out_dir=tmp_path / "replay",
+                       replay_runner=replay_runner, scorecard_runner=scorecard_runner,
+                       walk_forward=True, split_time=NOW, now=NOW, **kw)
+    return result, ldir, calls
+
+
+def test_walk_forward_fits_train_and_judges_validate(tmp_path):
+    # Scorecard fits on the TRAIN window; both validate replays run; a candidate that
+    # also wins out-of-sample is accepted.
+    result, ldir, calls = _run_wf(
+        tmp_path, train_summary=BETTER, validate_baseline=BASELINE, validate_candidate=BETTER)
+    assert result.walk_forward is True
+    assert result.accepted is True
+    assert calls["scorecard"] == ["train"]
+    assert ("train", False) in calls["replay"]
+    assert ("validate", False) in calls["replay"] and ("validate", True) in calls["replay"]
+    assert any("walk-forward" in w for w in result.warnings)
+
+
+def test_walk_forward_rejects_overfit_candidate(tmp_path):
+    # THE point: a modifier that would look fine in-sample but is WORSE on the unseen
+    # validate window must be rejected, and the active modifiers kept.
+    sentinel = {"marker": "KEEP", "modifiers": {}}
+    result, ldir, _calls = _run_wf(
+        tmp_path, train_summary=BETTER, validate_baseline=BASELINE, validate_candidate=WORSE,
+        preexisting_active=sentinel)
+    assert result.walk_forward is True
+    assert result.accepted is False
+    assert json.loads((ldir / ACTIVE_FILE).read_text()) == sentinel   # active untouched
+    assert "rejected" in result.reason
+
+
+def test_walk_forward_records_split_info_in_summary(tmp_path):
+    result, _ldir, _calls = _run_wf(
+        tmp_path, train_summary=BETTER, validate_baseline=BASELINE, validate_candidate=BETTER)
+    assert result.split_info.get("validate_from") == NOW.isoformat()
+    summ = json.loads(Path(result.cycle_summary_path).read_text())
+    assert summ["walk_forward"] is True
+    assert summ["split_info"]["validate_from"] == NOW.isoformat()
+
+
+def test_default_split_time_returns_disjoint_bounds(tmp_path):
+    from datetime import timedelta
+    from services.gold_bot_historical_market_data import HistoricalBar, csv_path, write_bars_csv
+    from services.gold_bot_learning_cycle import default_split_time
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bars = [HistoricalBar(symbol="XAUUSD", timeframe="M1", time=base + timedelta(minutes=i),
+                          open=2300.0, high=2301.0, low=2299.0, close=2300.0 + i)
+            for i in range(200)]
+    hist_dir = tmp_path / "hist"
+    write_bars_csv(csv_path(hist_dir, "XAUUSD", "M1"), bars)
+
+    split = default_split_time(symbol="XAUUSD", timeframe="M1", history_dir=hist_dir,
+                               warmup_bars=20, train_fraction=0.6)
+    assert split is not None
+    train_to, validate_from = split
+    assert train_to < validate_from   # disjoint: no bar shared between windows
+
+
+def test_default_split_time_none_without_history(tmp_path):
+    from services.gold_bot_learning_cycle import default_split_time
+    assert default_split_time(symbol="XAUUSD", timeframe="M1",
+                              history_dir=tmp_path / "nope") is None

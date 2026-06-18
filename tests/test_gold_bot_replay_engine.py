@@ -63,6 +63,26 @@ def test_warmup_and_max_bars():
     assert steps[0].index == 20
 
 
+def test_planned_steps_equals_iteration_count_across_windows():
+    # Equivalence guard for the allocation-free planned_steps(): it must return the
+    # exact number of steps __iter__ actually yields, under every window config —
+    # so the optimization can never drift from the real scored count.
+    bars = _bars(80)
+    frm = T0 + timedelta(minutes=30)
+    to = T0 + timedelta(minutes=55)
+    configs = [
+        dict(warmup_bars=10, max_bars=None),
+        dict(warmup_bars=20, max_bars=5),
+        dict(warmup_bars=5, from_time=frm, to_time=to),
+        dict(warmup_bars=5, from_time=frm, max_bars=7),
+        dict(warmup_bars=200, max_bars=None),   # warmup beyond history → zero steps
+        dict(warmup_bars=5, to_time=T0 - timedelta(minutes=1)),  # to_time before start → zero
+    ]
+    for cfg in configs:
+        clock = ReplayClock(bars, **cfg)
+        assert clock.planned_steps() == len(list(clock)), cfg
+
+
 def test_from_to_filtering():
     bars = _bars(60)
     frm = T0 + timedelta(minutes=30)
@@ -138,6 +158,69 @@ def test_no_data_when_no_future_bars():
     sc = score_horizon(bars, 9, decision="LONG", horizon=5, sl_points=300, tp_points=600)
     assert sc["outcome"] == "no_data"
     assert sc["bars_available"] == 0
+
+
+def test_cost_aware_net_return():
+    bars = _bars(20)
+    gross = score_horizon(bars, 5, decision="LONG", horizon=5, sl_points=300, tp_points=600)
+    netd = score_horizon(bars, 5, decision="LONG", horizon=5, sl_points=300, tp_points=600,
+                         cost_points=30.0)
+    assert netd["net_return_points"] == round(gross["dir_return_points"] - 30.0, 1)
+    assert gross["net_return_points"] == gross["dir_return_points"]      # cost 0 → net == gross
+    # NO_TRADE pays no cost
+    nt = score_horizon(bars, 5, decision="NO_TRADE", horizon=5, sl_points=None, tp_points=None,
+                       cost_points=30.0)
+    assert nt["net_return_points"] == nt["dir_return_points"]
+
+
+def test_replay_cost_lowers_expectancy(tmp_path):
+    _write_history(tmp_path, _bars(200))
+    common = dict(symbol="XAUUSD", timeframe="M1", history_dir=tmp_path, macro_history_dir=tmp_path,
+                  warmup_bars=30, max_bars=100, risk_mode="balanced", horizons=(5,))
+    gross = run_replay(out_dir=tmp_path / "g", cost_points=0.0, **common)
+    netr = run_replay(out_dir=tmp_path / "n", cost_points=50.0, **common)
+    assert netr.summary["cost_points"] == 50.0
+    assert netr.summary["expectancy_basis"] == "net_return_points"
+    g = gross.summary["by_horizon"]["5"]["avg_trade_return_points"]
+    n = netr.summary["by_horizon"]["5"]["avg_trade_return_points"]
+    if g is not None and n is not None:
+        assert n < g                        # net expectancy is lower after cost
+
+
+def test_spread_cost_uses_real_per_bar_spread(tmp_path):
+    # bars carry spread=12; --spread-cost should subtract that per trade vs gross.
+    _write_history(tmp_path, _bars(200))
+    common = dict(symbol="XAUUSD", timeframe="M1", history_dir=tmp_path, macro_history_dir=tmp_path,
+                  warmup_bars=30, max_bars=100, risk_mode="balanced", horizons=(5,))
+    gross = run_replay(out_dir=tmp_path / "g", **common)
+    spr = run_replay(out_dir=tmp_path / "s", spread_cost=True, **common)
+    assert spr.summary["spread_cost"] is True
+    assert spr.summary["expectancy_basis"] == "net_return_points"
+    g = gross.summary["by_horizon"]["5"]["avg_trade_return_points"]
+    n = spr.summary["by_horizon"]["5"]["avg_trade_return_points"]
+    if g is not None and n is not None:
+        assert n == round(g - 12.0, 1)        # real spread (12) subtracted per trade
+
+
+def test_realized_return_reflects_exit():
+    bars = _bars(10)
+    bars[6].high = bars[5].close + 600 * 0.01 + 1            # TP hit at +600
+    sc = score_horizon(bars, 5, decision="LONG", horizon=5, sl_points=300, tp_points=600,
+                       cost_points=10.0)
+    assert sc["outcome"] == "win"
+    assert sc["realized_return_points"] == round(600 - 10, 1)   # +tp minus cost
+
+
+def test_trend_filter_removes_countertrend(tmp_path):
+    _write_history(tmp_path, _bars(300))      # strictly rising → uptrend bias everywhere
+    common = dict(symbol="XAUUSD", timeframe="M1", history_dir=tmp_path, macro_history_dir=tmp_path,
+                  warmup_bars=120, max_bars=150, risk_mode="scalp", horizons=(15,))
+    base = run_replay(out_dir=tmp_path / "a", **common)
+    filt = run_replay(out_dir=tmp_path / "b", use_trend_filter=True, **common)
+    assert filt.summary["use_trend_filter"] is True
+    # uptrend → the filter must drop all SHORT trades, and never add trades
+    assert filt.summary["decisions"]["short"] == 0
+    assert filt.summary["decisions"]["short"] <= base.summary["decisions"]["short"]
 
 
 def test_tp_hit_is_win():

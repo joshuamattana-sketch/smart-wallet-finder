@@ -61,6 +61,14 @@ def test_read_missing_csv_is_empty(tmp_path):
     assert read_bars_csv(tmp_path / "nope.csv", symbol="XAUUSD", timeframe="M1") == []
 
 
+def test_read_unreadable_csv_returns_empty_not_crash(tmp_path):
+    # A corrupt (bad-encoding) history file must return [] (the replay layer turns
+    # that into a clear error) instead of crashing with a raw UnicodeDecodeError.
+    bad = tmp_path / "XAUUSD_M1.csv"
+    bad.write_bytes(b"\xff\xfe not utf-8 \x80\x81")
+    assert read_bars_csv(bad, symbol="XAUUSD", timeframe="M1") == []
+
+
 # ── metadata ──────────────────────────────────────────────────────────────────────
 def test_metadata_build_and_roundtrip(tmp_path):
     bars = _series(4)

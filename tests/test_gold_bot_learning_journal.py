@@ -58,6 +58,17 @@ def _dataset():
 
 
 # ── loading ──────────────────────────────────────────────────────────────────────
+def test_load_replay_rows_skips_unreadable_file(tmp_path):
+    # One corrupt replay .jsonl must not crash the whole learning build — it is
+    # skipped with a warning (the sibling summary read is already guarded).
+    d = tmp_path / "replay"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "replay_XAUUSD_M1_bad.jsonl").write_bytes(b"\xff\xfe not utf-8 \x80\x81")
+    rows, files, warns = load_replay_rows(d, symbol="XAUUSD", timeframe="M1")
+    assert rows == []
+    assert any("unreadable" in w for w in warns)
+
+
 def test_load_rows_enriches_risk_and_session(tmp_path):
     d = _make_replay(tmp_path, _dataset(), risk_mode="balanced")
     rows, files, warns = load_replay_rows(d)

@@ -20,7 +20,9 @@ Generated CSV/meta files are gitignored (see .gitignore data/gold_bot/history/*)
 from __future__ import annotations
 
 import csv
+import io
 import json
+import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -132,18 +134,27 @@ def read_bars_csv(path: str | Path, *, symbol: str, timeframe: str,
     if not p.exists():
         return []
     out: list[HistoricalBar] = []
-    with p.open("r", encoding="utf-8", newline="") as fh:
-        for row in csv.DictReader(fh):
-            t = _parse_dt(row.get("time"))
-            if t is None:
-                continue
-            out.append(HistoricalBar(
-                symbol=symbol, timeframe=timeframe.upper(), time=t,
-                open=_to_float(row.get("open")) or 0.0, high=_to_float(row.get("high")) or 0.0,
-                low=_to_float(row.get("low")) or 0.0, close=_to_float(row.get("close")) or 0.0,
-                tick_volume=_to_float(row.get("tick_volume")), spread=_to_float(row.get("spread")),
-                real_volume=_to_float(row.get("real_volume")), source=source,
-            ))
+    try:
+        # Read fully so a bad encoding raises HERE (decoding a streamed file object
+        # only fails mid-iteration, which a bare open() guard would miss).
+        raw = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # Corrupt/locked history file: log and return empty rather than crashing
+        # with a raw traceback. The replay layer turns an empty list into a clear
+        # "history file has no rows" error.
+        logging.getLogger(__name__).warning("unreadable history CSV %s: %s", p, exc)
+        return []
+    for row in csv.DictReader(io.StringIO(raw)):
+        t = _parse_dt(row.get("time"))
+        if t is None:
+            continue
+        out.append(HistoricalBar(
+            symbol=symbol, timeframe=timeframe.upper(), time=t,
+            open=_to_float(row.get("open")) or 0.0, high=_to_float(row.get("high")) or 0.0,
+            low=_to_float(row.get("low")) or 0.0, close=_to_float(row.get("close")) or 0.0,
+            tick_volume=_to_float(row.get("tick_volume")), spread=_to_float(row.get("spread")),
+            real_volume=_to_float(row.get("real_volume")), source=source,
+        ))
     return out
 
 

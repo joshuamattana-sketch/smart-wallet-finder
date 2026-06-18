@@ -194,7 +194,7 @@ def evaluate_risk_plan(
     margin_required: float | None,
     free_margin: float | None,
     equity: float | None,
-    daily_realized_pnl: float,
+    daily_realized_pnl: float | None,
     trades_today: int,
     risk_pct: float,
     max_margin_pct: float = MAX_MARGIN_PCT_PER_TRADE,
@@ -215,8 +215,27 @@ def evaluate_risk_plan(
         reasons.append("volume must be positive.")
     info: dict = {"risk_pct": risk_pct}
 
-    # Daily-loss budget (equity-based).
-    if equity and equity > 0:
+    # Daily-loss budget (equity-based). Fail closed: a NON-POSITIVE equity is a
+    # blown/zero account and must BLOCK — it must never slip through as a soft
+    # "unavailable" warning (a `if equity and equity > 0` truthiness check let
+    # equity == 0.0 bypass the entire budget). A genuinely missing equity (None)
+    # blocks on the sizing path and only warns on the manual path.
+    if equity is None:
+        if require_risk_calc:
+            reasons.append("equity unavailable — cannot verify daily-loss budget (fail closed).")
+        else:
+            warnings.append("equity unavailable — daily-loss budget not computed.")
+    elif equity <= 0:
+        reasons.append(f"equity is {equity:.2f} — account blown or zero; blocking.")
+    elif daily_realized_pnl is None:
+        # Equity is known but today's realized PnL could not be read, so the
+        # budget is unverifiable. Block on the sizing path; warn on manual.
+        info["equity"] = round(equity, 2)
+        if require_risk_calc:
+            reasons.append("daily realized PnL unavailable — cannot verify daily-loss budget (fail closed).")
+        else:
+            warnings.append("daily realized PnL unavailable — daily-loss budget not verified.")
+    else:
         max_daily_loss_amount = equity * config.max_daily_loss_pct / 100.0
         today_loss = max(0.0, -daily_realized_pnl)
         remaining = round(max_daily_loss_amount - today_loss, 2)
@@ -232,8 +251,6 @@ def evaluate_risk_plan(
             reasons.append(
                 f"estimated SL loss {est_sl_loss:.2f} exceeds remaining daily budget {remaining:.2f}."
             )
-    else:
-        warnings.append("equity unavailable — daily-loss budget not computed.")
 
     # SL-loss calculation requirement.
     info["estimated_sl_loss"] = est_sl_loss
@@ -243,10 +260,19 @@ def evaluate_risk_plan(
         else:
             warnings.append("estimated SL loss unavailable (order_calc_profit) — proceeding on manual volume.")
 
-    # Margin usage.
+    # Margin usage. Fail closed: when margin IS required but free margin is
+    # missing or non-positive we cannot prove the trade is affordable — block.
+    # (A `free_margin and free_margin > 0` truthiness check let free_margin == 0
+    # — a fully used-up account — silently skip the margin check.)
     info["margin_required"] = margin_required
     info["free_margin"] = free_margin
-    if margin_required is not None and free_margin and free_margin > 0:
+    if margin_required is None:
+        warnings.append("margin not computed (order_calc_margin unavailable) — cannot verify margin safety.")
+    elif free_margin is None:
+        reasons.append("free margin unavailable — cannot verify margin safety (fail closed).")
+    elif free_margin <= 0:
+        reasons.append(f"free margin is {free_margin:.2f} — no margin available; blocking.")
+    else:
         allowed = free_margin * max_margin_pct / 100.0
         info["margin_allowed"] = round(allowed, 2)
         if margin_required > allowed:
@@ -254,8 +280,6 @@ def evaluate_risk_plan(
                 f"margin {margin_required:.2f} exceeds {max_margin_pct:.0f}% of free margin "
                 f"({allowed:.2f})."
             )
-    elif margin_required is None:
-        warnings.append("margin not computed (order_calc_margin unavailable) — cannot verify margin safety.")
 
     return RiskDecision(approved=len(reasons) == 0, reasons=reasons, warnings=warnings, info=info)
 

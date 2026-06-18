@@ -35,6 +35,16 @@ _VALUE = """time,value
 """
 
 
+def test_load_macro_csv_unreadable_file_degrades_to_warning(tmp_path):
+    # A corrupt (bad-encoding) macro CSV must degrade to ([], [warning]) rather than
+    # crash the data-source probe with a raw UnicodeDecodeError.
+    bad = tmp_path / "DXY_D1.csv"
+    bad.write_bytes(b"\xff\xfe time,close \x80\x81 not utf-8")
+    bars, warnings = load_macro_csv(bad, symbol="DXY", timeframe="D1")
+    assert bars == []
+    assert any("unreadable" in w for w in warnings)
+
+
 def _write(tmp_path, name, text):
     p = tmp_path / name
     p.write_text(text, encoding="utf-8")

@@ -22,6 +22,7 @@ CSV/meta files are gitignored; only README + samples/*.sample.csv are tracked.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -108,42 +109,48 @@ def load_macro_csv(path: str | Path, *, symbol: str, timeframe: str,
                    loaded_at: datetime | None = None) -> tuple[list[MacroBar], list[str]]:
     """
     Parse an OHLC or value-only CSV into normalized MacroBars. Malformed rows are
-    skipped with warnings; rows are returned in file order. Never raises on bad
-    rows (only on an unreadable file).
+    skipped with warnings; rows are returned in file order. An unreadable file
+    (missing/locked/bad encoding) degrades to an empty list + warning rather than
+    crashing the caller.
     """
     p = Path(path)
     loaded_at = loaded_at or datetime.now(timezone.utc)
     bars: list[MacroBar] = []
     warnings: list[str] = []
-    with p.open("r", encoding="utf-8-sig", newline="") as fh:
-        reader = csv.DictReader(fh)
-        cols = {(c or "").strip().lower(): c for c in (reader.fieldnames or [])}
-        time_key = cols.get("time") or cols.get("date")
-        if time_key is None:
-            return [], ["CSV has no 'time'/'date' column."]
-        has_close = "close" in cols
-        has_value = "value" in cols
-        if not (has_close or has_value):
-            return [], ["CSV has neither 'close' nor 'value' column."]
-        for i, row in enumerate(reader, start=2):
-            t = _parse_dt(row.get(time_key))
-            if t is None:
-                warnings.append(f"row {i}: unparseable time {row.get(time_key)!r} — skipped.")
-                continue
-            value = _to_float(row.get(cols["value"])) if has_value else None
-            close = _to_float(row.get(cols["close"])) if has_close else value
-            if close is None:
-                close = value
-            if close is None:
-                warnings.append(f"row {i}: missing close/value — skipped.")
-                continue
-            bars.append(MacroBar(
-                symbol=symbol.upper(), timeframe=timeframe.upper(), time=t, close=close,
-                open=_to_float(row.get(cols["open"])) if "open" in cols else None,
-                high=_to_float(row.get(cols["high"])) if "high" in cols else None,
-                low=_to_float(row.get(cols["low"])) if "low" in cols else None,
-                value=value if has_value else None, source=source, loaded_at=loaded_at,
-            ))
+    try:
+        # Read fully so a bad encoding raises HERE, not mid-iteration (a bare
+        # open() guard would miss it — decoding is lazy on a streamed file object).
+        raw = p.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        return [], [f"unreadable macro CSV {p.name} ({exc})."]
+    reader = csv.DictReader(io.StringIO(raw))
+    cols = {(c or "").strip().lower(): c for c in (reader.fieldnames or [])}
+    time_key = cols.get("time") or cols.get("date")
+    if time_key is None:
+        return [], ["CSV has no 'time'/'date' column."]
+    has_close = "close" in cols
+    has_value = "value" in cols
+    if not (has_close or has_value):
+        return [], ["CSV has neither 'close' nor 'value' column."]
+    for i, row in enumerate(reader, start=2):
+        t = _parse_dt(row.get(time_key))
+        if t is None:
+            warnings.append(f"row {i}: unparseable time {row.get(time_key)!r} — skipped.")
+            continue
+        value = _to_float(row.get(cols["value"])) if has_value else None
+        close = _to_float(row.get(cols["close"])) if has_close else value
+        if close is None:
+            close = value
+        if close is None:
+            warnings.append(f"row {i}: missing close/value — skipped.")
+            continue
+        bars.append(MacroBar(
+            symbol=symbol.upper(), timeframe=timeframe.upper(), time=t, close=close,
+            open=_to_float(row.get(cols["open"])) if "open" in cols else None,
+            high=_to_float(row.get(cols["high"])) if "high" in cols else None,
+            low=_to_float(row.get(cols["low"])) if "low" in cols else None,
+            value=value if has_value else None, source=source, loaded_at=loaded_at,
+        ))
     return bars, warnings
 
 

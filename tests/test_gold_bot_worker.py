@@ -8,7 +8,7 @@ guarded execution gate.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from services.gold_bot_risk_gate import SafetyConfig
 from services.gold_bot_worker import GoldBotWorker, WorkerConfig
@@ -31,7 +31,7 @@ class _Mt5:
 class FakeConnector:
     """Canned MT5 demo terminal. Rising candles → technical LONG by default."""
 
-    def __init__(self, *, demo=True, open_positions=0, candles=None, send_retcode=10009):
+    def __init__(self, *, demo=True, open_positions=0, candles=None, send_retcode=10009, margin=50.0):
         self.demo_verified = demo
         self._open = open_positions
         self._candles = candles or self._rising()
@@ -39,6 +39,7 @@ class FakeConnector:
         self.sent_orders: list[dict] = []
         self.shutdown_called = False
         self._send_retcode = send_retcode
+        self._margin = margin
 
     @staticmethod
     def _rising(n=40, start=2300.0, step=2.0):
@@ -91,7 +92,7 @@ class FakeConnector:
         return 5.0
 
     def calc_margin(self, *, order_type, symbol, volume, price):
-        return 50.0
+        return self._margin
 
     def build_demo_order_request(self, **kw):
         return dict(kw)
@@ -162,6 +163,25 @@ def test_demo_with_flags_sends_order(tmp_path):
     assert len(conn.sent_orders) == 1
     assert w.iterations[0]["execution_status"] == "demo_order_sent"
     assert w.iterations[0]["order_sent"] is True
+
+
+def test_demo_fails_closed_when_account_read_fails(tmp_path):
+    # Fail closed: if the account snapshot raises (equity unreadable), the worker
+    # must NOT mask it as equity 0.0 and size on a zeroed budget — it must skip
+    # execution and send nothing.
+    conn = FakeConnector()
+
+    def _raise():
+        raise RuntimeError("terminal disconnected")
+
+    conn.account_snapshot = _raise
+    cfg = WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       auto_execute_demo=True, confirm_demo_order=True)
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    assert conn.sent_orders == []
+    assert w.iterations[0]["execution_status"] == "account_unavailable"
+    assert w.iterations[0]["order_sent"] is False
 
 
 def test_kill_switch_blocks_demo_order(tmp_path):
@@ -335,3 +355,204 @@ def test_worker_disables_learning_on_expired_contract(tmp_path):
     assert w._learning_safety["allowed"] is False
     assert w._learning_modifiers == {}
     assert not w.iterations[0]["learning"]    # no modifier applied (empty dict)
+
+
+# ── LM99A confidence-scaled lot (demo-only, default off) ───────────────────────
+def test_confidence_scaled_lot_off_by_default(tmp_path):
+    # Default off → the risk payload carries NO confidence-scaling fields.
+    conn = FakeConnector()
+    w = _worker(WorkerConfig(max_iterations=1, interval_seconds=0), conn, tmp_path)
+    w.run()
+    risk = w.iterations[0]["risk"]
+    assert risk is not None                       # observe still sizes/risk-checks
+    assert "confidence_risk_fraction" not in risk
+    assert WorkerConfig().confidence_scaled_lot is False
+
+
+def test_confidence_scaled_lot_surfaces_fraction_in_observe(tmp_path):
+    # Enabled in observe → fraction recorded, within (floor, 1.0], still no orders.
+    conn = FakeConnector()
+    cfg = WorkerConfig(mode="observe", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       confidence_scaled_lot=True, lot_confidence_floor=0.5)
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    assert conn.sent_orders == []
+    risk = w.iterations[0]["risk"]
+    assert risk["confidence_scaled_lot"] is True
+    assert 0.5 <= risk["confidence_risk_fraction"] <= 1.0
+
+
+def test_hard_mode_raises_risk_pct(tmp_path):
+    conn = FakeConnector()
+    cfg = WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       auto_execute_demo=True, confirm_demo_order=True,
+                       hard_mode=True, hard_max_risk_pct=5.0)
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    assert w.iterations[0]["execution_status"] == "demo_order_sent"
+    assert w.iterations[0]["risk"]["info"]["risk_pct"] == 5.0   # vs scalp default 0.10
+
+
+def test_hard_mode_refused_outside_demo(tmp_path):
+    conn = FakeConnector()
+    cfg = WorkerConfig(mode="observe", environment="live", max_iterations=1, interval_seconds=0,
+                       hard_mode=True)
+    w = _worker(cfg, conn, tmp_path)
+    assert w.run() == 2                # critical safety stop (hard mode is demo-only)
+    assert w.iterations == []
+
+
+def test_hard_mode_off_by_default(tmp_path):
+    assert WorkerConfig().hard_mode is False
+
+
+def test_session_summary_text_has_winrate_and_pnl(tmp_path):
+    conn = FakeConnector()
+    w = _worker(WorkerConfig(mode="demo", risk_mode="scalp"), conn, tmp_path)
+    w._symbol = "XAUUSD"
+    w._started_at = NOW
+    w.iterations = [
+        {"decision": "LONG", "order_sent": True, "execution_status": "demo_order_sent"},
+        {"decision": "SHORT", "order_sent": False, "execution_status": "risk_blocked"},
+        {"decision": "NO_TRADE", "order_sent": False, "execution_status": "no_trade"},
+    ]
+    txt = w._build_session_summary_text(
+        {"synced": True, "wins": 3, "losses": 1, "breakeven": 0, "realized_pnl": 42.5})
+    assert "winrate 75%" in txt
+    assert "PnL 42.5" in txt
+    assert "LONG 1 / SHORT 1 / NO_TRADE 1" in txt
+
+
+def test_discord_summary_off_by_default():
+    assert WorkerConfig().discord_session_summary is False
+
+
+def test_discord_summary_skips_without_webhook(tmp_path, monkeypatch):
+    # No webhook configured → no network, no exception (fail-soft).
+    monkeypatch.delenv("LUMORA_GOLD_DISCORD_WEBHOOK_URL", raising=False)
+    conn = FakeConnector()
+    w = _worker(WorkerConfig(discord_session_summary=True), conn, tmp_path)
+    w.iterations = []
+    w._maybe_send_discord_summary({"synced": False})   # must not raise
+
+
+def test_decision_context_recorded_on_send(tmp_path):
+    import json
+    conn = FakeConnector()
+    ctx = tmp_path / "decision_context.jsonl"
+    cfg = WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       auto_execute_demo=True, confirm_demo_order=True,
+                       decision_context_file=str(ctx))
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    assert w.iterations[0]["execution_status"] == "demo_order_sent"
+    rows = [json.loads(ln) for ln in ctx.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert rows and rows[0]["position_id"] == 111            # FakeConnector send.order
+    assert rows[0]["confidence"] == w.iterations[0]["confidence"]
+    assert rows[0]["side"] == "LONG"
+
+
+def test_reset_safety_state_clears_stale_cooldown(tmp_path):
+    import json
+    sp = tmp_path / "safety_state.json"
+    future = (NOW + timedelta(hours=1)).isoformat()
+    payload = {"recent_trades": [], "consecutive_losses": 3, "cooldown_until": future,
+               "last_trade_at": None}
+
+    # without reset → the stale cooldown blocks the order
+    sp.write_text(json.dumps(payload), encoding="utf-8")
+    blocked = _worker(WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                                   auto_execute_demo=True, confirm_demo_order=True), FakeConnector(), tmp_path)
+    blocked.run()
+    assert blocked.iterations[0]["safety"]["reason"] == "loss_streak_cooldown"
+
+    # with reset → cooldown cleared, order sent
+    sp.write_text(json.dumps(payload), encoding="utf-8")
+    ok = _worker(WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                              auto_execute_demo=True, confirm_demo_order=True,
+                              reset_safety_state=True), FakeConnector(), tmp_path)
+    ok.run()
+    assert ok.iterations[0]["execution_status"] == "demo_order_sent"
+
+
+def test_min_confidence_floor_blocks_single_trade(tmp_path):
+    # Floor above the signal confidence → single-trade path stands aside, no order.
+    conn = FakeConnector()
+    high = _worker(WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                                auto_execute_demo=True, confirm_demo_order=True,
+                                min_confidence_floor=101.0), conn, tmp_path)
+    high.run()
+    assert conn.sent_orders == []
+    assert high.iterations[0]["execution_status"] == "below_confidence_floor"
+    # floor 0 (default) → trades as before
+    conn2 = FakeConnector()
+    low = _worker(WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                               auto_execute_demo=True, confirm_demo_order=True), conn2, tmp_path)
+    low.run()
+    assert low.iterations[0]["execution_status"] == "demo_order_sent"
+
+
+def test_min_confidence_floor_feeds_basket_entry(tmp_path):
+    conn = FakeConnector()
+    w = _worker(WorkerConfig(risk_mode="scalp", basket_scalp=True, min_confidence_floor=80.0), conn, tmp_path)
+    assert w._basket_entry_floor(50) == 80
+
+
+def test_hard_mode_helpers(tmp_path):
+    from services.gold_bot_risk_gate import MAX_MARGIN_PCT_PER_TRADE
+    conn = FakeConnector()
+    hard = _worker(WorkerConfig(hard_mode=True, hard_max_margin_pct=60.0,
+                                basket_min_confidence=75.0, risk_mode="scalp"), conn, tmp_path)
+    assert hard._max_margin_pct() == 60.0
+    assert hard._basket_entry_floor(50) == 75            # user floor wins
+    normal = _worker(WorkerConfig(risk_mode="scalp"), conn, tmp_path)
+    assert normal._max_margin_pct() == MAX_MARGIN_PCT_PER_TRADE
+    assert normal._basket_entry_floor(50) == 50          # no extra floor
+
+
+def test_big_margin_blocks_normal_but_passes_in_hard_mode(tmp_path):
+    # Margin 5000 vs free 9000: normal 10% allows 900 → blocked; hard 60% allows 5400 → ok.
+    blocked = _worker(WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                                   auto_execute_demo=True, confirm_demo_order=True),
+                      FakeConnector(margin=5000.0), tmp_path)
+    blocked.run()
+    assert blocked.iterations[0]["execution_status"] == "risk_blocked"
+
+    conn = FakeConnector(margin=5000.0)
+    hard = _worker(WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                                auto_execute_demo=True, confirm_demo_order=True,
+                                hard_mode=True, hard_max_margin_pct=60.0), conn, tmp_path)
+    hard.run()
+    assert hard.iterations[0]["execution_status"] == "demo_order_sent"
+    assert len(conn.sent_orders) == 1
+
+
+def test_hard_basket_cap_warning_when_per_leg_exceeds_cap(tmp_path):
+    conn = FakeConnector()
+    # per-leg 5% > basket cap 3% → basket can never open; warning fires.
+    bad = _worker(WorkerConfig(mode="demo", risk_mode="scalp", basket_scalp=True, hard_mode=True,
+                               hard_max_risk_pct=5.0, basket_risk_cap_pct=3.0,
+                               basket_num_positions=5), conn, tmp_path)
+    msg = bad._hard_basket_cap_warning()
+    assert msg is not None and "25" in msg          # suggests >= 5% x 5 legs
+    # cap raised to fit → no warning
+    ok = _worker(WorkerConfig(mode="demo", risk_mode="scalp", basket_scalp=True, hard_mode=True,
+                              hard_max_risk_pct=5.0, basket_risk_cap_pct=25.0,
+                              basket_num_positions=5), conn, tmp_path)
+    assert ok._hard_basket_cap_warning() is None
+    # not in hard+basket mode → no warning
+    assert _worker(WorkerConfig(), conn, tmp_path)._hard_basket_cap_warning() is None
+
+
+def test_confidence_scaled_lot_still_sends_demo_order(tmp_path):
+    # The scaled-down sizing must not break the guarded demo send path.
+    conn = FakeConnector()
+    cfg = WorkerConfig(mode="demo", risk_mode="scalp", max_iterations=1, interval_seconds=0,
+                       auto_execute_demo=True, confirm_demo_order=True,
+                       confidence_scaled_lot=True, lot_confidence_floor=0.5)
+    w = _worker(cfg, conn, tmp_path)
+    w.run()
+    assert len(conn.sent_orders) == 1
+    e = w.iterations[0]
+    assert e["execution_status"] == "demo_order_sent"
+    assert e["risk"]["confidence_scaled_lot"] is True

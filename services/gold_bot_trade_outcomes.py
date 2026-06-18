@@ -199,6 +199,11 @@ def reconstruct_outcomes(deals: list[Any], *, symbol: str = DEFAULT_SYMBOL,
 
         if len(outs) > 1:
             warnings.append(f"partial/multiple exits on position {pid}; aggregated {len(outs)} exits.")
+        # A missing exit-deal volume would silently count as 0 lots and could make a
+        # full close look like a partial close — surface it rather than swallow it.
+        if any(g.get("volume") is None for g in outs):
+            warnings.append(f"exit deal(s) on position {pid} missing volume; "
+                            f"treated as 0 — exit-volume check may be unreliable.")
         exit_volume = round(sum(g["volume"] or 0.0 for g in outs), 2)
         if entry["volume"] and abs(exit_volume - entry["volume"]) > 1e-9:
             warnings.append(f"exit volume {exit_volume} != entry volume {entry['volume']} (partial close).")
@@ -263,6 +268,39 @@ def write_outcomes(out_dir: str | Path, outcomes: list[TradeOutcome], *,
     return {"named": named, "latest": latest, "events": events}
 
 
+# ── decision context (LM108A: attach engine confidence to reconstructed trades) ────
+def load_decision_context(path: str | Path) -> dict[Any, dict]:
+    """
+    Load a decision-context JSONL (one row per SENT order: position_id, confidence,
+    setup, side, risk_mode) into an enrich map {position_id: {setup, confidence,
+    learning_modifier, risk_mode}} for reconstruct_outcomes. Last write per
+    position_id wins. Missing/garbled file -> {} (never raises).
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    out: dict[Any, dict] = {}
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        pid = row.get("position_id")
+        if pid is None:
+            continue
+        out[pid] = {"setup": row.get("setup"), "confidence": row.get("confidence"),
+                    "learning_modifier": row.get("learning_modifier"),
+                    "risk_mode": row.get("risk_mode")}
+    return out
+
+
 # ── feedback: supervisor + learning journal ───────────────────────────────────────
 def update_safety_from_outcomes(supervisor: Any, outcomes: list[TradeOutcome], *,
                                 now: datetime | None = None) -> bool:
@@ -282,11 +320,23 @@ def update_safety_from_outcomes(supervisor: Any, outcomes: list[TradeOutcome], *
 def append_outcomes_to_learning_journal(outcomes: list[TradeOutcome], *,
                                         learning_dir: str | Path = DEFAULT_LEARNING_DIR,
                                         now: datetime | None = None) -> int:
-    """Append `demo_trade_outcome` rows to learning_events.jsonl. Returns count written."""
-    from services.gold_bot_learning_journal import append_demo_trade_outcome
+    """
+    Append `demo_trade_outcome` rows to learning_events.jsonl. DEDUPED by trade_id:
+    outcomes already present are skipped, so repeated session syncs no longer bloat
+    the file with thousands of duplicate rows. Returns count actually written.
+    """
+    from services.gold_bot_learning_journal import (
+        append_demo_trade_outcome, load_demo_trade_outcomes,
+    )
+    existing, _w, _d = load_demo_trade_outcomes(learning_dir=learning_dir, include_open=True)
+    seen = {o.get("trade_id") for o in existing if o.get("trade_id") is not None}
     n = 0
     for o in outcomes:
+        tid = getattr(o, "trade_id", None)
+        if tid is not None and tid in seen:
+            continue
         append_demo_trade_outcome(o, learning_dir=learning_dir, now=now)
+        seen.add(tid)
         n += 1
     return n
 
@@ -297,7 +347,8 @@ def sync_session_outcomes(*, symbol: str = DEFAULT_SYMBOL, magic: int = DEFAULT_
                           to_time: datetime | None = None, out_dir: str | Path = DEFAULT_OUTCOMES_DIR,
                           learning_dir: str | Path = DEFAULT_LEARNING_DIR,
                           supervisor: Any | None = None, connector: Any | None = None,
-                          write: bool = True, now: datetime | None = None) -> dict[str, Any]:
+                          write: bool = True, now: datetime | None = None,
+                          enrich: dict | None = None) -> dict[str, Any]:
     """
     Read demo deal history for [from_time, to_time], reconstruct outcomes, write
     them, update the supervisor loss-streak state, and append learning events.
@@ -330,7 +381,8 @@ def sync_session_outcomes(*, symbol: str = DEFAULT_SYMBOL, magic: int = DEFAULT_
             except Exception:  # noqa: BLE001
                 pass
 
-    outcomes = reconstruct_outcomes(deals, symbol=symbol, magic=magic, session_id=session_id)
+    outcomes = reconstruct_outcomes(deals, symbol=symbol, magic=magic, session_id=session_id,
+                                    enrich=enrich)
     summary = summarize_outcomes(outcomes)
     paths = write_outcomes(out_dir, outcomes, session_id=session_id, now=now) if write else {}
     safety_updated = False

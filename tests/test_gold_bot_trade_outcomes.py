@@ -61,6 +61,15 @@ def test_pnl_includes_commission_and_swap():
     assert o.pnl == -0.2 and o.outcome == "loss"   # 1.0 - 0.6 - 0.6
 
 
+def test_missing_exit_volume_is_flagged():
+    # A None exit-deal volume must surface a warning, not silently count as 0 lots
+    # (which could make a full close look like a partial close).
+    deals = [_deal(1, BUY, IN, price=2000.0, vol=0.1),
+             _deal(1, SELL, OUT, profit=10.0, price=2010.0, vol=None)]
+    o = reconstruct_outcomes(deals)[0]
+    assert any("missing volume" in w for w in o.warnings)
+
+
 # ── exit reason ────────────────────────────────────────────────────────────────────
 def test_sl_tp_exit_reason_parsing():
     assert reconstruct_outcomes(_long(1, profit=20, comment="[tp 2010.0]"))[0].exit_reason == "tp"
@@ -136,6 +145,18 @@ def test_append_outcomes_to_learning_journal(tmp_path):
     assert rows[0]["event"] == "demo_trade_outcome"
     assert rows[0]["source"] == "mt5_demo" and rows[0]["outcome"] == "win"
     assert rows[0]["exit_reason"] == "tp"
+
+
+def test_append_outcomes_deduped_across_repeated_syncs(tmp_path):
+    # Re-appending the same outcomes (as repeated session syncs do) must NOT bloat
+    # the file — second call writes 0 new rows.
+    outs = reconstruct_outcomes(_long(1, profit=50, comment="[tp 2010]")
+                                + _long(2, profit=-20, comment="[sl]"))
+    first = append_outcomes_to_learning_journal(outs, learning_dir=tmp_path, now=NOW)
+    second = append_outcomes_to_learning_journal(outs, learning_dir=tmp_path, now=NOW)
+    assert first == 2 and second == 0
+    rows = (tmp_path / "learning_events.jsonl").read_text().strip().splitlines()
+    assert len(rows) == 2                       # no duplicates appended
 
 
 # ── no orders / no MT5 in source ──────────────────────────────────────────────────────

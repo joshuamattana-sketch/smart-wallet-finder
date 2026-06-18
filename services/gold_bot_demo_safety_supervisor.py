@@ -31,6 +31,7 @@ JSONL log. Both are best-effort and never break the loop.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -160,8 +161,12 @@ class DemoSafetySupervisor:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             self.state_path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
-        except OSError:
-            pass  # state is best-effort; never break the loop
+        except OSError as exc:
+            # Best-effort, but never silent: a dropped write means the loss-streak
+            # cooldown is lost on the next load_state and the streak resets.
+            logging.getLogger(__name__).warning(
+                "demo safety supervisor could not persist state to %s: %s "
+                "(loss-streak cooldown may not survive a restart)", self.state_path, exc)
 
     def record_event(self, decision: SafetyDecision, *, now: datetime | None = None,
                      context: str = "") -> None:

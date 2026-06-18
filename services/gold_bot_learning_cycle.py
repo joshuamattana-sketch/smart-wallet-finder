@@ -204,6 +204,8 @@ class CycleResult:
     real_trades_used: bool = False
     real_trade_count: int = 0
     real_trade_weight: float = 2.0
+    walk_forward: bool = False
+    split_info: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,50 +223,100 @@ class CycleResult:
             "real_trades_used": self.real_trades_used,
             "real_trade_count": self.real_trade_count,
             "real_trade_weight": self.real_trade_weight,
+            "walk_forward": self.walk_forward,
+            "split_info": self.split_info,
         }
 
 
 # ── default (real) step runners - lazily wire LM85A/LM86A ─────────────────────────
 def default_replay_runner(*, symbol: str, timeframe: str, risk_mode: str, max_bars: int,
                           horizons: tuple[int, ...], history_dir: str | Path | None,
-                          macro_history_dir: str | Path | None, replay_out_dir: str | Path
-                          ) -> Callable[..., dict]:
-    """Returns a callable(use_learning, modifiers_file) -> replay summary dict (LM85A)."""
+                          macro_history_dir: str | Path | None, replay_out_dir: str | Path,
+                          train_to: datetime | None = None,
+                          validate_from: datetime | None = None,
+                          train_dir: str | Path | None = None,
+                          validate_dir: str | Path | None = None) -> Callable[..., dict]:
+    """Returns a callable(use_learning, modifiers_file, phase=None) -> replay summary (LM85A).
+
+    Without `phase` (or with the train/validate bounds unset) it replays the whole
+    window into `replay_out_dir` — the original behaviour. For walk-forward it
+    routes by `phase`: "train" replays bars up to `train_to` into `train_dir`,
+    "validate" replays bars from `validate_from` into `validate_dir`. Train and
+    validate windows are disjoint, so a candidate fit on train is judged on data
+    it never saw.
+    """
     from services.gold_bot_replay_engine import (
         DEFAULT_HISTORY_DIR, DEFAULT_MACRO_HISTORY_DIR, run_replay,
     )
 
-    def runner(*, use_learning: bool, modifiers_file: str | None) -> dict:
+    def runner(*, use_learning: bool, modifiers_file: str | None, phase: str | None = None) -> dict:
+        from_time = to_time = None
+        out_dir: str | Path = replay_out_dir
+        if phase == "train":
+            to_time, out_dir = train_to, (train_dir or replay_out_dir)
+        elif phase == "validate":
+            from_time, out_dir = validate_from, (validate_dir or replay_out_dir)
         res = run_replay(
             symbol=symbol, timeframe=timeframe, risk_mode=risk_mode, max_bars=max_bars,
-            horizons=tuple(horizons),
+            horizons=tuple(horizons), from_time=from_time, to_time=to_time,
             history_dir=history_dir or DEFAULT_HISTORY_DIR,
             macro_history_dir=macro_history_dir or DEFAULT_MACRO_HISTORY_DIR,
-            out_dir=replay_out_dir, use_learning_modifiers=use_learning,
+            out_dir=out_dir, use_learning_modifiers=use_learning,
             learning_modifiers_file=modifiers_file)
         return res.summary
 
     return runner
 
 
+def default_split_time(*, symbol: str, timeframe: str, history_dir: str | Path | None,
+                       warmup_bars: int = 120, train_fraction: float = 0.6
+                       ) -> tuple[datetime, datetime] | None:
+    """Derive disjoint train/validate time bounds from local history.
+
+    Returns ``(train_to, validate_from)`` where ``train_to`` is the last scored
+    bar time in the train slice and ``validate_from`` is the FIRST scored bar
+    time in the validate slice (so the two windows never share a bar). Returns
+    None when there is not enough history to split. Reads local CSVs only — no MT5.
+    """
+    from services.gold_bot_replay_engine import ReplayClock
+    from services.gold_bot_historical_market_data import (
+        DEFAULT_HISTORY_DIR, csv_path, read_bars_csv,
+    )
+    cp = csv_path(history_dir or DEFAULT_HISTORY_DIR, symbol, timeframe.upper())
+    if not cp.exists():
+        return None
+    bars = read_bars_csv(cp, symbol=symbol, timeframe=timeframe)
+    if not bars:
+        return None
+    times = [s.time for s in ReplayClock(bars, warmup_bars=warmup_bars, max_bars=None)]
+    if len(times) < 2:
+        return None
+    cut = max(1, min(len(times) - 1, int(len(times) * train_fraction)))
+    return times[cut - 1], times[cut]
+
+
 def default_scorecard_runner(*, symbol: str, timeframe: str, risk_mode: str, horizon: int,
                              min_samples: int, replay_out_dir: str | Path,
                              learning_dir: str | Path, include_real_trades: bool = False,
-                             real_trade_weight: float = 2.0, min_real_trades: int = 5
-                             ) -> Callable[[], None]:
-    """Returns a callable() that builds + writes the LM86A scorecard/preview into learning_dir.
-    With include_real_trades it blends LM89A demo_trade_outcome events (LM89B)."""
+                             real_trade_weight: float = 2.0, min_real_trades: int = 5,
+                             train_dir: str | Path | None = None
+                             ) -> Callable[..., None]:
+    """Returns a callable(phase=None) that builds + writes the LM86A scorecard/preview.
+    With include_real_trades it blends LM89A demo_trade_outcome events (LM89B).
+    For walk-forward, phase="train" fits the scorecard on the TRAIN replay rows
+    only (`train_dir`), so the modifiers are never derived from validate data."""
     from services.gold_bot_learning_journal import (
         build_real_trade_stats, build_scorecard, load_demo_trade_outcomes,
         load_replay_rows, write_real_trade_blend, write_scorecard,
     )
 
-    def runner() -> None:
+    def runner(phase: str | None = None) -> None:
+        src_dir = train_dir if (phase == "train" and train_dir is not None) else replay_out_dir
         rows, files, warns = load_replay_rows(
-            replay_out_dir, symbol=symbol, timeframe=timeframe, risk_mode=risk_mode)
+            src_dir, symbol=symbol, timeframe=timeframe, risk_mode=risk_mode)
         if not rows:
             raise CycleError(
-                f"scorecard: no replay rows in {replay_out_dir} for "
+                f"scorecard: no replay rows in {src_dir} for "
                 f"symbol={symbol} timeframe={timeframe} risk={risk_mode}.")
         real_stats = None
         if include_real_trades:
@@ -305,8 +357,10 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
               expiry_days: int | None = DEFAULT_EXPIRY_DAYS, dry_run: bool = False,
               include_real_trades: bool = False, real_trade_weight: float = 2.0,
               min_real_trades: int = 5, now: datetime | None = None,
+              walk_forward: bool = False, split_time: datetime | None = None,
+              train_fraction: float = 0.6, warmup_bars: int = 120,
               replay_runner: Callable[..., dict] | None = None,
-              scorecard_runner: Callable[[], None] | None = None) -> CycleResult:
+              scorecard_runner: Callable[..., None] | None = None) -> CycleResult:
     """
     Run the full demo-only learning cycle. With dry_run it validates inputs and
     writes NOTHING. Heavy steps are injectable for tests; defaults wire the real
@@ -327,6 +381,9 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
         f"trades >= {min_trades}, ratio >= {min_trade_count_ratio})",
         f"6. keep or rollback  (accept -> backup + replace {ACTIVE_FILE}; reject -> keep active)",
     ]
+    if walk_forward:
+        planned.insert(0, f"0. walk-forward ON (train_fraction={train_fraction}): scorecard fits on "
+                          "the TRAIN window; accept/reject measured on a disjoint VALIDATE window.")
 
     if dry_run:
         ok, hist = _history_present(symbol, timeframe, history_dir)
@@ -341,15 +398,40 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
                            warnings=warnings, dry_run=True, planned_steps=planned,
                            active_modifiers_path=str(learning_dir / ACTIVE_FILE))
 
+    # Walk-forward windows: fit the scorecard on a TRAIN slice, then accept/reject
+    # on a DISJOINT, unseen VALIDATE slice. This is the structural defence against
+    # the in-sample overfitting the old single-window cycle could not detect.
+    split_info: dict[str, Any] = {}
+    train_dir = validate_dir = None
+    train_to = validate_from = None
+    if walk_forward:
+        train_dir = Path(replay_out_dir) / "wf_train"
+        validate_dir = Path(replay_out_dir) / "wf_validate"
+        if split_time is not None:
+            train_to = validate_from = split_time
+        elif replay_runner is None:   # real path: derive the split from local history
+            split = default_split_time(symbol=symbol, timeframe=timeframe, history_dir=history_dir,
+                                       warmup_bars=warmup_bars, train_fraction=train_fraction)
+            if split is None:
+                raise CycleError(
+                    "walk-forward: not enough local history to split into train/validate windows.")
+            train_to, validate_from = split
+        split_info = {
+            "train_fraction": train_fraction,
+            "train_to": train_to.isoformat() if train_to else None,
+            "validate_from": validate_from.isoformat() if validate_from else None,
+        }
+
     replay_runner = replay_runner or default_replay_runner(
         symbol=symbol, timeframe=timeframe, risk_mode=risk_mode, max_bars=max_bars,
         horizons=horizons, history_dir=history_dir, macro_history_dir=macro_history_dir,
-        replay_out_dir=replay_out_dir)
+        replay_out_dir=replay_out_dir, train_to=train_to, validate_from=validate_from,
+        train_dir=train_dir, validate_dir=validate_dir)
     scorecard_runner = scorecard_runner or default_scorecard_runner(
         symbol=symbol, timeframe=timeframe, risk_mode=risk_mode, horizon=horizon,
         min_samples=min_samples, replay_out_dir=replay_out_dir, learning_dir=learning_dir,
         include_real_trades=include_real_trades, real_trade_weight=real_trade_weight,
-        min_real_trades=min_real_trades)
+        min_real_trades=min_real_trades, train_dir=train_dir)
 
     real_trade_count = 0
     if include_real_trades:
@@ -358,10 +440,15 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
         real_trade_count = len(_ro)
         warnings += _rw
 
-    # 1. baseline replay (no learning)
-    baseline_summary = replay_runner(use_learning=False, modifiers_file=None)
-    # 2. scorecard -> writes setup_modifiers.preview.json
-    scorecard_runner()
+    # 1+2. fit the scorecard. Walk-forward fits on the TRAIN window only (its replay
+    # rows feed the scorecard); the standard cycle fits on the whole window and the
+    # same baseline is reused for the comparison.
+    if walk_forward:
+        replay_runner(use_learning=False, modifiers_file=None, phase="train")
+        scorecard_runner(phase="train")
+    else:
+        baseline_summary = replay_runner(use_learning=False, modifiers_file=None)
+        scorecard_runner()
     # 3. promote candidate (staged separately; active untouched)
     cand_payload, evaluated, promo_warn = promote_candidate(
         learning_dir, min_samples=min_samples, now=now, cycle_id=cycle_id, expiry_days=expiry_days)
@@ -370,8 +457,16 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
         warnings.append("no candidate modifiers cleared the sample guard - "
                         "comparison will run but the candidate replay is effectively the baseline.")
     candidate_path = learning_dir / CANDIDATE_FILE
-    # 4. candidate replay (learning ON, explicit candidate file)
-    candidate_summary = replay_runner(use_learning=True, modifiers_file=str(candidate_path))
+    # 4. candidate replay (learning ON, explicit candidate file). Walk-forward
+    # measures BOTH baseline and candidate on the unseen VALIDATE window.
+    if walk_forward:
+        baseline_summary = replay_runner(use_learning=False, modifiers_file=None, phase="validate")
+        candidate_summary = replay_runner(use_learning=True, modifiers_file=str(candidate_path),
+                                          phase="validate")
+        warnings.append("walk-forward: modifiers fit on the TRAIN window; accepted/rejected on a "
+                        "disjoint, unseen VALIDATE window.")
+    else:
+        candidate_summary = replay_runner(use_learning=True, modifiers_file=str(candidate_path))
     # 5. compare
     comparison = compare_summaries(
         baseline_summary, candidate_summary, horizon=horizon,
@@ -404,7 +499,7 @@ def run_cycle(*, symbol: str = "XAUUSD", timeframe: str = "M1", risk_mode: str =
         backup_modifiers_path=str(backup_path) if backup_path else None,
         warnings=warnings, planned_steps=planned,
         real_trades_used=include_real_trades, real_trade_count=real_trade_count,
-        real_trade_weight=real_trade_weight)
+        real_trade_weight=real_trade_weight, walk_forward=walk_forward, split_info=split_info)
 
     summary_path = _write_cycle_summary(learning_dir, result, symbol=symbol, timeframe=timeframe,
                                         risk_mode=risk_mode, now=now)

@@ -32,6 +32,8 @@ from services.gold_bot_macro_context import MacroContext, macro_directional_adju
 # ── Tunable thresholds (transparent, conservative) ───────────────────────────
 SMA_SHORT = 9
 SMA_LONG = 21
+TREND_SMA = 100          # higher-timeframe trend proxy on the same series (long SMA)
+TREND_FLAT_POINTS = 50   # within this of the trend SMA = flat (no directional bias)
 LOOKBACK = 30            # recent high/low window
 SWING_WIN = 10          # swing pivot window
 RECENT_EXCL = 3         # bars excluded from "previous" high/low (the sweep candidates)
@@ -45,6 +47,7 @@ RETEST_POINTS = 120     # "near" a level for retest/reclaim (points)
 EXTENSION_POINTS = 800  # too far from SMA21 without a retest = chase
 CHAOTIC_RANGE_MULT = 3.0
 REGIME_TREND_POINTS = 60   # SMA9–SMA21 separation (pts) to call it a trend
+MR_EXT_ATR_MULT = 2.5      # mean-reversion: extended if |close - SMA_LONG| > this * volatility
 
 MAX_SPREAD_POINTS = {"safe": 60, "balanced": 60, "aggressive": 80,
                      "experimental": 60, "scalp": 35}
@@ -61,6 +64,7 @@ SETUP_PRIORITY = {
     "momentum": 4,
     "scalp_retest": 5,
     "scalp_momentum": 6,
+    "mean_reversion_extreme": 2,
 }
 
 
@@ -86,6 +90,8 @@ class MarketState:
     dist_from_low_points: float
     compression_state: str      # compressed | expanding | normal
     regime: str                 # trend | range
+    trend_sma: float            # higher-timeframe trend proxy (long SMA)
+    trend_bias: str             # up | down | flat (close vs trend_sma)
     session: str                # Asia | London | NewYork | Off-session | unknown
     bars: int
 
@@ -210,6 +216,13 @@ def compute_market_state(candles: list[dict], *, spread_points: float, point: fl
     aligned = closes[-1] > sma_short > sma_long or closes[-1] < sma_short < sma_long
     regime = "trend" if (sma_sep_pts >= REGIME_TREND_POINTS and aligned) else "range"
 
+    # Higher-timeframe trend proxy: a long SMA on the same series. bias = close vs it.
+    n_trend = min(TREND_SMA, n)
+    trend_sma = _mean(closes[-n_trend:])
+    trend_diff_pts = (closes[-1] - trend_sma) / p
+    trend_bias = ("up" if trend_diff_pts > TREND_FLAT_POINTS
+                  else "down" if trend_diff_pts < -TREND_FLAT_POINTS else "flat")
+
     return MarketState(
         last_close=closes[-1], last_open=last["open"], sma_short=sma_short, sma_long=sma_long,
         recent_high=recent_high, recent_low=recent_low, swing_high=swing_high, swing_low=swing_low,
@@ -220,6 +233,7 @@ def compute_market_state(candles: list[dict], *, spread_points: float, point: fl
         dist_from_high_points=round((recent_high - closes[-1]) / p, 1),
         dist_from_low_points=round((closes[-1] - recent_low) / p, 1),
         compression_state=compression, regime=regime,
+        trend_sma=round(trend_sma, 2), trend_bias=trend_bias,
         session=_session_from_iso(last.get("time")), bars=n,
     )
 
@@ -366,6 +380,37 @@ def _detect_scalp_retest(candles, ms, point, mode) -> _Candidate | None:
                       {})
 
 
+def _detect_mean_reversion(candles, ms, point, mode) -> _Candidate | None:
+    """
+    Fade an over-extended move back toward the mean (SMA_LONG). Fires when price is
+    stretched > MR_EXT_ATR_MULT * volatility from the mean AND the last candle shows
+    a rejection wick. Data-motivated: high-confidence momentum chases moves that
+    mean-revert, so fading exhaustion is the inverse hypothesis.
+    """
+    if ms.volatility_points <= 0:
+        return None
+    ext_pts = (ms.last_close - ms.sma_long) / (point or 0.01)   # signed distance from mean
+    thresh = MR_EXT_ATR_MULT * ms.volatility_points
+    spread_pen = {"spread_penalty": -min(15, (ms.spread_points - 25) / 3.0)} if ms.spread_points > 25 else {}
+    # Stretched ABOVE the mean + upper-wick rejection → fade SHORT (back to mean).
+    if ext_pts > thresh and ms.upper_wick_ratio >= 0.4:
+        comp = {"base": 44, "extension": min(14, (ext_pts / thresh) * 6),
+                "rejection": min(12, ms.upper_wick_ratio * 14), **spread_pen}
+        return _Candidate("SHORT", "mean_reversion_extreme", comp,
+                          [f"price {ext_pts:.0f}pt above mean (> {thresh:.0f}pt) — fading exhaustion.",
+                           f"upper-wick rejection {ms.upper_wick_ratio:.2f}."],
+                          {"mean": round(ms.sma_long, 2), "side": "fade_high"})
+    # Stretched BELOW the mean + lower-wick rejection → fade LONG.
+    if ext_pts < -thresh and ms.lower_wick_ratio >= 0.4:
+        comp = {"base": 44, "extension": min(14, (abs(ext_pts) / thresh) * 6),
+                "rejection": min(12, ms.lower_wick_ratio * 14), **spread_pen}
+        return _Candidate("LONG", "mean_reversion_extreme", comp,
+                          [f"price {abs(ext_pts):.0f}pt below mean (> {thresh:.0f}pt) — fading exhaustion.",
+                           f"lower-wick rejection {ms.lower_wick_ratio:.2f}."],
+                          {"mean": round(ms.sma_long, 2), "side": "fade_low"})
+    return None
+
+
 def _penalties(ms: MarketState) -> dict[str, float]:
     """Shared spread / volatility / extension / chase penalties (negative)."""
     pen: dict[str, float] = {}
@@ -403,6 +448,8 @@ def _decide_core(
     spread_points: float,
     point: float,
     has_open_position: bool,
+    use_trend_filter: bool = False,
+    use_mean_reversion: bool = False,
 ) -> TradeIdea:
     mode = risk_mode.lower()
     sl_pts, tp_pts = SLTP_POINTS.get(mode, SLTP_POINTS["balanced"])
@@ -448,12 +495,20 @@ def _decide_core(
         detectors = [_detect_sweep, _detect_fvg, _detect_scalp_retest, _detect_momentum]
     else:
         detectors = [_detect_sweep, _detect_fvg, _detect_breakout_retest, _detect_momentum]
+    if use_mean_reversion:
+        detectors = [_detect_mean_reversion, *detectors]
 
     candidates: list[_Candidate] = []
     for d in detectors:
         c = d(candles, ms, point, mode)
         if c is not None:
             candidates.append(c)
+
+    # Higher-timeframe trend filter: keep only candidates aligned with the trend
+    # bias (only LONG in an uptrend, only SHORT in a downtrend). Flat = no filter.
+    if use_trend_filter and ms.trend_bias in ("up", "down"):
+        aligned = "LONG" if ms.trend_bias == "up" else "SHORT"
+        candidates = [c for c in candidates if c.decision == aligned]
 
     # Pick best: meets confidence, then by priority, then confidence.
     valid = [c for c in candidates if c.confidence >= min_conf]
@@ -543,9 +598,14 @@ def _apply_macro(
                 idea.decision = "NO_TRADE"
                 idea.strategy = "macro_post_event_scalp"
                 idea.should_execute_demo = False
-                idea.confidence = max(0, idea.confidence + delta)
+                # Record the delta ACTUALLY applied (after the 0-floor clamp), not the
+                # intended `delta` — the decision is being forced to NO_TRADE, so the
+                # recorded attribution must reflect the real confidence change.
+                new_conf = max(0, idea.confidence + delta)
+                effective_delta = new_conf - idea.confidence
+                idea.confidence = new_conf
                 idea.blockers.append("scalp blocked in post-event window (volatility).")
-                applied.update({"forced_no_trade": True, "confidence_delta": delta})
+                applied.update({"forced_no_trade": True, "confidence_delta": effective_delta})
                 idea.macro["applied"] = applied
                 return idea
             if macro.event_risk_state == "watch":
@@ -616,6 +676,8 @@ def decide(
     learning_modifiers: dict | None = None,
     learning_modifiers_file: str | None = None,
     learning_mode: str = "off",
+    use_trend_filter: bool = False,
+    use_mean_reversion: bool = False,
 ) -> TradeIdea:
     """
     Public entry point. Runs the pure technical engine, then (optionally) folds
@@ -627,6 +689,7 @@ def decide(
     idea = _decide_core(
         candles, symbol=symbol, timeframe=timeframe, risk_mode=risk_mode,
         spread_points=spread_points, point=point, has_open_position=has_open_position,
+        use_trend_filter=use_trend_filter, use_mean_reversion=use_mean_reversion,
     )
     mode = risk_mode.lower()
     min_conf = MIN_CONFIDENCE.get(mode, 55)

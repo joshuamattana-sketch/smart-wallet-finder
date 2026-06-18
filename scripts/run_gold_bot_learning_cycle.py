@@ -66,6 +66,13 @@ def parse_args(argv=None):
                    help="Blend real demo_trade_outcome events into the cycle scorecard (demo-only).")
     p.add_argument("--real-trade-weight", type=float, default=2.0, dest="real_trade_weight")
     p.add_argument("--min-real-trades", type=int, default=5, dest="min_real_trades")
+    # Walk-forward: fit modifiers on a TRAIN slice, accept/reject on a disjoint,
+    # unseen VALIDATE slice. The structural defence against in-sample overfitting.
+    p.add_argument("--walk-forward", action="store_true", dest="walk_forward",
+                   help="Fit the scorecard on a TRAIN window and accept/reject on a disjoint "
+                        "VALIDATE window (out-of-sample). Recommended for trustworthy learning.")
+    p.add_argument("--train-fraction", type=float, default=0.6, dest="train_fraction",
+                   help="Fraction of history used for the TRAIN window (rest is VALIDATE).")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="Print planned steps + validate files. Writes nothing.")
     p.add_argument("--rollback", action="store_true",
@@ -109,6 +116,7 @@ def main(argv=None) -> int:
             learning_dir=args.learning_dir, replay_out_dir=args.replay_out_dir,
             include_real_trades=args.include_real_trades,
             real_trade_weight=args.real_trade_weight, min_real_trades=args.min_real_trades,
+            walk_forward=args.walk_forward, train_fraction=args.train_fraction,
             dry_run=args.dry_run)
     except CycleError as exc:
         print(f"LEARNING CYCLE FAILED: {exc}", file=sys.stderr)

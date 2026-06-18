@@ -125,7 +125,14 @@ def load_replay_rows(replay_dir: str | Path = DEFAULT_REPLAY_DIR, *, symbol: str
                 warnings.append(f"unreadable summary {sp.name} - risk_mode unknown.")
         file_risk = summary.get("risk_mode", "unknown")
         file_used = False
-        for ln, line in enumerate(jsonl.read_text(encoding="utf-8").splitlines(), start=1):
+        try:
+            jsonl_text = jsonl.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            # One unreadable replay file must not crash the whole learning build
+            # (the sibling summary read above is already guarded the same way).
+            warnings.append(f"unreadable replay file {jsonl.name} ({exc}) - skipped.")
+            continue
+        for ln, line in enumerate(jsonl_text.splitlines(), start=1):
             line = line.strip()
             if not line:
                 continue

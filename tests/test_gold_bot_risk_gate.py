@@ -227,3 +227,69 @@ def test_risk_plan_manual_volume_warns_not_blocks_on_missing_calc():
     # missing SL calc is only a warning for manual volume
     assert d.approved is True
     assert any("estimated SL loss unavailable" in w for w in d.warnings)
+
+
+# ── fail-closed: missing/zero account numbers must BLOCK, not silently pass ────
+def test_risk_plan_blocks_on_zero_equity():
+    # A blown/zero account: equity == 0.0 must hard-block, not slip through as a
+    # soft "unavailable" warning (the old `if equity and equity > 0` truthiness bug).
+    d = evaluate_risk_plan(**_plan_kwargs(equity=0.0))
+    assert d.approved is False
+    assert any("blown or zero" in r for r in d.reasons)
+
+
+def test_risk_plan_blocks_on_negative_equity():
+    d = evaluate_risk_plan(**_plan_kwargs(equity=-5.0))
+    assert d.approved is False
+    assert any("blown or zero" in r for r in d.reasons)
+
+
+def test_risk_plan_blocks_when_equity_unavailable_and_risk_calc_required():
+    # Account read failed → equity None. On the sizing path (require_risk_calc) this
+    # must fail closed, not approve on an unverifiable daily-loss budget.
+    d = evaluate_risk_plan(**_plan_kwargs(equity=None, require_risk_calc=True))
+    assert d.approved is False
+    assert any("equity unavailable" in r for r in d.reasons)
+
+
+def test_risk_plan_warns_when_equity_unavailable_on_manual_path():
+    d = evaluate_risk_plan(**_plan_kwargs(equity=None, require_risk_calc=False,
+                                          est_sl_loss=None))
+    assert d.approved is True
+    assert any("equity unavailable" in w for w in d.warnings)
+
+
+def test_risk_plan_blocks_when_today_pnl_unavailable_and_risk_calc_required():
+    # History read failed → daily_realized_pnl None. Budget unverifiable → block.
+    d = evaluate_risk_plan(**_plan_kwargs(daily_realized_pnl=None, require_risk_calc=True))
+    assert d.approved is False
+    assert any("daily realized PnL unavailable" in r for r in d.reasons)
+
+
+def test_risk_plan_warns_when_today_pnl_unavailable_on_manual_path():
+    d = evaluate_risk_plan(**_plan_kwargs(daily_realized_pnl=None, require_risk_calc=False,
+                                          est_sl_loss=None))
+    assert d.approved is True
+    assert any("daily realized PnL unavailable" in w for w in d.warnings)
+
+
+def test_risk_plan_blocks_when_free_margin_unavailable():
+    # margin_required known but free margin missing → cannot prove affordability.
+    d = evaluate_risk_plan(**_plan_kwargs(free_margin=None))
+    assert d.approved is False
+    assert any("free margin unavailable" in r for r in d.reasons)
+
+
+def test_risk_plan_blocks_on_zero_free_margin():
+    # free_margin == 0.0 must block, not silently skip the margin check (truthiness bug).
+    d = evaluate_risk_plan(**_plan_kwargs(free_margin=0.0))
+    assert d.approved is False
+    assert any("no margin available" in r for r in d.reasons)
+
+
+def test_risk_plan_winning_day_keeps_full_budget():
+    # A profitable day (positive realized PnL) must leave the FULL daily-loss budget
+    # intact and approve — guards against a sign-flip granting unlimited budget.
+    d = evaluate_risk_plan(**_plan_kwargs(daily_realized_pnl=500.0))
+    assert d.approved is True
+    assert d.info["remaining_daily_budget"] == pytest.approx(700.0)  # 7% of 10000, no loss
