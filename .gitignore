@@ -78,6 +78,12 @@ data/gold_bot/replay_heartbeat/*.md
 data/gold_bot/replay_worker/*.json
 data/gold_bot/replay_worker/*.jsonl
 data/gold_bot/replay_worker/*.md
+# LM98C tactic test outputs + local tactic library overrides — never commit.
+data/gold_bot/tactic_tests/*.json
+data/gold_bot/tactic_tests/*.jsonl
+data/gold_bot/tactic_tests/*.md
+data/gold_bot/tactics/*.manual.json
+data/gold_bot/tactics/*.local.json
 __pycache__/
 *.pyc
 .DS_Store

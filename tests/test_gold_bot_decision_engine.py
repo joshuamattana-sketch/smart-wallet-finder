@@ -56,6 +56,26 @@ def _decide(candles, **kw):
     return decide(candles, **base)
 
 
+# ── higher-timeframe trend filter ──────────────────────────────────────────────
+def test_trend_bias_up_and_down():
+    assert compute_market_state(_rising(120), spread_points=4, point=POINT).trend_bias == "up"
+    assert compute_market_state(_falling(120), spread_points=4, point=POINT).trend_bias == "down"
+
+
+def test_trend_filter_blocks_countertrend():
+    # Long uptrend (bias up) with a sharp final drop that would trigger a SHORT.
+    closes = [2300 + i * 2 for i in range(116)] + [2530, 2520, 2510, 2500]
+    candles = _candles(closes)
+    assert compute_market_state(candles, spread_points=4, point=POINT).trend_bias == "up"
+    # With the uptrend filter the engine must NOT take a counter-trend SHORT.
+    assert _decide(candles, risk_mode="scalp", use_trend_filter=True).decision != "SHORT"
+
+
+def test_trend_filter_keeps_aligned_trades():
+    # Clean uptrend → LONG still allowed with the filter on.
+    assert _decide(_rising(120), use_trend_filter=True).decision == "LONG"
+
+
 # ── momentum (carried from V1) ────────────────────────────────────────────────
 def test_bullish_trend_gives_long():
     idea = _decide(_rising())

@@ -33,6 +33,10 @@ SMALL_CAP_MODES = ("experimental", "scalp")
 DEFAULT_MAX_RISK_PCT = 1.0          # without --allow-high-demo-risk
 HIGH_DEMO_MAX_RISK_PCT = 2.0        # even with the override, demo never exceeds this
 EXPERIMENTAL_MAX_RISK_PCT = 0.25    # experimental/scalp stay small regardless
+# LM103A demo-only HARD mode: an explicit, higher ceiling used ONLY behind the
+# --hard-mode flag on a verified demo account. Even hard mode never exceeds this
+# wall, and the daily-loss budget in the risk gate still bounds each trade.
+HARD_DEMO_MAX_RISK_PCT = 10.0
 
 
 @dataclass
@@ -46,11 +50,14 @@ def resolve_risk_pct(
     mode: str,
     override_pct: float | None,
     allow_high_demo_risk: bool,
+    hard_demo: bool = False,
 ) -> RiskPctResolution:
     """
     Resolve the effective risk-per-trade percent. An explicit --risk-pct
-    overrides the mode default; both are then capped. Experimental is always
-    kept small. Returns the capped pct plus any warnings about clamping.
+    overrides the mode default; both are then capped. Experimental/scalp are kept
+    small UNLESS hard_demo is set (LM103A demo-only hard mode), which lifts the
+    ceiling to HARD_DEMO_MAX_RISK_PCT and opts out of the small-cap shrink. Even
+    hard mode never exceeds that wall. Returns the capped pct plus any warnings.
     """
     warnings: list[str] = []
     mode = mode.lower()
@@ -61,9 +68,12 @@ def resolve_risk_pct(
         warnings.append("risk-pct must be > 0.")
         return RiskPctResolution(pct=0.0, warnings=warnings)
 
-    cap = HIGH_DEMO_MAX_RISK_PCT if allow_high_demo_risk else DEFAULT_MAX_RISK_PCT
-    if mode in SMALL_CAP_MODES:
-        cap = min(cap, EXPERIMENTAL_MAX_RISK_PCT)
+    if hard_demo:
+        cap = HARD_DEMO_MAX_RISK_PCT
+    else:
+        cap = HIGH_DEMO_MAX_RISK_PCT if allow_high_demo_risk else DEFAULT_MAX_RISK_PCT
+        if mode in SMALL_CAP_MODES:
+            cap = min(cap, EXPERIMENTAL_MAX_RISK_PCT)
 
     pct = base
     if pct > cap:
@@ -72,6 +82,44 @@ def resolve_risk_pct(
         pct = cap
 
     return RiskPctResolution(pct=round(pct, 4), warnings=warnings)
+
+
+# Confidence-scaled sizing (LM99A, demo-only). The returned fraction is ALWAYS
+# within (0, 1], so it can only ever risk LESS than the configured risk% — it can
+# never raise the per-trade risk above the resolved risk-pct / risk-gate ceiling.
+DEFAULT_LOT_CONFIDENCE_FLOOR = 0.5
+
+
+def confidence_risk_fraction(
+    confidence: float,
+    *,
+    min_confidence: float,
+    full_confidence: float = 100.0,
+    floor_fraction: float = DEFAULT_LOT_CONFIDENCE_FLOOR,
+) -> float:
+    """
+    Map a decision confidence to a fraction of the configured risk amount.
+
+    `floor_fraction` at (or below) `min_confidence`, 1.0 at (or above)
+    `full_confidence`, linear in between. Clamped to [floor_fraction, 1.0] so
+    confidence scaling can only REDUCE the risk amount, never raise it above what
+    resolve_risk_pct already allows. Pure; no I/O. Non-numeric / degenerate band
+    falls back to 1.0 (no scaling).
+    """
+    try:
+        c = float(confidence)
+    except (TypeError, ValueError):
+        return 1.0
+    floor = min(1.0, max(0.0, float(floor_fraction)))
+    lo, hi = float(min_confidence), float(full_confidence)
+    if hi <= lo:
+        return 1.0
+    if c <= lo:
+        return floor
+    if c >= hi:
+        return 1.0
+    frac = floor + (1.0 - floor) * (c - lo) / (hi - lo)
+    return round(min(1.0, max(floor, frac)), 4)
 
 
 @dataclass

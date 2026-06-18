@@ -61,6 +61,24 @@ def parse_args(argv=None):
                    help="Apply demo-only learned confidence modifiers (default off).")
     p.add_argument("--learning-modifiers-file", default=None, dest="learning_modifiers_file",
                    help="Active demo modifiers JSON (default data/gold_bot/learning/active_demo_modifiers.json).")
+    p.add_argument("--cost-points", type=float, default=0.0, dest="cost_points",
+                   help="Flat round-trip cost (commission) in points, subtracted from each trade. "
+                        "Default 0. Combine with --spread-cost for spread + commission.")
+    p.add_argument("--spread-cost", action="store_true", dest="spread_cost",
+                   help="Use the REAL per-bar spread from history as the round-trip cost (honest "
+                        "scalp cost). Add --cost-points for extra commission on top.")
+    p.add_argument("--max-spread-points", type=float, default=None, dest="max_spread_points",
+                   help="Spread filter: only take entries when the bar spread <= this (points). "
+                        "Tests whether avoiding wide-spread bars improves net expectancy.")
+    p.add_argument("--trend-filter", action="store_true", dest="use_trend_filter",
+                   help="Higher-timeframe trend filter: only LONG in an uptrend, SHORT in a "
+                        "downtrend (long-SMA proxy). Aims to cut counter-trend scalps.")
+    p.add_argument("--mean-reversion", action="store_true", dest="use_mean_reversion",
+                   help="Add the mean-reversion detector (fade over-extended moves back to the mean).")
+    p.add_argument("--sl-points", type=int, default=None, dest="sl_points_override",
+                   help="Override the engine SL distance (points) for scoring — tune exits.")
+    p.add_argument("--tp-points", type=int, default=None, dest="tp_points_override",
+                   help="Override the engine TP distance (points) for scoring — tune exits.")
     p.add_argument("--dry-run", action="store_true", dest="dry_run")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
@@ -80,6 +98,10 @@ def main(argv=None) -> int:
             to_time=to_time, risk_mode=args.risk_mode, horizons=horizons, dry_run=args.dry_run,
             use_learning_modifiers=args.use_learning_modifiers,
             learning_modifiers_file=args.learning_modifiers_file,
+            cost_points=args.cost_points, spread_cost=args.spread_cost,
+            max_spread_points=args.max_spread_points,
+            sl_points_override=args.sl_points_override, tp_points_override=args.tp_points_override,
+            use_trend_filter=args.use_trend_filter, use_mean_reversion=args.use_mean_reversion,
         )
     except ReplayError as exc:
         print(f"REPLAY FAILED: {exc}", file=sys.stderr)

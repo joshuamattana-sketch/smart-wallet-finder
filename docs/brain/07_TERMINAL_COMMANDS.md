@@ -2226,3 +2226,30 @@ jobs and ran none; `--once M1/scalp/h15/1000` RAN a real replay job and the data
 - Files 37->38 (+1), Rows 17,900->18,900 (+1,000), Trades 11,926->12,713 (+787),
 No-trade +213 - growth deltas + performance shown, PREVIEW - NOT SENT, log written.
 14 worker tests pass; send gated by flag + valid env, invalid webhook fails safely.
+
+## LM98C Gold Bot tactic library + inverse replay test (research-only, offline)
+
+A research-only library of 12 known XAUUSD tactics + an offline inverse replay test
+that compares ORIGINAL vs INVERSE (LONG<->SHORT) results per horizon/timeframe/tactic
+and emits a PREVIEW-ONLY demo whitelist/blacklist. No MT5, no orders, no demo/live,
+no network. Nothing is activated for trading. Runbook:
+`docs/gold_bot/TACTIC_LIBRARY_AND_INVERSE_TEST.md`.
+
+```powershell
+cd "C:\Users\Joshua\Desktop\wallet finder"
+python -m pytest tests/test_gold_bot_tactic_library_inverse.py -q
+python scripts/run_gold_bot_tactic_library_probe.py
+python scripts/run_gold_bot_inverse_replay_test.py
+python scripts/run_gold_bot_inverse_replay_test.py --horizons 30 --timeframes M1,M5 --min-samples 20
+Get-Content "data/gold_bot/tactic_tests/inverse_latest.md"
+```
+
+Library: 6 mapped (liquidity_sweep_reclaim/breakout_retest/fvg_retest_filtered/
+ny_open_momentum/scalp_momentum/scalp_retest), 3 research-only (ema/vwap/london),
+3 not-implemented (asia_range/atr/mean_reversion). Artifacts (gitignored):
+`data/gold_bot/tactic_tests/inverse_*.json|.md` + `demo_whitelist.preview.json`;
+local override `data/gold_bot/tactics/*.manual.json`. Live-verified on real replay:
+h15 original avoid / inverse_better almost everywhere, but h30 flips most tactics
+positive (breakout_retest h30 +164pt, ny_open_momentum +51pt, scalp_momentum +40pt)
+- the bot is mostly using too short a horizon, not pure randomness. Whitelist preview
+written (preview only, NOT used by execution). 9 tests pass.
