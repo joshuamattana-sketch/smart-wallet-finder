@@ -68,6 +68,7 @@ import {
   isKeyZone,
   matchedMode,
   type ChartCandle,
+  type LiquidityZone,
   type OverlayState,
   type ViewMode,
 } from "@/components/charts/mock-intelligence-chart-data";
@@ -82,6 +83,10 @@ import {
   mapWhaleEventsToChartMarkers,
   type RawChartWhaleEvent,
 } from "@/lib/chart-whale-events";
+import { useHeatmapChartZones } from "@/components/charts/useHeatmapChartZones";
+import { mapHeatmapZonesToChart } from "@/lib/chart-heatmap-zones";
+import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import { intensityToColor, wallColor, type HeatmapSide } from "@/lib/heatmap-colors";
 
 interface IntelligenceChartPanelProps {
   /** Chart pane height in CSS px (header/footer come on top). */
@@ -159,6 +164,76 @@ function fmtClock(ms: number): string {
   });
 }
 
+// LM68F — vivid liquidity-density heatmap on the chart overlay. Paints every
+// /api/heatmap cell as a thin colored strip across the pane, positioned by the
+// chart's own price axis (priceToCoordinate), so it scrolls/zooms WITH the
+// candles. Mirrors the liquidity-map's intensity ramp; walls render as accent
+// lines. Returns true when it drew anything (so the demo zone bands can be
+// skipped — they'd flatten the granular heatmap).
+function drawLiquidityHeatmap(
+  ctx: CanvasRenderingContext2D,
+  series: ISeriesApi<"Candlestick">,
+  paneW: number,
+  paneH: number,
+  payload: HeatmapApiPayload,
+): boolean {
+  const cells = payload.cells;
+  if (!Array.isArray(cells) || cells.length === 0) return false;
+  const step = payload.priceStep || 1;
+  const half = step / 2;
+  let drew = 0;
+
+  for (const cell of cells) {
+    const price =
+      typeof cell.price_bucket === "number"
+        ? cell.price_bucket
+        : payload.priceMin != null
+          ? payload.priceMin + cell.p * step
+          : NaN;
+    if (!Number.isFinite(price)) continue;
+    const yTop = series.priceToCoordinate(price + half);
+    const yBot = series.priceToCoordinate(price - half);
+    if (yTop == null || yBot == null) continue;
+    let top = Math.min(yTop, yBot);
+    let bot = Math.max(yTop, yBot);
+    if (bot < 0 || top > paneH) continue;
+    top = Math.max(0, top);
+    bot = Math.min(paneH, bot);
+
+    const side: HeatmapSide =
+      cell.bid > 0 && cell.ask > 0 ? "mixed" : cell.ask > 0 ? "ask" : "bid";
+    const color = intensityToColor(cell.total, side);
+    if (color.endsWith(",0)")) continue; // below MIN_VISIBLE → skip
+
+    ctx.fillStyle = color;
+    // +0.75px so adjacent strips overlap and read as a smooth gradient.
+    ctx.fillRect(0, top, paneW, Math.max(1, bot - top) + 0.75);
+    drew++;
+  }
+
+  // Wall accents — thin lines, major walls glow.
+  for (const wall of payload.walls ?? []) {
+    const y = series.priceToCoordinate(wall.price_bucket);
+    if (y == null || y < 0 || y > paneH) continue;
+    const critical = (wall.intensity ?? 0) >= 88;
+    const col = wallColor(wall.side === "ask" ? "ask" : wall.side === "bid" ? "bid" : "mixed");
+    ctx.save();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = critical ? 1.25 : 1;
+    if (critical) {
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 4;
+    }
+    ctx.beginPath();
+    ctx.moveTo(0, Math.round(y) + 0.5);
+    ctx.lineTo(paneW, Math.round(y) + 0.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  return drew > 0;
+}
+
 export function IntelligenceChartPanel({
   height = 400,
   defaultMode = "assisted",
@@ -170,6 +245,8 @@ export function IntelligenceChartPanel({
   const [overlays, setOverlays] = useState<OverlayState>(MODE_PRESETS[defaultMode]);
   const [usingMock, setUsingMock] = useState(true);
   // LM68D — which whale source the markers currently reflect.
+  // LM68F — whether the heatmap bands reflect real /api/heatmap zones or demo.
+  const [zonesDisplay, setZonesDisplay] = useState<"live" | "demo">("demo");
   const [whaleDisplay, setWhaleDisplay] = useState<"live" | "fallback" | "none">(
     "fallback",
   );
@@ -193,6 +270,15 @@ export function IntelligenceChartPanel({
   // so syncOverlays (called from non-React paths) always sees current data.
   const whaleEventsRef = useRef<RawChartWhaleEvent[]>([]);
   const whaleFeedRef = useRef<"loading" | "real" | "unavailable">("loading");
+
+  // LM68F — real heatmap payload/feed held in refs so syncOverlays (called from
+  // non-React paths) and applySnapshot always see the current liquidity zones.
+  const heatmapPayloadRef = useRef<HeatmapApiPayload | null>(null);
+  const heatmapFeedRef = useRef<"loading" | "real" | "unavailable">("loading");
+  // Real liquidity zones (or null for demo). Kept separate from overlayDataRef
+  // so we never mutate the shared overlay object in place — drawOverlay reads
+  // this first and falls back to the demo bands when null.
+  const realZonesRef = useRef<LiquidityZone[] | null>(null);
 
   // Density: which preset shapes zone/whale filtering. Custom toggle combos
   // keep the density of the last preset the user selected.
@@ -228,7 +314,23 @@ export function IntelligenceChartPanel({
 
     const data = overlayDataRef.current;
     const mono = "600 9px 'JetBrains Mono', monospace";
-    const zones = dens === "full" ? data.zones : data.zones.filter(isKeyZone);
+
+    // Live liquidity-density heatmap from real /api/heatmap cells. When it
+    // paints, skip the aggregated zone bands (they'd flatten the gradient).
+    let drewHeatmap = false;
+    if (heatmapFeedRef.current === "real" && !usingMockRef.current) {
+      const hp = heatmapPayloadRef.current;
+      if (hp) drewHeatmap = drawLiquidityHeatmap(ctx, series, paneW, paneH, hp);
+    }
+
+    // Real heatmap zones (LM68F) take precedence over the demo bands without
+    // mutating the shared overlay object; null falls back to the demo zones.
+    const baseZones = realZonesRef.current ?? data.zones;
+    const zones = drewHeatmap
+      ? []
+      : dens === "full"
+        ? baseZones
+        : baseZones.filter(isKeyZone);
 
     for (const z of zones) {
       const yA = series.priceToCoordinate(z.priceMax);
@@ -380,12 +482,34 @@ export function IntelligenceChartPanel({
     scheduleDraw();
   }, [scheduleDraw]);
 
+  // ── Layer 3 data: real liquidity zones (LM68F) ─────────────────────────────
+  // Returns the real /api/heatmap zones mapped onto the candle range when the
+  // live source has usable data; null falls back to the demo bands. Pure read
+  // of refs, so it is stable and safe to call from any path.
+  const realZonesFor = useCallback(
+    (candles: ChartCandle[]): LiquidityZone[] | null => {
+      if (usingMockRef.current || heatmapFeedRef.current !== "real") return null;
+      const real = mapHeatmapZonesToChart(
+        heatmapPayloadRef.current,
+        candles,
+        stateRef.current.density,
+      );
+      return real.length > 0 ? real : null;
+    },
+    [],
+  );
+
   // ── Candle data application (snapshot + per-tick update) ───────────────────
   const applySnapshot = useCallback(
     (candles: ChartCandle[], mock: boolean) => {
       candlesRef.current = candles;
       overlayDataRef.current = deriveMockOverlays(candles);
       usingMockRef.current = mock;
+      // Real liquidity zones override the demo bands when available — stored in
+      // their own ref so the shared overlay object is never mutated in place.
+      const realZones = realZonesFor(candles);
+      realZonesRef.current = realZones;
+      setZonesDisplay(realZones ? "live" : "demo");
       setUsingMock(mock);
 
       const series = candleRef.current;
@@ -395,7 +519,7 @@ export function IntelligenceChartPanel({
       chartRef.current?.timeScale().fitContent();
       syncOverlays();
     },
-    [syncOverlays],
+    [syncOverlays, realZonesFor],
   );
 
   const applyUpdate = useCallback((c: ChartCandle) => {
@@ -437,6 +561,26 @@ export function IntelligenceChartPanel({
     whaleFeedRef.current = whaleFeed;
     syncOverlays();
   }, [whaleEvents, whaleFeed, symbol, syncOverlays]);
+
+  // ── Live liquidity zones (LM68F) ────────────────────────────────────────────
+  // Real /api/heatmap zones (polled every 6s) replace the demo bands when the
+  // live source has usable data; otherwise the demo zones stay. Mirrors the
+  // whale wiring: push into refs, recompute the zone layer, resync the canvas.
+  const { payload: heatmapPayload, feed: heatmapFeed } = useHeatmapChartZones(
+    symbol,
+    interval,
+  );
+
+  useEffect(() => {
+    heatmapPayloadRef.current = heatmapPayload;
+    heatmapFeedRef.current = heatmapFeed;
+    // Recompute real zones into their own ref; null restores the demo bands
+    // already held in overlayDataRef without mutating that shared object.
+    const realZones = realZonesFor(candlesRef.current);
+    realZonesRef.current = realZones;
+    setZonesDisplay(realZones ? "live" : "demo");
+    syncOverlays();
+  }, [heatmapPayload, heatmapFeed, symbol, realZonesFor, syncOverlays]);
 
   // ── Chart creation (once) ───────────────────────────────────────────────────
   useEffect(() => {
@@ -636,7 +780,11 @@ export function IntelligenceChartPanel({
                     : whaleDisplay === "none"
                       ? "on · none in range"
                       : "on · demo data"
-                  : "on · demo data",
+                  : k === "heatmap"
+                    ? zonesDisplay === "live"
+                      ? "on · live zones"
+                      : "on · demo data"
+                    : "on · demo data",
               icon: OVERLAY_ICONS[k],
               active: overlays[k],
               tone: OVERLAY_TONES[k],
@@ -651,7 +799,7 @@ export function IntelligenceChartPanel({
         <div ref={containerRef} className="absolute inset-0" />
         <canvas
           ref={canvasRef}
-          className="pointer-events-none absolute left-0 top-0"
+          className="pointer-events-none absolute left-0 top-0 z-[3]"
           aria-hidden
         />
 
@@ -783,7 +931,11 @@ export function IntelligenceChartPanel({
       {/* Honesty footer — deliberate two-sided status line */}
       <div className="flex items-center justify-between gap-3 rounded-b-lg border-t border-lm-border bg-lm-surface-muted/40 px-3 py-1.5">
         <p className="num text-[9px] uppercase tracking-[0.15em] text-lm-muted">
-          Candles · Binance public data · zones demo ·{" "}
+          Candles · Binance public data ·{" "}
+          <span className={clsx(zonesDisplay === "live" && "text-cyan-400/80")}>
+            zones · {zonesDisplay === "live" ? "live" : "demo"}
+          </span>{" "}
+          ·{" "}
           <span
             className={clsx(
               whaleDisplay === "live" && "text-emerald-400/80",

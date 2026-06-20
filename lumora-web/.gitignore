@@ -1,8 +1,8 @@
-
 node_modules/
 .next/
-out/.vercel/.env*.local
+out/
+.vercel/
+.env*.local
 
-node_modules/
-.next/
-out/.vercel/.env*.local
+# TypeScript incremental build cache
+*.tsbuildinfo
