@@ -2,7 +2,8 @@ import Link from "next/link";
 import { Activity, ArrowRight, MessageCircle } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { SpiralHero } from "@/components/landing/SpiralHero";
+import { LumoraFieldHero } from "@/components/landing/LumoraFieldHero";
+import { SpiralIntro } from "@/components/landing/SpiralIntro";
 import { MarketReplayStrip } from "@/components/landing/MarketReplayStrip";
 import { LandingFeatureGrid } from "@/components/landing/LandingFeatureGrid";
 import { TerminalPreview } from "@/components/landing/TerminalPreview";
@@ -116,6 +117,9 @@ function SignalDrop({ label }: { label?: string }) {
 export default function LandingPage() {
   return (
     <div className="relative min-h-screen overflow-x-clip bg-lm-bg">
+      {/* Spiral intro gate (LM75B) — fullscreen, then reveals the landing */}
+      <SpiralIntro />
+
       <style dangerouslySetInnerHTML={{ __html: PAGE_CSS }} />
 
       <a href="#main-content" className="lm-skip-link">
@@ -166,8 +170,8 @@ export default function LandingPage() {
 
       <div className="relative">
         <main id="main-content">
-        {/* Hero — spiral galaxy (LM75A) */}
-        <SpiralHero />
+        {/* Hero — The Lumora Field */}
+        <LumoraFieldHero />
 
         {/* Capabilities ticker */}
         <div className="overflow-hidden border-y border-lm-border/60 bg-black/20 py-2.5 backdrop-blur-sm">
