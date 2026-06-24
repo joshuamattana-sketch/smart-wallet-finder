@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 
 // LM73A — waitlist email capture. Runs on the server; inserts into the
@@ -7,9 +8,32 @@ import { createClient } from "@supabase/supabase-js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Best-effort in-memory rate limit (per server instance). Not a hard guarantee
+// across serverless instances, but blunts trivial spam without extra infra.
+const RL_WINDOW_MS = 10 * 60 * 1000;
+const RL_MAX = 5;
+const rlHits = new Map<string, number[]>();
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (rlHits.get(ip) ?? []).filter((t) => now - t < RL_WINDOW_MS);
+  if (recent.length >= RL_MAX) {
+    rlHits.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  rlHits.set(ip, recent);
+  return false;
+}
+
 export type WaitlistResult = { ok: true } | { ok: false; error: string };
 
 export async function joinWaitlist(formData: FormData): Promise<WaitlistResult> {
+  const ip = (headers().get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
+  if (rateLimited(ip)) {
+    return { ok: false, error: "Too many attempts — please try again later." };
+  }
+
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
   if (!EMAIL_RE.test(email) || email.length > 254) {
