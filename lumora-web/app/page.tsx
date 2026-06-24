@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Activity, ArrowRight, MessageCircle } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { LumoraFieldHero } from "@/components/landing/LumoraFieldHero";
+import { SpiralHero } from "@/components/landing/SpiralHero";
 import { MarketReplayStrip } from "@/components/landing/MarketReplayStrip";
 import { LandingFeatureGrid } from "@/components/landing/LandingFeatureGrid";
 import { TerminalPreview } from "@/components/landing/TerminalPreview";
@@ -166,8 +166,8 @@ export default function LandingPage() {
 
       <div className="relative">
         <main id="main-content">
-        {/* Hero — The Lumora Field */}
-        <LumoraFieldHero />
+        {/* Hero — spiral galaxy (LM75A) */}
+        <SpiralHero />
 
         {/* Capabilities ticker */}
         <div className="overflow-hidden border-y border-lm-border/60 bg-black/20 py-2.5 backdrop-blur-sm">
