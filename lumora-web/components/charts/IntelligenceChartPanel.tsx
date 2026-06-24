@@ -183,6 +183,10 @@ function drawLiquidityHeatmap(
   const half = step / 2;
   let drew = 0;
 
+  // Isolate all canvas state (fillStyle, shadow, stroke) so nothing leaks into
+  // the caller's drawOverlay context after this function returns.
+  ctx.save();
+
   for (const cell of cells) {
     const price =
       typeof cell.price_bucket === "number"
@@ -231,6 +235,7 @@ function drawLiquidityHeatmap(
     ctx.restore();
   }
 
+  ctx.restore();
   return drew > 0;
 }
 
@@ -580,7 +585,10 @@ export function IntelligenceChartPanel({
     realZonesRef.current = realZones;
     setZonesDisplay(realZones ? "live" : "demo");
     syncOverlays();
-  }, [heatmapPayload, heatmapFeed, symbol, realZonesFor, syncOverlays]);
+    // No `symbol` dep: useHeatmapChartZones already re-emits (loading→payload)
+    // on symbol change, so this effect re-runs via heatmapPayload/heatmapFeed.
+    // Adding `symbol` would double-fire and flash the demo bands.
+  }, [heatmapPayload, heatmapFeed, realZonesFor, syncOverlays]);
 
   // ── Chart creation (once) ───────────────────────────────────────────────────
   useEffect(() => {
