@@ -79,8 +79,8 @@ function ModuleHeader({
 }
 
 // ── Trader-signal derivation ─────────────────────────────────────────────────
-// Derives bias/score/confidence/risk/action from the live heatmap payload
-// and (when available) the mock setup for this symbol. No new API calls.
+// Derives bias/score/confidence/risk/action purely from the live heatmap
+// payload — no mock-setup bleed into the live read. No new API calls.
 type Bias = "LONG" | "SHORT" | "NEUTRAL";
 type SetupQuality = "Weak" | "Developing" | "Strong";
 interface TraderSignal {
@@ -99,7 +99,7 @@ function qualityTier(score: number): SetupQuality {
   return "Weak";
 }
 
-function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSignal | null {
+function deriveSignal(_sym: string, payload: HeatmapApiPayload | null): TraderSignal | null {
   if (!payload) return null;
   const intensity = heatmapIntensitySummary(payload);
   const bidWall = heatmapStrongestWall(payload, "bid");
@@ -114,22 +114,14 @@ function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSig
   const askI = askWall?.intensity ?? 0;
   const wallEdge = Math.min(100, Math.abs(bidI - askI));
 
-  // Setup lookup (mock — used only when symbol is present in mockSetups).
-  const setup = mockSetups.find((s) => s.symbol === sym);
-
-  // Resolve bias: prefer mock setup if it's there (analyst override), else
-  // derive from intensity skew.
-  let bias: Bias;
-  if (setup) {
-    bias = setup.bias as Bias;
-  } else {
-    bias = bidPct >= 55 ? "LONG" : bidPct <= 45 ? "SHORT" : "NEUTRAL";
-  }
+  // Bias derived purely from the live order-book skew — no mock-setup bleed
+  // into the live read. Curated demo setups live in their own Demo-badged panel.
+  const bias: Bias = bidPct >= 55 ? "LONG" : bidPct <= 45 ? "SHORT" : "NEUTRAL";
 
   // Composite signal score (book-derived).
   const score = Math.round(0.6 * skewScore + 0.4 * wallEdge);
-  // Confidence: prefer setup confidence when available; else map score.
-  const confidence = setup?.confidence ?? Math.round(40 + score * 0.55);
+  // Confidence mapped from the book-derived score.
+  const confidence = Math.round(40 + score * 0.55);
 
   // Risk: keep simple — wide spread or extreme wall imbalance → higher risk.
   const wallTotal = (bidWall?.total_usd ?? 0) + (askWall?.total_usd ?? 0);
@@ -141,29 +133,21 @@ function deriveSignal(sym: string, payload: HeatmapApiPayload | null): TraderSig
 
   const quality = qualityTier(score);
 
-  // Reason: prefer the analyst-authored setup reason; otherwise synthesize a
-  // short observation from the live book.
-  const reason = setup?.reason
-    ?? (bias === "LONG"
-        ? `Bid intensity ${bidPct.toFixed(0)}% vs ${(100 - bidPct).toFixed(0)}% ask — buyers leading.`
-        : bias === "SHORT"
-        ? `Ask intensity ${(100 - bidPct).toFixed(0)}% vs ${bidPct.toFixed(0)}% bid — sellers leading.`
-        : "Order book balanced near 50/50 — no clean directional edge.");
+  // Reason synthesized from the live book only.
+  const reason = bias === "LONG"
+    ? `Bid intensity ${bidPct.toFixed(0)}% vs ${(100 - bidPct).toFixed(0)}% ask — buyers leading.`
+    : bias === "SHORT"
+    ? `Ask intensity ${(100 - bidPct).toFixed(0)}% vs ${bidPct.toFixed(0)}% bid — sellers leading.`
+    : "Order book balanced near 50/50 — no clean directional edge.";
 
-  // Action hint: weak score always overrides toward monitor. Otherwise per-bias.
+  // Action hint — book-derived; weak score overrides toward monitor.
   const action = quality === "Weak"
     ? "Monitor — score too weak to commit; wait for confirmation."
-    : setup
-    ? (bias === "LONG"
-        ? `Watch entry ${setup.entry} · invalidates ${setup.stop}`
-        : bias === "SHORT"
-        ? `Fade into ${setup.entry} · invalidates ${setup.stop}`
-        : "Wait for sweep · no clean edge yet")
-    : (bias === "LONG"
-        ? "Bid-side absorbing · wait for confirmed lift"
-        : bias === "SHORT"
-        ? "Ask-side dominant · fade rallies"
-        : "Book balanced · stand aside");
+    : bias === "LONG"
+    ? "Bid-side absorbing · wait for confirmed lift"
+    : bias === "SHORT"
+    ? "Ask-side dominant · fade rallies"
+    : "Book balanced · stand aside";
 
   return { bias, score, confidence, quality, risk, reason, action };
 }

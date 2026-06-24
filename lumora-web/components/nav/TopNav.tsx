@@ -171,10 +171,10 @@ export function TopNav() {
           {/* ── Status rail ──────────────────────────────────────────────────── */}
           <div className="ml-auto flex shrink-0 items-center">
             <div className="num relative flex items-center gap-2 overflow-hidden rounded-xl border border-white/[0.045] bg-black/30 px-3 py-[6px] shadow-[inset_0_2px_6px_rgba(0,0,0,0.55),inset_0_-1px_0_rgba(255,255,255,0.02)]">
-              {/* Cyan ambient glow behind LIVE */}
+              {/* Violet ambient glow behind the beta badge */}
               <span
                 aria-hidden
-                className="pointer-events-none absolute -right-2 -top-2 h-8 w-8 rounded-full bg-emerald-400/10 blur-lg"
+                className="pointer-events-none absolute -right-2 -top-2 h-8 w-8 rounded-full bg-violet-400/10 blur-lg"
               />
               {utc && (
                 <>
@@ -184,9 +184,12 @@ export function TopNav() {
                   <span aria-hidden className="hidden h-3 w-px bg-white/[0.07] md:block" />
                 </>
               )}
-              <span className="relative flex items-center gap-1.5 text-[9.5px] uppercase tracking-[0.18em] text-emerald-300/95">
-                <span className="lm-live-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.55),0_0_3px_rgba(52,211,153,0.9)]" />
-                <span className="hidden sm:inline font-medium">Live</span>
+              {/* Honest global status: this is a private beta. Per-panel badges
+                  say whether each surface is live / fixture / demo — the nav
+                  must not claim a blanket "Live" feed over demo content. */}
+              <span className="relative flex items-center gap-1.5 text-[9.5px] uppercase tracking-[0.18em] text-violet-200/90">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-violet-400/90 shadow-[0_0_8px_1px_rgba(139,92,246,0.5)]" />
+                <span className="hidden sm:inline font-medium">Beta</span>
               </span>
             </div>
           </div>
