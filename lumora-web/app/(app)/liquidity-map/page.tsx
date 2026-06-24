@@ -11,6 +11,7 @@ import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
 import { heatmapResolvedStatus } from "@/lib/heatmap-types";
+import { intensityToColor } from "@/lib/heatmap-colors";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
 import {
@@ -22,10 +23,6 @@ import {
 
 // ── Layout constants ───────────────────────────────────────────────────────────
 const CHART_H   = 560;
-// Price band used only by the compact depth-profile rail (synthetic backdrop).
-const MIN_PRICE = 65_000;
-const MAX_PRICE = 69_500;
-const CURRENT_PRICE = 67_420;
 
 const ALL_SYMBOLS = MARKET_SOURCES.map(m => m.symbol);
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
@@ -33,20 +30,6 @@ const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function exchangeToApiSlug(ex: string): string {
   return ex.toLowerCase().replace(/\s+/g, "_");
-}
-
-/** CoinGlass-style color ramp: navy → blue → cyan → green → yellow → red */
-function iColor(v: number): string {
-  if (v <  5) return "rgba(6,8,24,0)";
-  if (v < 14) return "rgba(10,18,85,0.55)";
-  if (v < 27) return "rgba(12,48,160,0.70)";
-  if (v < 40) return "rgba(8,95,215,0.78)";
-  if (v < 53) return "rgba(0,158,215,0.84)";
-  if (v < 66) return "rgba(0,195,145,0.88)";
-  if (v < 78) return "rgba(35,215,55,0.91)";
-  if (v < 87) return "rgba(195,225,0,0.93)";
-  if (v < 93) return "rgba(255,145,0,0.96)";
-  return             "rgba(255,50,18,0.98)";
 }
 
 // ── Static wall zones (visual backdrop — unchanged) ────────────────────────────
@@ -61,59 +44,6 @@ const ZONES = [
   { price: 65_800, side: "BID" as const, intensity: 79, label: "Liquidity Gap",   badge: "GAP",  desc: "Thin orderbook. Fast price movement expected here." },
 ];
 
-// ── Depth profile sidebar ──────────────────────────────────────────────────────
-function DepthBar({ price, intensity, maxI }: { price: number; intensity: number; maxI: number }) {
-  const isAsk = price > CURRENT_PRICE;
-  const isCur = price === CURRENT_PRICE;
-  const w     = (intensity / maxI) * 96;
-  const bg    = isCur
-    ? "rgba(34,211,238,0.55)"
-    : isAsk
-    ? iColor(intensity * 0.88).replace(/[\d.]+\)$/, "0.75)")
-    : iColor(intensity).replace(/[\d.]+\)$/, "0.70)");
-
-  return (
-    <div className="relative h-[18px] flex items-center overflow-hidden">
-      <div className="absolute inset-y-0 left-0 rounded-r-sm" style={{ width: `${w}%`, background: bg }} />
-      <span
-        className={clsx(
-          "absolute right-1 num text-[9px] leading-none select-none z-10",
-          isCur ? "text-lm-cyan font-bold" : intensity > 60 ? "text-white/80" : "text-white/40"
-        )}
-      >
-        {isCur ? "▶" : ""}{(price / 1000).toFixed(1)}k
-      </span>
-    </div>
-  );
-}
-
-function DepthProfile() {
-  const STEP = 50;
-  const rows: Array<{ price: number; intensity: number }> = [];
-
-  for (let p = MAX_PRICE - STEP; p >= MIN_PRICE + STEP; p -= STEP) {
-    const near = ZONES.reduce((b, z) =>
-      Math.abs(z.price - p) < Math.abs(b.price - p) ? z : b
-    );
-    const dist = Math.abs(near.price - p);
-    const raw  = Math.max(0, (1 - dist / 450) * near.intensity * 0.88);
-    const n    = Math.abs(Math.sin(p * 0.0091 + 3.1)) * 14;
-    const intensity = Math.min(100, raw + n * 0.3);
-    if (intensity < 3) continue;
-    rows.push({ price: p, intensity });
-  }
-
-  const maxI = Math.max(...rows.map(r => r.intensity), 1);
-
-  return (
-    <div className="flex flex-col gap-px py-1">
-      {rows.map(r => (
-        <DepthBar key={r.price} price={r.price} intensity={r.intensity} maxI={maxI} />
-      ))}
-    </div>
-  );
-}
-
 // ── Legend ─────────────────────────────────────────────────────────────────────
 const LEGEND = [
   { v:  3, l: "" }, { v: 10, l: "Low" }, { v: 22, l: "" },
@@ -125,7 +55,7 @@ function HeatLegend() {
     <div className="hidden md:flex items-end gap-0.5">
       {LEGEND.map(({ v, l }) => (
         <div key={v} className="flex flex-col items-center gap-0.5">
-          <div className="h-3 w-5 rounded-sm" style={{ background: iColor(v) || "#0a0818" }} />
+          <div className="h-3 w-5 rounded-sm" style={{ background: intensityToColor(v) }} />
           {l
             ? <span className="text-[8px] text-lm-muted leading-none">{l}</span>
             : <span className="text-[8px] leading-none opacity-0">·</span>
@@ -537,7 +467,7 @@ export default function LiquidityMapPage() {
 
       {/* Main: Canvas heatmap (with price overlay) as the single primary chart
           + compact depth rail. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_140px] gap-3 items-start">
+      <div>
 
         {/* Primary liquidity heatmap (Canvas) — the page's instrument */}
         <Panel level="focus" flush className="overflow-hidden p-0">
@@ -596,25 +526,6 @@ export default function LiquidityMapPage() {
                 showDebug={process.env.NODE_ENV !== "production"}
               />
             )}
-          </div>
-        </Panel>
-
-        {/* Depth rail (compact) */}
-        <Panel flush className="overflow-hidden p-0">
-          <div className="px-2.5 py-1.5 border-b border-lm-border flex items-center justify-between">
-            <span className="text-[10px] text-lm-muted uppercase tracking-wide font-medium">Depth</span>
-            <span className="text-[10px] text-lm-cyan font-medium">Now</span>
-          </div>
-          <div className="px-1.5 py-1.5 overflow-y-auto" style={{ maxHeight: CHART_H - 60 }}>
-            <DepthProfile />
-          </div>
-          <div className="px-2.5 py-1.5 border-t border-lm-border flex flex-col gap-1">
-            <div className="flex items-center gap-1.5 text-[10px] text-lm-muted">
-              <div className="w-3.5 h-2 rounded-sm shrink-0" style={{ background: iColor(85) }} />Asks
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-lm-muted">
-              <div className="w-3.5 h-2 rounded-sm shrink-0" style={{ background: iColor(75) }} />Bids
-            </div>
           </div>
         </Panel>
 
