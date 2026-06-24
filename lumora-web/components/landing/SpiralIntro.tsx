@@ -16,11 +16,11 @@ const WINDING = 5.0;
 const SEEN_KEY = "lumora-intro-seen";
 
 function colorFor(r: number, accent: boolean): [number, number, number] {
-  if (accent) return [245, 158, 11];
-  if (r < 0.16) return [225, 253, 250];
-  if (r < 0.5) return [45, 212, 191];
-  if (r < 0.78) return [31, 111, 134];
-  return [20, 64, 106];
+  if (accent) return [192, 132, 252]; // neon violet pop (#c084fc)
+  if (r < 0.16) return [234, 251, 255]; // near-white core
+  if (r < 0.45) return [34, 211, 238]; // cyan (#22d3ee)
+  if (r < 0.75) return [139, 92, 246]; // violet (#8b5cf6)
+  return [70, 50, 120]; // deep violet, faint
 }
 
 type Phase = "hidden" | "in" | "exiting";
@@ -115,9 +115,9 @@ export function SpiralIntro() {
       const tilt = 0.5 - my * 0.12;
 
       const cg = ctx!.createRadialGradient(cx, cy, 0, cx, cy, 90);
-      cg.addColorStop(0, "rgba(190,250,245,0.45)");
-      cg.addColorStop(0.4, "rgba(45,212,191,0.14)");
-      cg.addColorStop(1, "rgba(45,212,191,0)");
+      cg.addColorStop(0, "rgba(200,240,255,0.45)");
+      cg.addColorStop(0.4, "rgba(139,92,246,0.16)");
+      cg.addColorStop(1, "rgba(139,92,246,0)");
       ctx!.fillStyle = cg;
       ctx!.beginPath();
       ctx!.arc(cx, cy, 90, 0, 6.2832);
@@ -185,22 +185,13 @@ export function SpiralIntro() {
     window.setTimeout(() => setPhase("hidden"), 760);
   }
 
-  function onKey(e: React.KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
-      e.preventDefault();
-      enter();
-    }
-  }
-
   if (phase === "hidden") return null;
 
   return (
     <div
       role="dialog"
       aria-label="Lumora intro"
-      onKeyDown={onKey}
-      onClick={enter}
-      className="fixed inset-0 z-[120] cursor-pointer bg-black transition-opacity duration-700 ease-out"
+      className="fixed inset-0 z-[120] bg-black transition-opacity duration-700 ease-out"
       style={{
         opacity: phase === "exiting" ? 0 : 1,
         pointerEvents: phase === "exiting" ? "none" : "auto",
