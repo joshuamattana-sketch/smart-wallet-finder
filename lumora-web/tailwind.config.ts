@@ -49,8 +49,8 @@ const config: Config = {
         "purple-glow": "radial-gradient(ellipse at 50% 50%, rgba(139,92,246,0.15) 0%, transparent 70%)",
       },
       fontFamily: {
-        mono: ["'JetBrains Mono'", "Menlo", "Monaco", "Consolas", "monospace"],
-        sans: ["Inter", "system-ui", "sans-serif"],
+        mono: ["var(--font-jetbrains-mono)", "'JetBrains Mono'", "Menlo", "Monaco", "Consolas", "monospace"],
+        sans: ["var(--font-inter)", "Inter", "system-ui", "sans-serif"],
       },
       boxShadow: {
         glass: "0 4px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)",
