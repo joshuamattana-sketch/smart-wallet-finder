@@ -11,6 +11,7 @@ import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
 import { heatmapResolvedStatus } from "@/lib/heatmap-types";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
 import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import {
@@ -260,6 +261,7 @@ export default function LiquidityMapPage() {
   const [apiError, setApiError]     = useState<string | null>(null);
   const [fixtureFallback, setFixtureFallback] = useState(false);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
+  const [live, setLive] = useState(false); // realtime channel subscribed
 
   // Same proven fetch pattern as Terminal/Dashboard: hit /api/heatmap with a
   // cache-buster, accept the JSON payload, and ALWAYS settle the in-flight flag
@@ -311,13 +313,53 @@ export default function LiquidityMapPage() {
   // Initial load + reload whenever symbol/exchange/timeframe/source changes.
   useEffect(() => { fetchPayload(); }, [fetchPayload]);
 
-  // Auto-refresh every 2s while the toggle is on (cleaned up on change/unmount).
-  // lastFetchedAt advances every tick even if the writer's liveUpdatedAt lags.
+  // Realtime (LM78B): push new heatmap payloads the instant the worker writes
+  // them. Only the row matching the current symbol/exchange/timeframe is
+  // applied; other selections fall back to the fetch/poll path.
+  useEffect(() => {
+    const supabase = getSupabaseBrowser();
+    if (!supabase || dataSource !== "live") {
+      setLive(false);
+      return;
+    }
+    const exSlug = exchangeToApiSlug(exchange);
+    const tf = timeframe.toLowerCase();
+    const channel = supabase
+      .channel(`rt-heatmap-${symbol}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "heatmap_latest_payloads",
+          filter: `symbol=eq.${symbol}`,
+        },
+        (msg) => {
+          const row = msg.new as { exchange?: string; timeframe?: string; payload?: unknown } | null;
+          if (!row || row.exchange !== exSlug || String(row.timeframe).toLowerCase() !== tf) return;
+          const p = row.payload as HeatmapApiPayload | undefined;
+          if (p && Array.isArray(p.cells)) {
+            payloadCache.set(cacheKey(symbol, timeframe, dataSource), p);
+            setPayload(p);
+            setApiError(null);
+            setLastFetchedAt(new Date().toISOString());
+          }
+        },
+      )
+      .subscribe((status) => setLive(status === "SUBSCRIBED"));
+    return () => {
+      setLive(false);
+      void supabase.removeChannel(channel);
+    };
+  }, [symbol, exchange, timeframe, dataSource]);
+
+  // Backstop poll while the toggle is on: fast (2s) when realtime is off, slow
+  // (15s) when realtime is pushing. lastFetchedAt advances each tick.
   useEffect(() => {
     if (!autoRefresh) return;
-    const id = setInterval(() => { fetchPayload(); }, 2000);
+    const id = setInterval(() => { fetchPayload(); }, live ? 15000 : 2000);
     return () => clearInterval(id);
-  }, [autoRefresh, fetchPayload]);
+  }, [autoRefresh, fetchPayload, live]);
 
   // Refresh immediately when the browser tab becomes visible again — the last
   // good payload stays on screen while the refresh runs.
