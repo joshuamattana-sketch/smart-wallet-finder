@@ -7,6 +7,7 @@ import { MarketReplayStrip } from "@/components/landing/MarketReplayStrip";
 import { LandingFeatureGrid } from "@/components/landing/LandingFeatureGrid";
 import { TerminalPreview } from "@/components/landing/TerminalPreview";
 import { Reveal } from "@/components/landing/Reveal";
+import { WaitlistForm } from "@/components/landing/WaitlistForm";
 import { DISCORD_URL } from "@/lib/site";
 import { clsx } from "clsx";
 
@@ -283,15 +284,26 @@ export default function LandingPage() {
                     Step into the field.
                   </h2>
                   <p className="mx-auto mt-2.5 max-w-md text-[13px] leading-relaxed text-lm-text-dim">
-                    We&apos;re onboarding a small group of traders during private beta. Open the
-                    terminal with demo data today, or join the Discord for live-integration updates.
+                    We&apos;re onboarding a small group of traders during private beta. Leave your
+                    email for an invite, open the demo terminal today, or join the Discord.
                   </p>
-                  <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">
+
+                  <div className="mt-6">
+                    <WaitlistForm />
+                  </div>
+
+                  <div className="my-5 flex items-center gap-3 text-[9px] uppercase tracking-[0.22em] text-lm-muted">
+                    <span className="h-px flex-1 bg-lm-border" />
+                    or
+                    <span className="h-px flex-1 bg-lm-border" />
+                  </div>
+
+                  <div className="flex flex-col justify-center gap-2.5 sm:flex-row">
                     <Link
                       href="/dashboard"
                       className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-all hover:bg-cyan-300 hover:shadow-[0_0_36px_rgba(34,211,238,0.4)]"
                     >
-                      Launch terminal <ArrowRight className="h-3.5 w-3.5" />
+                      Open the demo terminal <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
                     <a
                       href={DISCORD_URL}
@@ -303,7 +315,10 @@ export default function LandingPage() {
                       Join the Discord
                     </a>
                   </div>
-                  <p className="mt-5 text-[10px] leading-snug text-lm-muted">
+                  <p className="mt-4 num text-[10px] uppercase tracking-[0.18em] text-lm-text-dim">
+                    Free during private beta · limited seats this round
+                  </p>
+                  <p className="mt-3 text-[10px] leading-snug text-lm-muted">
                     Lumora provides informational market context only — no guaranteed outcomes,
                     no financial advice.
                   </p>
