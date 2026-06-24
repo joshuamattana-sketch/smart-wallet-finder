@@ -24,6 +24,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
 
 export async function GET(req: Request) {
   let limit = DEFAULT_LIMIT;
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
     const raw = url.searchParams.get("limit");
     if (raw) {
       const parsed = Number.parseInt(raw, 10);
-      if (Number.isFinite(parsed) && parsed > 0) limit = parsed;
+      if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(parsed, MAX_LIMIT);
     }
   } catch {
     // Bad URL parse — defensively keep the default.
