@@ -4,7 +4,8 @@
  * LM63F + LM63I — Server-side loader for whale events.
  *
  * Source priority (server-side only; service-role key never leaves the server):
- *   1. Supabase whale_events  (env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)
+ *   1. Supabase whale_events  (env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY,
+ *      or SUPABASE_ANON_KEY when the table has an anon read policy)
  *   2. Local JSONL journal    (<repo_root>/data/whale_events.jsonl)
  *   3. Built-in mock alerts   (`lib/mock-data`)
  *
@@ -258,7 +259,7 @@ async function loadFromSupabase(
   limit: number,
 ): Promise<{ alerts: WhaleAlertView[]; rowCount: number } | null> {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY;
   if (!url || !key) return null;
 
   const endpoint =
