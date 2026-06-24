@@ -32,7 +32,7 @@ const config: Config = {
           border: "#1e1e22",
           text: "#e0e0e4",
           "text-dim": "#a1a1a6",
-          muted: "#71717a",
+          muted: "#8a8a92",
           purple: "#8b5cf6",
           cyan: "#22d3ee",
           live: "#22c55e",

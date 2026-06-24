@@ -394,3 +394,49 @@ option {
     opacity: 1;
   }
 }
+
+/* ── LM72A: Accessibility — focus visibility, skip link, anchor offset ──────── */
+
+/* Visible keyboard focus on every interactive element. Cyan ring reads on the
+   near-black surfaces; :focus-visible keeps it keyboard-only (no mouse halo). */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Anchor jumps clear the 56px sticky nav. */
+:target {
+  scroll-margin-top: 72px;
+}
+
+/* Skip-to-content link — off-screen until focused, then pinned top-left. */
+.lm-skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  transform: translateY(-150%);
+  transition: transform 150ms ease-out;
+  background-color: #141416;
+  border: 1px solid #2c2c33;
+  color: #e0e0e4;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.lm-skip-link:focus {
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lm-skip-link {
+    transition: none;
+  }
+}

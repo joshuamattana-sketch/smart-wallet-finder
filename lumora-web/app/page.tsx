@@ -117,6 +117,10 @@ export default function LandingPage() {
     <div className="relative min-h-screen bg-lm-bg">
       <style dangerouslySetInnerHTML={{ __html: PAGE_CSS }} />
 
+      <a href="#main-content" className="lm-skip-link">
+        Skip to content
+      </a>
+
       {/* Fixed atmospheric backdrop — one world under every section */}
       <div aria-hidden className="pointer-events-none fixed inset-0">
         {/* Violet dawn falling from above */}
@@ -160,6 +164,7 @@ export default function LandingPage() {
       </nav>
 
       <div className="relative">
+        <main id="main-content">
         {/* Hero — The Lumora Field */}
         <LumoraFieldHero />
 
@@ -197,12 +202,12 @@ export default function LandingPage() {
 
         {/* 03 — Market read examples */}
         <Reveal>
-          <section className="px-4 py-9">
+          <section className="px-4 py-9" aria-labelledby="read-heading">
             <div className="mx-auto max-w-6xl">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <span className="lm-section-title">03 · The read</span>
-                  <h2 className="mt-2 text-xl font-semibold tracking-tight text-lm-text">
+                  <h2 id="read-heading" className="mt-2 text-xl font-semibold tracking-tight text-lm-text">
                     The output is a read, not another wall of charts.
                   </h2>
                   <p className="mt-1 text-[13px] text-lm-text-dim">
@@ -257,7 +262,7 @@ export default function LandingPage() {
         </Reveal>
 
         {/* 05 — Early access CTA */}
-        <section className="relative overflow-hidden px-4 py-16">
+        <section className="relative overflow-hidden px-4 py-16" aria-labelledby="cta-heading">
           <div aria-hidden className="pointer-events-none absolute inset-0">
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_45%_60%_at_50%_50%,rgba(139,92,246,0.07),transparent_70%)]" />
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_35%_45%_at_50%_60%,rgba(34,211,238,0.05),transparent_70%)]" />
@@ -274,7 +279,7 @@ export default function LandingPage() {
                   <span className="num text-[9px] uppercase tracking-[0.22em] text-lm-muted">
                     Early access
                   </span>
-                  <h2 className="mt-3 text-2xl font-semibold tracking-tight text-lm-text sm:text-[28px]">
+                  <h2 id="cta-heading" className="mt-3 text-2xl font-semibold tracking-tight text-lm-text sm:text-[28px]">
                     Step into the field.
                   </h2>
                   <p className="mx-auto mt-2.5 max-w-md text-[13px] leading-relaxed text-lm-text-dim">
@@ -308,6 +313,8 @@ export default function LandingPage() {
           </Reveal>
         </section>
 
+        </main>
+
         {/* Footer */}
         <footer className="border-t border-lm-border px-4 py-7">
           <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 sm:flex-row">
@@ -315,6 +322,15 @@ export default function LandingPage() {
               <Activity className="h-4 w-4 text-lm-purple" />
               <span className="lm-brand text-sm text-lm-text">Lumora</span>
               <span className="ml-2 text-xs text-lm-muted">Liquidity intelligence terminal</span>
+              <a
+                href={DISCORD_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-2 inline-flex items-center gap-1.5 text-xs text-lm-text-dim transition-colors hover:text-lm-cyan"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Discord
+              </a>
             </div>
             <div className="flex flex-col items-center gap-1 sm:items-end">
               <p className="text-xs text-lm-muted">
