@@ -13,7 +13,6 @@ import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
 import { heatmapResolvedStatus } from "@/lib/heatmap-types";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
-import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import {
   MARKET_SOURCES,
   getMarketSource,
@@ -29,7 +28,6 @@ const MAX_PRICE = 69_500;
 const CURRENT_PRICE = 67_420;
 
 const ALL_SYMBOLS = MARKET_SOURCES.map(m => m.symbol);
-const EXCHANGES  = ["Binance Spot", "Bybit Spot", "OKX Spot"];
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -232,12 +230,12 @@ function DataStatusPanel({ dataStatus, dataSource }: { dataStatus: HeatmapDataSt
 export default function LiquidityMapPage() {
   const { list: watchlist } = useWatchlist();
   const [symbol,    setSymbol]    = useState("BTCUSDT");
-  const [exchange,  setExchange]  = useState("Binance Spot");
+  // Single live venue + source — other exchanges and the dev source toggle are
+  // not real product controls (the API serves Binance and self-degrades).
+  const exchange = "Binance Spot";
   const [timeframe, setTimeframe] = useState<string>("15m");
-  const [dataSource, setDataSource] = useState<DataSource>("live");
+  const dataSource: DataSource = "live";
   const [autoRefresh, setAutoRefresh] = useState(true);
-  // LM68B: optional Intelligence Chart preview (mock) — collapsed by default.
-  const [showChartPreview, setShowChartPreview] = useState(false);
 
   // Symbol options: watchlist entries (in priority order) first, then the rest
   // of the supported MARKET_SOURCES. The currently-selected symbol always
@@ -468,14 +466,10 @@ export default function LiquidityMapPage() {
           <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
         </div>
         <WatchlistPriorityPicker />
-        {/* Exchange */}
-        <div className="relative">
-          <select value={exchange} onChange={e => setExchange(e.target.value)}
-            className="appearance-none bg-lm-bg border border-lm-border text-lm-text text-xs rounded-md px-2.5 py-1.5 pr-6 focus:outline-none focus:border-zinc-600 cursor-pointer">
-            {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
-          </select>
-          <ChevronDown className="absolute right-1.5 top-2 h-3 w-3 text-lm-muted pointer-events-none" />
-        </div>
+        {/* Venue — Binance Spot only (other venues are planned, not live) */}
+        <span className="num text-[11px] text-lm-text-dim border border-lm-border rounded-md bg-lm-surface px-2.5 py-1.5">
+          Binance Spot
+        </span>
         <div className="h-4 w-px bg-lm-border hidden sm:block" />
         {/* Timeframes */}
         <div className="flex rounded-md border border-lm-border overflow-hidden">
@@ -490,23 +484,10 @@ export default function LiquidityMapPage() {
           ))}
         </div>
         <div className="h-4 w-px bg-lm-border hidden sm:block" />
-        {/* Data source toggle — Live (default) → Fixture → Mock. The API falls
-            back live → fixture → mock server-side. */}
-        <div className="flex rounded-md border border-lm-border overflow-hidden" title="Heatmap data source">
-          {(["live", "fixture", "mock"] as const).map(src => (
-            <button key={src} onClick={() => setDataSource(src)}
-              className={clsx("lm-segment-btn px-2.5 py-1.5 text-xs font-medium capitalize",
-                dataSource === src
-                  ? "lm-segment-active"
-                  : "text-lm-muted bg-lm-surface")}>
-              {src}
-            </button>
-          ))}
-        </div>
-        {/* Auto-refresh toggle — drives the 2s poll */}
+        {/* Auto-refresh toggle — gates the realtime/poll cadence */}
         <button
           onClick={() => setAutoRefresh(v => !v)}
-          title="Auto refresh (2s)"
+          title="Auto refresh"
           className={clsx(
             "lm-segment-btn px-2.5 py-1.5 text-xs font-medium rounded-md border",
             autoRefresh
@@ -515,12 +496,6 @@ export default function LiquidityMapPage() {
           )}
         >
           Auto {autoRefresh ? "On" : "Off"}
-        </button>
-        {/* Refresh */}
-        <button onClick={() => fetchPayload()} title="Refresh"
-          disabled={refreshing}
-          className="lm-segment-btn p-1.5 rounded-md border border-lm-border bg-lm-surface text-lm-muted disabled:opacity-50">
-          <RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />
         </button>
         {/* Legend */}
         <div className="ml-auto flex items-center gap-3">
@@ -643,24 +618,6 @@ export default function LiquidityMapPage() {
           </div>
         </Panel>
 
-      </div>
-
-      {/* LM68C: Intelligence Chart preview — live Binance candles with demo
-          overlays. Collapsed by default so the heatmap stays primary. */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="lm-section-title">Intelligence Chart · Preview</h2>
-          <button
-            onClick={() => setShowChartPreview((v) => !v)}
-            className="lm-segment-btn flex items-center gap-1.5 rounded-md border border-lm-border bg-lm-surface px-2.5 py-1 text-[11px] text-lm-muted"
-          >
-            {showChartPreview ? "Hide preview" : "Show preview"}
-            <ChevronDown
-              className={clsx("h-3 w-3 transition-transform", showChartPreview && "rotate-180")}
-            />
-          </button>
-        </div>
-        {showChartPreview && <IntelligenceChartPanel height={400} />}
       </div>
 
       {/* Key zone cards — API walls when available, static fallback otherwise */}
