@@ -113,8 +113,26 @@ function runGateway(args: string[], cwd: string): Promise<RunOutput> {
   });
 }
 
+// Production kill-switch. This route can exec local Python, and the Host-based
+// local guard alone is spoofable — so in production it is hard-disabled (404)
+// unless explicitly opted in via LUMORA_ENABLE_GOLD_BOT_COMMANDS=true. A public
+// deployment therefore never exposes process execution.
+function commandsEnabled(): boolean {
+  return (
+    process.env.NODE_ENV !== "production" ||
+    process.env.LUMORA_ENABLE_GOLD_BOT_COMMANDS === "true"
+  );
+}
+
 export async function POST(request: Request) {
   try {
+    if (!commandsEnabled()) {
+      return NextResponse.json(
+        { ok: false, error: "not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
     if (!isLocalRequest(request)) {
       return NextResponse.json(
         { ok: false, error: "forbidden: local-only endpoint" },
