@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageShell } from "@/components/ui/PageShell";
@@ -56,44 +57,61 @@ export default function WhaleAlertsPage() {
   const [source, setSource] = useState<AlertsSource>("mock");
   const [loading, setLoading] = useState<boolean>(true);
   const [note, setNote] = useState<string | null>(null);
+  const [live, setLive] = useState<boolean>(false);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch("/api/whale-alerts?limit=50", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          setSource("mock");
-          setAlerts(MOCK_FALLBACK);
-          setNote(`api error ${res.status}`);
-        } else {
-          const data: AlertsResponse = await res.json();
-          const incoming = Array.isArray(data.alerts) ? data.alerts : [];
-          if (incoming.length === 0) {
-            setSource("mock");
-            setAlerts(MOCK_FALLBACK);
-          } else {
-            const resolved: AlertsSource =
-              data.data_source === "supabase" ? "supabase" :
-              data.data_source === "journal"  ? "journal"  : "mock";
-            setSource(resolved);
-            setAlerts(incoming);
-          }
-          setNote(typeof data.note === "string" ? data.note : null);
-        }
-      } catch {
-        // Any fetch/JSON error → graceful fallback. Page is never broken.
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/whale-alerts?limit=50", { cache: "no-store" });
+      if (!res.ok) {
         setSource("mock");
         setAlerts(MOCK_FALLBACK);
-      } finally {
-        setLoading(false);
+        setNote(`api error ${res.status}`);
+      } else {
+        const data: AlertsResponse = await res.json();
+        const incoming = Array.isArray(data.alerts) ? data.alerts : [];
+        if (incoming.length === 0) {
+          setSource("mock");
+          setAlerts(MOCK_FALLBACK);
+        } else {
+          const resolved: AlertsSource =
+            data.data_source === "supabase" ? "supabase" :
+            data.data_source === "journal"  ? "journal"  : "mock";
+          setSource(resolved);
+          setAlerts(incoming);
+        }
+        setNote(typeof data.note === "string" ? data.note : null);
       }
-    })();
-    return () => controller.abort();
+    } catch {
+      // Any fetch/JSON error → graceful fallback. Page is never broken.
+      setSource("mock");
+      setAlerts(MOCK_FALLBACK);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  // Initial load.
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Realtime (LM78A): a new whale_events row pushes an instant refetch — events
+  // are sparse, so refetching reuses the API's normalization without polling.
+  useEffect(() => {
+    const supabase = getSupabaseBrowser();
+    if (!supabase) return;
+    const channel = supabase
+      .channel("rt-whale-events")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "whale_events" },
+        () => void load(),
+      )
+      .subscribe((status) => setLive(status === "SUBSCRIBED"));
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [load]);
 
   const filtered = useMemo(
     () =>
@@ -151,6 +169,12 @@ export default function WhaleAlertsPage() {
             <>
               <span className="text-lm-text">{filtered.length}</span>
               <span className="text-lm-muted">/ {alerts.length}</span>
+              {live && source !== "mock" && (
+                <span className="ml-1 inline-flex items-center gap-1 text-emerald-400">
+                  <span className="lm-live-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  live
+                </span>
+              )}
             </>
           )}
         </span>
