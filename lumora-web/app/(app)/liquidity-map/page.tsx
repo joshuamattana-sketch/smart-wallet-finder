@@ -572,7 +572,13 @@ export default function LiquidityMapPage() {
               </div>
             )}
 
-            {payload && <HeatmapCanvas payload={payload} height={CHART_H} showDebug />}
+            {payload && (
+              <HeatmapCanvas
+                payload={payload}
+                height={CHART_H}
+                showDebug={process.env.NODE_ENV !== "production"}
+              />
+            )}
           </div>
         </Panel>
 
