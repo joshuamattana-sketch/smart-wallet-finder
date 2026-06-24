@@ -1,0 +1,6 @@
+# Minimal deps for the cloud DATA workers only (Binance -> Supabase).
+# Deliberately NOT the full project requirements — the trading stack pulls in
+# MetaTrader5 (Windows-only) which cannot install on a Linux host, and the
+# data workers never touch it.
+requests>=2.31,<3
+websocket-client>=1.7,<2

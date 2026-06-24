@@ -1,0 +1,28 @@
+# Render Blueprint — always-on cloud worker for the Lumora live data writers.
+# DATA ONLY (Binance -> Supabase). No trading, no MetaTrader.
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> connect this repo. Render
+# reads this file and creates the worker. Then set the two secret env vars
+# (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) in the service's Environment tab.
+services:
+  - type: worker
+    name: lumora-data-workers
+    runtime: python
+    plan: starter            # background workers are a paid tier (~$7/mo)
+    region: frankfurt        # close to the eu-central Supabase project
+    buildCommand: pip install -r requirements-worker.txt
+    startCommand: python scripts/run_data_workers.py
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: SUPABASE_URL
+        sync: false          # set in the dashboard (secret)
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false          # set in the dashboard (secret)
+      - key: HEATMAP_SYMBOL
+        value: BTCUSDT
+      - key: HEATMAP_TIMEFRAMES
+        value: 5m,15m,1h
+      - key: WHALE_SYMBOLS
+        value: BTCUSDT,ETHUSDT,SOLUSDT
