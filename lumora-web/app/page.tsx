@@ -114,7 +114,7 @@ function SignalDrop({ label }: { label?: string }) {
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen bg-lm-bg">
+    <div className="relative min-h-screen overflow-x-clip bg-lm-bg">
       <style dangerouslySetInnerHTML={{ __html: PAGE_CSS }} />
 
       <a href="#main-content" className="lm-skip-link">
@@ -289,7 +289,7 @@ export default function LandingPage() {
                   <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">
                     <Link
                       href="/dashboard"
-                      className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-all hover:bg-cyan-300 hover:shadow-[0_0_36px_rgba(34,211,238,0.4)]"
+                      className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-all hover:bg-cyan-300 hover:shadow-[0_0_36px_rgba(34,211,238,0.4)]"
                     >
                       Launch terminal <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
@@ -297,7 +297,7 @@ export default function LandingPage() {
                       href={DISCORD_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center gap-2 rounded-md border border-lm-border px-5 py-2.5 text-[13px] font-medium text-lm-text-dim transition-colors hover:border-zinc-600 hover:text-lm-text"
+                      className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-lm-border px-5 py-2.5 text-[13px] font-medium text-lm-text-dim transition-colors hover:border-zinc-600 hover:text-lm-text"
                     >
                       <MessageCircle className="h-3.5 w-3.5 text-lm-cyan" />
                       Join the Discord

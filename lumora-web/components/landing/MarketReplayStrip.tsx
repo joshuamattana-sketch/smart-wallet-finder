@@ -184,14 +184,14 @@ export function MarketReplayStrip() {
                 <div
                   key={abs}
                   className={clsx(
-                    "flex items-baseline gap-3 px-3 py-2",
+                    "flex items-baseline gap-2 px-3 py-2 sm:gap-3",
                     isNew
                       ? "lmrs-new bg-lm-surface-muted shadow-[inset_1.5px_0_0_rgba(34,211,238,0.7)]"
                       : animate && AGE_DIM[Math.min(age, AGE_DIM.length - 1)],
                   )}
                 >
-                  <span className="num w-[58px] shrink-0 text-[10px] text-lm-muted">{clock(abs)}</span>
-                  <span className="flex w-[92px] shrink-0 items-center gap-1.5">
+                  <span className="num w-[46px] shrink-0 text-[9px] text-lm-muted sm:w-[58px] sm:text-[10px]">{clock(abs)}</span>
+                  <span className="flex w-[84px] shrink-0 items-center gap-1.5 sm:w-[92px]">
                     <span className={clsx("h-1 w-1 shrink-0 rounded-full", e.dot)} />
                     <span className={clsx("num text-[9px] font-semibold uppercase tracking-widest", e.tagClass)}>
                       {e.tag}

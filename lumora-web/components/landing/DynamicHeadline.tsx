@@ -9,25 +9,38 @@ import { TextEffect } from "@/components/ui/text-effect";
 // Lumora actually reads, each one resolving out of a blur character by
 // character, like the terminal scanning hidden market structure.
 //
-// Layout shift is avoided by stacking every candidate word invisibly in one
-// inline-grid cell, so the slot is always sized to the widest word. With
-// reduced motion the headline stays static on "pressure".
+// LCP: this is the largest text on the page, so WORDS[0] is rendered as plain
+// opaque gradient text on the server and first paint. The blur rotation is a
+// progressive enhancement that only starts after mount (and never under
+// reduced motion), so the headline is legible immediately instead of after
+// framer-motion hydrates.
+//
+// Mobile: the type size is fluid (clamp) and the rotating word slot reserves
+// the widest candidate in one inline-grid cell, so there is no layout shift
+// and no horizontal overflow at 320px.
 
 const WORDS = ["pressure", "liquidity", "whale flow", "risk"];
 const HOLD_MS = 3400;
 
+const GRADIENT = "bg-gradient-to-b from-cyan-200 via-cyan-300 to-sky-500 bg-clip-text text-transparent";
+
 export function DynamicHeadline() {
   const reduced = useReducedMotion();
+  const [mounted, setMounted] = useState(false);
   const [idx, setIdx] = useState(0);
 
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
-    if (reduced) return;
+    if (reduced || !mounted) return;
     const id = setTimeout(() => setIdx((i) => (i + 1) % WORDS.length), HOLD_MS);
     return () => clearTimeout(id);
-  }, [reduced, idx]);
+  }, [reduced, mounted, idx]);
+
+  const animate = mounted && !reduced;
 
   return (
-    <h1 className="mt-4 text-4xl font-semibold leading-[1.06] tracking-[-0.02em] text-lm-text sm:text-[44px] lg:text-[50px]">
+    <h1 className="mt-4 font-semibold leading-[1.06] tracking-[-0.02em] text-lm-text text-[clamp(1.65rem,8vw,2.25rem)] sm:text-[44px] lg:text-[50px]">
       See the{" "}
       <span className="relative inline-grid whitespace-nowrap align-bottom">
         {/* Invisible stack of all candidates reserves the widest slot. */}
@@ -37,16 +50,21 @@ export function DynamicHeadline() {
           </span>
         ))}
         <span className="col-start-1 row-start-1">
-          <AnimatePresence mode="wait" initial={false}>
-            <TextEffect
-              key={WORDS[idx]}
-              per="char"
-              preset="blur-scan"
-              segmentClassName="bg-gradient-to-b from-cyan-200 via-cyan-300 to-sky-500 bg-clip-text text-transparent"
-            >
-              {WORDS[idx]}
-            </TextEffect>
-          </AnimatePresence>
+          {animate ? (
+            <AnimatePresence mode="wait" initial={false}>
+              <TextEffect
+                key={WORDS[idx]}
+                per="char"
+                preset="blur-scan"
+                segmentClassName={GRADIENT}
+              >
+                {WORDS[idx]}
+              </TextEffect>
+            </AnimatePresence>
+          ) : (
+            // Server + first paint + reduced-motion: static, fully legible.
+            <span className={GRADIENT}>{WORDS[0]}</span>
+          )}
         </span>
       </span>
       <br />
