@@ -7,6 +7,7 @@ import { MarketReplayStrip } from "@/components/landing/MarketReplayStrip";
 import { LandingFeatureGrid } from "@/components/landing/LandingFeatureGrid";
 import { TerminalPreview } from "@/components/landing/TerminalPreview";
 import { Reveal } from "@/components/landing/Reveal";
+import { DISCORD_URL } from "@/lib/site";
 import { clsx } from "clsx";
 
 // ── Landing page (LM70B experience rebuild) ──────────────────────────────────
@@ -287,9 +288,10 @@ export default function LandingPage() {
                     >
                       Launch terminal <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
-                    {/* TODO: replace with Lumora Discord invite */}
                     <a
-                      href="#"
+                      href={DISCORD_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="inline-flex items-center justify-center gap-2 rounded-md border border-lm-border px-5 py-2.5 text-[13px] font-medium text-lm-text-dim transition-colors hover:border-zinc-600 hover:text-lm-text"
                     >
                       <MessageCircle className="h-3.5 w-3.5 text-lm-cyan" />

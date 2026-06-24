@@ -1,13 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-
-// Production origin. Override per-environment with NEXT_PUBLIC_SITE_URL so OG /
-// canonical URLs resolve to the real domain instead of this placeholder.
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumora.app";
-
-const TITLE = "Lumora — Trading Intelligence Terminal";
-const DESCRIPTION =
-  "Lumora is a liquidity intelligence terminal for crypto — orderbook depth, whale flow, funding, open interest, liquidity heatmaps and sweep-risk zones, distilled into a single market read.";
+import {
+  SITE_URL,
+  SITE_NAME,
+  SITE_TITLE as TITLE,
+  SITE_DESCRIPTION as DESCRIPTION,
+} from "@/lib/site";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -57,10 +55,45 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
+// Structured data — static server-side @graph, no user input, so the JSON-LD
+// injection has no XSS surface. Reuses the shared site constants.
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#organization`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      logo: `${SITE_URL}/icon.svg`,
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}/#website`,
+      url: SITE_URL,
+      name: SITE_NAME,
+      description: DESCRIPTION,
+      publisher: { "@id": `${SITE_URL}/#organization` },
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: SITE_NAME,
+      applicationCategory: "FinanceApplication",
+      operatingSystem: "Web",
+      description: DESCRIPTION,
+      url: SITE_URL,
+    },
+  ],
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-lm-bg text-lm-text antialiased">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+        />
         {children}
       </body>
     </html>

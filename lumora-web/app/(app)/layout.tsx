@@ -1,4 +1,10 @@
+import type { Metadata } from "next";
 import { TopNav } from "@/components/nav/TopNav";
+
+// Private beta surface — keep every gated route out of search indexes.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 // LM69C: deep navy terminal backdrop — a near-black indigo base with one
 // very faint cool radial wash falling from the top, so pages read as a lit
