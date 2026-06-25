@@ -284,7 +284,14 @@ class Mt5DemoConnector:
         info = mt5.symbol_info(name)
         if info is None:
             return False
-        # Make sure it's visible in Market Watch so quotes/rates flow.
+        # If the symbol is already shown in Market Watch, quotes/rates already
+        # flow and it is usable as-is. mt5.symbol_select(name, True) returns
+        # False for an already-visible symbol (it is a no-op), so we must NOT
+        # treat that False as "unselectable" — otherwise a perfectly tradable,
+        # ticking symbol gets rejected (e.g. after a "Show All" in Market Watch).
+        if getattr(info, "visible", False):
+            return True
+        # Otherwise add it to Market Watch so quotes/rates start flowing.
         try:
             return bool(mt5.symbol_select(name, True))
         except Exception:

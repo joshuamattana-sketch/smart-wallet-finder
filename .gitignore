@@ -94,3 +94,6 @@ lumora-web/fixtures/live/*.tmp
 .agents/
 .claude/
 skills-lock.json
+
+# dukascopy-node download cache
+.dukascopy-cache/
