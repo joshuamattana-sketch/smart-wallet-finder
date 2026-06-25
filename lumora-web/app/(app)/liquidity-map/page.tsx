@@ -10,7 +10,7 @@ import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
 import { RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
-import { heatmapResolvedStatus } from "@/lib/heatmap-types";
+import { heatmapResolvedStatus, heatmapCurrentPrice } from "@/lib/heatmap-types";
 import { intensityToColor } from "@/lib/heatmap-colors";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
@@ -23,6 +23,12 @@ import {
 
 // ── Layout constants ───────────────────────────────────────────────────────────
 const CHART_H   = 560;
+
+// Backstop poll cadence (ms). Kept deliberately slow to spare Supabase Disk IO
+// on the free tier — realtime pushes updates instantly, this poll is only a
+// fallback. (Was 2s, which hammered the DB on every open tab.)
+const POLL_MS_REALTIME = 30_000; // realtime channel subscribed → slow backstop
+const POLL_MS_FALLBACK = 8_000;  // realtime off → still gentle on the DB
 
 const ALL_SYMBOLS = MARKET_SOURCES.map(m => m.symbol);
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"] as const;
@@ -285,7 +291,7 @@ export default function LiquidityMapPage() {
   // (15s) when realtime is pushing. lastFetchedAt advances each tick.
   useEffect(() => {
     if (!autoRefresh) return;
-    const id = setInterval(() => { fetchPayload(); }, live ? 15000 : 2000);
+    const id = setInterval(() => { fetchPayload(); }, live ? POLL_MS_REALTIME : POLL_MS_FALLBACK);
     return () => clearInterval(id);
   }, [autoRefresh, fetchPayload, live]);
 
@@ -523,6 +529,7 @@ export default function LiquidityMapPage() {
               <HeatmapCanvas
                 payload={payload}
                 height={CHART_H}
+                currentPrice={heatmapCurrentPrice(payload) ?? undefined}
                 showDebug={process.env.NODE_ENV !== "production"}
               />
             )}
@@ -643,7 +650,7 @@ export default function LiquidityMapPage() {
             { k: "Requested",   v: dataSource },
             { k: "Resolved",    v: payload?.meta.resolvedSource ?? payload?.meta.source ?? payload?.meta.dataSource ?? "—" },
             { k: "Stale",       v: payload ? (resolvedStatus.stale ? "Yes" : "No") : "—" },
-            { k: "Auto",        v: autoRefresh ? "On (2s)" : "Off" },
+            { k: "Auto",        v: autoRefresh ? `On (${live ? POLL_MS_REALTIME / 1000 : POLL_MS_FALLBACK / 1000}s)` : "Off" },
             {
               k: "Live Upd",
               v: payload?.meta.liveUpdatedAt

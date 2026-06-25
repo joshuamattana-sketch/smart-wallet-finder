@@ -21,7 +21,9 @@ _DEFAULTS = {
     "WORKER_EXCHANGE": "binance",
     "WORKER_TIMEFRAMES": "5m",
     "WORKER_HISTORY_TARGET": "supabase",
-    "WORKER_HISTORY_INTERVAL": "10",
+    # 30s (was 10s) to cut Supabase write IO ~3x — the 10s cadence drained the
+    # free-tier Disk IO budget. Override via WORKER_HISTORY_INTERVAL env.
+    "WORKER_HISTORY_INTERVAL": "30",
     "WORKER_MAX_CELLS": "300",
     "WORKER_MAX_WALLS": "50",
     "WORKER_DISCORD_ENABLED": "false",

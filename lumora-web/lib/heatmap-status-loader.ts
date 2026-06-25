@@ -66,6 +66,49 @@ async function querySupabase(
   }
 }
 
+/**
+ * Exact row count via PostgREST's Content-Range header — transfers ~one row
+ * instead of the whole table. `Prefer: count=exact` + `Range: 0-0` makes the
+ * server report `0-0/<total>`; we parse the total. Returns null on any failure.
+ *
+ * This replaces a `select=frame_ts&limit=10000` full read that was firing on
+ * every /api/heatmap request and burning Disk IO on the (free-tier) database.
+ */
+async function countSupabase(
+  env: SupabaseEnv,
+  table: string,
+  params: URLSearchParams,
+): Promise<number | null> {
+  const url = `${env.url}/rest/v1/${table}?${params.toString()}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUPABASE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      headers: {
+        apikey: env.key,
+        Authorization: `Bearer ${env.key}`,
+        Prefer: "count=exact",
+        Range: "0-0",
+        "Range-Unit": "items",
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!res.ok && res.status !== 206) return null;
+    const cr = res.headers.get("content-range"); // e.g. "0-0/12345" or "*/12345"
+    if (!cr) return null;
+    const total = cr.split("/")[1];
+    if (!total || total === "*") return null;
+    const n = parseInt(total, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function ageSeconds(isoTs: string | null | undefined): number | null {
   if (!isoTs) return null;
   const parsed = Date.parse(isoTs);
@@ -111,17 +154,16 @@ export async function loadHeatmapDataStatus(
   const latestTs = (latestRow?.live_updated_at ?? latestRow?.updated_at ?? null) as string | null;
   const historyTs = (historyRow?.frame_ts ?? null) as string | null;
 
-  // Get history row count with a separate lightweight query
+  // Get history row count via a header-only HEAD request (transfers ~no rows).
   let historyCount = 0;
   if (historyRow) {
-    const countRows = await querySupabase(env, "heatmap_frame_history", new URLSearchParams({
+    const n = await countSupabase(env, "heatmap_frame_history", new URLSearchParams({
       symbol: `eq.${safeSymbol}`,
       exchange: `eq.${safeExchange}`,
       timeframe: `eq.${safeTf}`,
       select: "frame_ts",
-      limit: "10000",
     }));
-    historyCount = countRows?.length ?? 0;
+    historyCount = n ?? 0;
   }
 
   const latestAge = ageSeconds(latestTs);

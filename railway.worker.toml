@@ -19,7 +19,12 @@
 [build]
 builder = "nixpacks"
 
+# NOTE (Disk IO): `--range-mode wide` produced ~414 KB JSONB payloads upserted
+# every WORKER_HISTORY_INTERVAL seconds × N symbols, which drained the Supabase
+# free-tier Disk IO budget and made the instance unresponsive. Switched to
+# `standard` (focused price band → far smaller payload). Pair with a higher
+# WORKER_HISTORY_INTERVAL (30–60s) on the Railway service to keep write IO low.
 [deploy]
-startCommand = "python scripts/run_binance_ws_heatmap_live.py --use-env-config --target supabase --forever --range-mode wide"
+startCommand = "python scripts/run_binance_ws_heatmap_live.py --use-env-config --target supabase --forever --range-mode standard"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
