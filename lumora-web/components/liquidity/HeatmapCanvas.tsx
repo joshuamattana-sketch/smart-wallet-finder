@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { HeatmapApiPayload, HeatmapCell } from "@/lib/heatmap-types";
-import { intensityToColor, wallColor } from "@/lib/heatmap-colors";
+import { intensityToColor, wallColor, profileColor } from "@/lib/heatmap-colors";
 
 interface HeatmapCanvasProps {
   payload: HeatmapApiPayload;
@@ -25,6 +25,13 @@ const PAD_LEFT = 56;
 const PAD_RIGHT = 12;
 const PAD_TOP = 10;
 const PAD_BOTTOM = 26;
+
+// Right-hand liquidity profile rail (Alphractal-style): a horizontal histogram
+// of total liquidity per price level, aggregated across the visible time
+// window. Bids (support) read green, asks (resistance) read red. Shares the
+// heatmap's exact price axis so bars line up with the hot zones to their left.
+const RAIL_W = 74;   // CSS px width of the profile gutter
+const RAIL_GAP = 8;  // gap between heatmap plot and rail
 
 interface DebugInfo {
   w: number;
@@ -99,8 +106,13 @@ export function HeatmapCanvas({
       canvas.style.height = `${height}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const plotW = Math.max(0, width - PAD_LEFT - PAD_RIGHT);
+      // Reserve the right gutter for the liquidity profile rail (only when the
+      // canvas is wide enough to be worth it — otherwise reclaim the space).
+      const railOn = width >= 420;
+      const railTotal = railOn ? RAIL_W + RAIL_GAP : 0;
+      const plotW = Math.max(0, width - PAD_LEFT - PAD_RIGHT - railTotal);
       const plotH = Math.max(0, height - PAD_TOP - PAD_BOTTOM);
+      const railX0 = PAD_LEFT + plotW + RAIL_GAP;
 
       // ── Layer 1: dark chart background ──────────────────────────────────────
       ctx.clearRect(0, 0, width, height);
@@ -282,14 +294,8 @@ export function HeatmapCanvas({
           const price = cellPrice(cell);
           if (price < pMin || price > pMax) continue;
 
-          const side =
-            cell.bid > 0 && cell.ask > 0
-              ? "mixed"
-              : cell.ask > 0
-                ? "ask"
-                : "bid";
-
-          const color = intensityToColor(cell.total, side);
+          // Magma map is keyed on magnitude only — direction lives in the rail.
+          const color = intensityToColor(cell.total);
           if (color.endsWith(",0)")) continue; // fully transparent — skip
 
           octx.fillStyle = color;
@@ -354,6 +360,61 @@ export function HeatmapCanvas({
         // Tiny marker dot at the right edge.
         ctx.fillStyle = col;
         ctx.fillRect(PAD_LEFT + plotW - 3, y - 2, 3, 4);
+      }
+
+      // ── Layer 4.4: liquidity profile rail (right gutter) ────────────────────
+      // Aggregate every visible cell into per-pixel-row bid/ask totals, then
+      // draw a horizontal histogram aligned to the shared price axis. This is
+      // the "where does liquidity actually sit" silhouette — the real,
+      // data-driven version of the old synthetic depth rail.
+      if (railOn && plotH > 0) {
+        const rows = Math.max(1, Math.floor(plotH));
+        const bidRow = new Float32Array(rows);
+        const askRow = new Float32Array(rows);
+
+        for (const cell of payload.cells) {
+          const price = cellPrice(cell);
+          if (price < pMin || price > pMax) continue;
+          const row = Math.max(0, Math.min(rows - 1, Math.round(priceToY(price)) - PAD_TOP));
+          bidRow[row] += cell.bid;
+          askRow[row] += cell.ask;
+        }
+
+        let maxMag = 0;
+        for (let i = 0; i < rows; i++) {
+          const m = bidRow[i] + askRow[i];
+          if (m > maxMag) maxMag = m;
+        }
+
+        // Gutter backdrop + left baseline.
+        ctx.fillStyle = "rgba(255,255,255,0.018)";
+        ctx.fillRect(railX0, PAD_TOP, RAIL_W, plotH);
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(railX0 + 0.5, PAD_TOP);
+        ctx.lineTo(railX0 + 0.5, PAD_TOP + plotH);
+        ctx.stroke();
+
+        if (maxMag > 0) {
+          for (let i = 0; i < rows; i++) {
+            const bid = bidRow[i];
+            const ask = askRow[i];
+            const mag = bid + ask;
+            if (mag <= 0) continue;
+            const t = mag / maxMag;
+            const len = Math.max(1, t * RAIL_W);
+            const side = ask >= bid ? "ask" : "bid";
+            ctx.fillStyle = profileColor(side, t);
+            ctx.fillRect(railX0 + 1, PAD_TOP + i, len, 1);
+          }
+        }
+
+        // Caption.
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.font = "9px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("LIQUIDITY", railX0 + 2, PAD_TOP - 1);
       }
 
       // ── Layer 4.5: live price path overlay (over the heatmap + walls) ───────
