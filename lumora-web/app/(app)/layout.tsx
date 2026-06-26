@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { TopNav } from "@/components/nav/TopNav";
+import { SiteFooter } from "@/components/ui/SiteFooter";
 
 // Private beta surface — keep every gated route out of search indexes.
 export const metadata: Metadata = {
@@ -12,11 +13,12 @@ export const metadata: Metadata = {
 // instruments still own the depth.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#0a0b10] bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(99,102,241,0.07),transparent_65%)]">
+    <div className="flex min-h-screen flex-col bg-[#0a0b10] bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(99,102,241,0.07),transparent_65%)]">
       <TopNav />
-      <main className="mx-auto max-w-screen-2xl px-4 py-5 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full max-w-screen-2xl flex-1 px-4 py-5 sm:px-6 lg:px-8">
         {children}
       </main>
+      <SiteFooter variant="slim" />
     </div>
   );
 }

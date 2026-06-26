@@ -33,13 +33,14 @@ export function WaitlistForm() {
     return (
       <div className="flex items-center justify-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-[13px] text-emerald-300">
         <Check className="h-4 w-4" />
-        You&apos;re on the list — we&apos;ll be in touch.
+        You&apos;re on the list. We&apos;ll email you when a spot opens.
       </div>
     );
   }
 
   return (
-    <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-md flex-col gap-2 sm:flex-row" noValidate>
+    <div className="mx-auto w-full max-w-md">
+    <form onSubmit={onSubmit} className="flex w-full flex-col gap-2 sm:flex-row" noValidate>
       <label htmlFor="waitlist-email" className="sr-only">
         Email address
       </label>
@@ -72,5 +73,17 @@ export function WaitlistForm() {
         </p>
       )}
     </form>
+      <p className="mt-2.5 text-center text-[11px] leading-relaxed text-lm-muted">
+        We only use your email to invite you to the beta. By joining you agree to our{" "}
+        <a href="/datenschutz" className="text-lm-text-dim underline underline-offset-2 hover:text-lm-text">
+          Privacy Policy
+        </a>{" "}
+        and{" "}
+        <a href="/risk" className="text-lm-text-dim underline underline-offset-2 hover:text-lm-text">
+          Risk &amp; Terms
+        </a>
+        .
+      </p>
+    </div>
   );
 }

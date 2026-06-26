@@ -30,10 +30,10 @@ export default function EnterPage() {
         return;
       }
       setStatus("error");
-      setError(data?.error ?? "Something went wrong — try again.");
+      setError(data?.error ?? "Something went wrong. Try again.");
     } catch {
       setStatus("error");
-      setError("Network error — try again.");
+      setError("Network error. Try again.");
     }
   }
 
@@ -105,6 +105,17 @@ export default function EnterPage() {
           <a href="/" className="text-lm-cyan hover:underline">
             Join the waitlist
           </a>
+        </p>
+        <p className="mt-4 text-center text-[11px] leading-relaxed text-lm-muted">
+          Entering sets an essential cookie that keeps you signed in. See our{" "}
+          <a href="/datenschutz" className="text-lm-text-dim underline underline-offset-2 hover:text-lm-text">
+            Privacy Policy
+          </a>{" "}
+          and{" "}
+          <a href="/risk" className="text-lm-text-dim underline underline-offset-2 hover:text-lm-text">
+            Risk &amp; Terms
+          </a>
+          .
         </p>
       </div>
     </main>
