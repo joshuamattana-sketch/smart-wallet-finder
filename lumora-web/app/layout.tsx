@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import {
   SITE_URL,
@@ -68,6 +68,15 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
   variable: "--font-jetbrains-mono",
 });
+// Display face for the hero headline + section titles — characterful editorial
+// grotesque, deliberately not Inter/Space-Grotesk. Candidate under evaluation.
+const display = Fraunces({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["600"],
+  style: ["normal", "italic"],
+  variable: "--font-display",
+});
 
 // Structured data — static server-side @graph, no user input, so the JSON-LD
 // injection has no XSS surface. Reuses the shared site constants.
@@ -102,7 +111,7 @@ const JSON_LD = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`dark ${inter.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" className={`dark ${inter.variable} ${jetbrainsMono.variable} ${display.variable}`}>
       <body className="min-h-screen bg-lm-bg text-lm-text antialiased">
         <script
           type="application/ld+json"

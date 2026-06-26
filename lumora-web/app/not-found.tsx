@@ -12,7 +12,7 @@ export default function NotFound() {
       <p className="num text-[11px] uppercase tracking-[0.28em] text-lm-muted">404</p>
       <h1 className="mt-2 text-lg font-semibold text-lm-text">Page not found</h1>
       <p className="mt-1 max-w-sm text-[13px] leading-relaxed text-lm-text-dim">
-        That route doesn&apos;t exist — it may have moved, or it&apos;s part of the private terminal.
+        That route doesn&apos;t exist. It may have moved, or it&apos;s part of the private terminal.
       </p>
       <Link
         href="/"

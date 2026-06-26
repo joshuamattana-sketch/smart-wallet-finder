@@ -168,13 +168,25 @@ function FieldLabel({
   );
 }
 
-function FieldSvg() {
+// Entrance choreography (Option B) — the copy stack rises in sequence while the
+// instrument fades up and its price line draws itself. Runs once on first paint;
+// skipped entirely under reduced motion.
+const COPY_CONTAINER = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.11, delayChildren: 0.12 } },
+};
+const COPY_ITEM = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } },
+};
+
+function FieldSvg({ draw, animated }: { draw: boolean; animated: boolean }) {
   return (
     <svg
       viewBox="0 0 720 400"
       className="block h-auto w-full"
       role="img"
-      aria-label="The Lumora Field — a living market pressure scene for BTCUSDT showing a price path moving between liquidity bands, whale impact shockwaves, futures pressure streams and a sweep risk zone, summarized by a current read of LONG with score 72 and medium risk."
+      aria-label="The Lumora Field: a living market pressure scene for BTCUSDT showing a price path moving between liquidity bands, whale impact shockwaves, futures pressure streams and a sweep risk zone, summarized by a current read of LONG with score 72 and medium risk."
     >
       <defs>
         <linearGradient id="lmfPlane" x1="0" y1="0" x2="0" y2="1">
@@ -296,9 +308,18 @@ function FieldSvg() {
       </g>
       <FieldLabel x={712} y={262} fill="#a1a1a6" anchor="end" opacity={0.5} size={8}>FUTURES PRESSURE → LONG</FieldLabel>
 
-      {/* Price path — glow underlay, crisp line, flowing energy */}
+      {/* Price path — glow underlay, crisp line (draws itself on entrance), flowing energy */}
       <path d={PATH_D} fill="none" stroke="#22d3ee" strokeWidth="6" opacity="0.12" strokeLinecap="round" />
-      <path d={PATH_D} fill="none" stroke="#22d3ee" strokeWidth="1.75" strokeLinecap="round" />
+      <motion.path
+        d={PATH_D}
+        fill="none"
+        stroke="#22d3ee"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        initial={animated ? { pathLength: 0 } : false}
+        animate={animated ? { pathLength: draw ? 1 : 0 } : undefined}
+        transition={{ duration: 1.15, delay: 0.5, ease: "easeInOut" }}
+      />
       <path
         d={PATH_D} fill="none" stroke="#a5f3fc" strokeWidth="2.4" strokeLinecap="round"
         strokeDasharray="6 109" className="lmf-flow"
@@ -334,13 +355,45 @@ function FieldSvg() {
   );
 }
 
-export function LumoraFieldHero() {
+export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
   const tiltRef = useRef<HTMLDivElement | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
   const spotRef = useRef<HTMLDivElement | null>(null);
   const motionOkRef = useRef(false);
   const [motionOk, setMotionOk] = useState(false);
   const [annIdx, setAnnIdx] = useState(0);
+  // Reduced-motion via matchMedia — consistent with the intro gate and correct
+  // at first client render (framer's useReducedMotion proved unreliable here).
+  const reduced =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // The entrance choreography holds until the intro gate fires "lumora:enter",
+  // so the hero boots up AFTER the visitor presses Enter. With no gate (disabled,
+  // reduced motion, or already seen this session) it plays on mount instead.
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    let seen = false;
+    try {
+      seen = !!sessionStorage.getItem("lumora-intro-seen");
+    } catch {
+      seen = false;
+    }
+    if (!introGate || reduced || seen) {
+      setRevealed(true);
+      return;
+    }
+    const onEnter = () => setRevealed(true);
+    window.addEventListener("lumora:enter", onEnter, { once: true });
+    // Failsafe only (not a UX timer): if the gate somehow never fires its enter
+    // event, reveal so the hero can't get stuck hidden. Long enough never to read
+    // as an auto-dismiss.
+    const safety = window.setTimeout(() => setRevealed(true), 30000);
+    return () => {
+      window.removeEventListener("lumora:enter", onEnter);
+      window.clearTimeout(safety);
+    };
+  }, [introGate, reduced]);
 
   // Scroll parallax — the field sinks slightly slower than the copy as the
   // visitor scrolls past, so the hero has physical depth, not one flat plane.
@@ -397,12 +450,10 @@ export function LumoraFieldHero() {
     >
       <style dangerouslySetInnerHTML={{ __html: FIELD_CSS }} />
 
-      {/* Ambient pressure glow behind the whole hero — violet brand + cyan energy */}
+      {/* Minimal ambience — one faint cyan wash behind the instrument, a neutral hairline floor */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_55%_42%_at_68%_18%,rgba(34,211,238,0.09),transparent_70%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_44%_38%_at_12%_28%,rgba(139,92,246,0.09),transparent_70%)]" />
-        {/* Horizon line — a faint floor the instrument stands on */}
-        <div className="absolute inset-x-0 bottom-10 h-px bg-gradient-to-r from-transparent via-violet-500/15 to-transparent" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_48%_38%_at_72%_24%,rgba(34,211,238,0.055),transparent_72%)]" />
+        <div className="absolute inset-x-0 bottom-10 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
       </div>
 
       {/* Cursor spotlight layer */}
@@ -412,52 +463,51 @@ export function LumoraFieldHero() {
         style={motionOk ? { opacity: heroFade } : undefined}
         className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-9 lg:grid-cols-[minmax(0,4.5fr)_minmax(0,7.5fr)] lg:gap-12"
       >
-        {/* Copy */}
+        {/* Copy — staggered entrance (Option B choreography) */}
         <motion.div style={motionOk ? { y: copyY } : undefined}>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="num text-[10px] uppercase tracking-[0.22em] text-lm-muted">
-              Liquidity intelligence terminal
-            </span>
-            <StatusBadge variant="neutral" size="sm">PRIVATE BETA</StatusBadge>
-          </div>
-          <DynamicHeadline />
-          <p className="mt-4 max-w-md text-[15px] leading-relaxed text-lm-text-dim">
-            Lumora turns liquidity, whale flow and futures pressure into a live market read.
-          </p>
-          <div className="mt-7 flex flex-col gap-2.5 sm:flex-row">
-            <Link
-              href="/dashboard"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-colors hover:bg-cyan-300"
-            >
-              Launch terminal <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-            <Link
-              href="/liquidity-map"
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-lm-border px-5 py-2.5 text-[13px] font-medium text-lm-text-dim transition-colors hover:border-zinc-600 hover:text-lm-text"
-            >
-              View live intelligence
-            </Link>
-          </div>
-          <p className="mt-5 max-w-md text-[10.5px] leading-relaxed text-lm-muted">
-            Demo data shown — live integrations rolling out in beta. Informational market
-            context only: no guaranteed outcomes, not financial advice.
-          </p>
+          <motion.div initial={reduced ? false : "hidden"} animate={revealed ? "show" : "hidden"} variants={COPY_CONTAINER}>
+            <motion.div variants={COPY_ITEM} className="flex flex-wrap items-center gap-2.5">
+              <span className="num text-[10px] uppercase tracking-[0.22em] text-lm-muted">
+                Liquidity intelligence terminal
+              </span>
+              <StatusBadge variant="neutral" size="sm">PRIVATE BETA</StatusBadge>
+            </motion.div>
+            {/* Headline stays outside the hidden stagger — it's the LCP element. */}
+            <DynamicHeadline />
+            <motion.p variants={COPY_ITEM} className="mt-5 max-w-md text-[15px] leading-relaxed text-lm-text-dim">
+              Lumora turns liquidity, whale flow and futures pressure into a live market read.
+            </motion.p>
+            <motion.div variants={COPY_ITEM} className="mt-7 flex flex-col gap-2.5 sm:flex-row">
+              <Link
+                href="/enter"
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-colors hover:bg-cyan-300"
+              >
+                Request beta access <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+              <Link
+                href="#how"
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-lm-border px-5 py-2.5 text-[13px] font-medium text-lm-text-dim transition-colors hover:border-zinc-600 hover:text-lm-text"
+              >
+                See how it works
+              </Link>
+            </motion.div>
+            <motion.p variants={COPY_ITEM} className="mt-5 max-w-md text-[10.5px] leading-relaxed text-lm-muted">
+              Demo data shown for now, with live integrations rolling out during the beta. This is
+              market context for information only: no guaranteed outcomes, and not financial advice.
+            </motion.p>
+          </motion.div>
         </motion.div>
 
-        {/* The Lumora Field — living market object */}
+        {/* The Lumora Field — living market object (fades + scales up on entrance) */}
         <motion.div
           style={motionOk ? { y: fieldY } : undefined}
+          initial={reduced ? false : { opacity: 0, scale: 0.985 }}
+          animate={revealed ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.985 }}
+          transition={{ duration: 0.75, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className="relative"
           onMouseMove={handleMove}
           onMouseLeave={handleLeave}
         >
-          {/* Pressure glow halo around the instrument — deeper, violet-anchored */}
-          <div aria-hidden className="pointer-events-none absolute -inset-8">
-            <div className="absolute -right-6 top-6 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
-            <div className="absolute -top-4 left-4 h-44 w-56 rounded-full bg-red-500/[0.07] blur-3xl" />
-            <div className="absolute bottom-0 left-1/4 h-44 w-64 rounded-full bg-emerald-500/[0.07] blur-3xl" />
-            <div className="absolute -bottom-8 right-1/4 h-40 w-72 rounded-full bg-violet-500/[0.09] blur-3xl" />
-          </div>
           {/* Ground shadow — the instrument floats above the page */}
           <div
             aria-hidden
@@ -465,6 +515,11 @@ export function LumoraFieldHero() {
           />
 
           <div ref={tiltRef} className="lmf-tilt relative">
+            {/* Scope registration corners — terminal-viewport signature */}
+            <span aria-hidden className="pointer-events-none absolute -left-1.5 -top-1.5 z-20 h-3.5 w-3.5 border-l border-t border-cyan-400/45" />
+            <span aria-hidden className="pointer-events-none absolute -right-1.5 -top-1.5 z-20 h-3.5 w-3.5 border-r border-t border-cyan-400/45" />
+            <span aria-hidden className="pointer-events-none absolute -bottom-1.5 -left-1.5 z-20 h-3.5 w-3.5 border-b border-l border-cyan-400/45" />
+            <span aria-hidden className="pointer-events-none absolute -bottom-1.5 -right-1.5 z-20 h-3.5 w-3.5 border-b border-r border-cyan-400/45" />
             <div className="overflow-hidden rounded-lg border border-lm-border bg-lm-surface lm-chart-frame">
               {/* Chrome — symbol tabs · market state · feed status */}
               <div className="flex items-center justify-between gap-2 border-b border-lm-border bg-lm-surface-muted/80 px-2.5 py-1.5">
@@ -496,7 +551,7 @@ export function LumoraFieldHero() {
 
               {/* The field */}
               <div className="relative">
-                <FieldSvg />
+                <FieldSvg draw={revealed} animated={!reduced} />
 
                 {/* Live annotation ticker */}
                 <div className="absolute left-2.5 top-2.5 flex items-center gap-1.5 rounded-md border border-lm-border bg-[#0c0c0e]/85 px-2.5 py-1.5">
@@ -539,7 +594,7 @@ export function LumoraFieldHero() {
 
           <div className="mt-2 flex items-center justify-between px-1">
             <span className="num text-[8.5px] uppercase tracking-[0.18em] text-lm-muted">
-              The Lumora Field — illustrative pressure scene
+              The Lumora Field · illustrative pressure scene
             </span>
             <span className="num text-[8.5px] uppercase tracking-[0.18em] text-lm-muted">
               <span className="hidden lg:inline">⌖ responds to cursor · </span>

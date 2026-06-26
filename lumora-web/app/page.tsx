@@ -7,8 +7,10 @@ import { SpiralIntro } from "@/components/landing/SpiralIntro";
 import { MarketReplayStrip } from "@/components/landing/MarketReplayStrip";
 import { LandingFeatureGrid } from "@/components/landing/LandingFeatureGrid";
 import { TerminalPreview } from "@/components/landing/TerminalPreview";
+import { FaqSection } from "@/components/landing/FaqSection";
 import { Reveal } from "@/components/landing/Reveal";
 import { WaitlistForm } from "@/components/landing/WaitlistForm";
+import { SiteFooter } from "@/components/ui/SiteFooter";
 import { DISCORD_URL } from "@/lib/site";
 import { clsx } from "clsx";
 
@@ -72,7 +74,7 @@ const READS: Array<{
     bias: "LONG",
     score: 72,
     risk: "MEDIUM",
-    reason: "Bid intensity 58% vs 42% ask — buyers leading into a support band that has held twice.",
+    reason: "Bid intensity 58% vs 42% ask. Buyers are leading into a support band that has held twice.",
     action: "Watch reclaim of 67,500 · read invalidates below 66,800.",
   },
   {
@@ -80,7 +82,7 @@ const READS: Array<{
     bias: "NEUTRAL",
     score: 41,
     risk: "LOW",
-    reason: "Order book balanced near 50/50 — no clean directional edge in the current structure.",
+    reason: "Order book sits near 50/50, so there is no clean directional edge in the current structure.",
     action: "Stand aside · wait for a sweep of either liquidity band.",
   },
   {
@@ -90,6 +92,21 @@ const READS: Array<{
     risk: "HIGH",
     reason: "Ask wall rebuilt twice above price while futures positioning leans crowded long.",
     action: "Pressure favors sellers into 168.50 · read invalidates above 172.",
+  },
+];
+
+const HOW_STEPS: Array<{ title: string; body: string }> = [
+  {
+    title: "We watch the live book",
+    body: "Every resting bid and ask, and every large print the moment it lands on the tape. Nothing sampled, nothing on a delay.",
+  },
+  {
+    title: "We score the pressure",
+    body: "Bid versus ask intensity, whale flow and futures positioning get weighed into one bias, a score out of 100, and a risk level.",
+  },
+  {
+    title: "You get one read",
+    body: "A single line with the reason behind it, so you can make the call in seconds instead of squinting at twelve charts.",
   },
 ];
 
@@ -114,11 +131,18 @@ function SignalDrop({ label }: { label?: string }) {
   );
 }
 
-export default function LandingPage() {
+export default function LandingPage({
+  searchParams,
+}: {
+  searchParams?: { intro?: string };
+}) {
+  // Galaxy gate is on by default; ?intro=off skips it (hero boots up on load).
+  const introGate = searchParams?.intro !== "off";
   return (
     <div className="relative min-h-screen overflow-x-clip bg-lm-bg">
-      {/* Spiral intro gate (LM75B) — fullscreen, then reveals the landing */}
-      <SpiralIntro />
+      {/* Intro: galaxy gate, then the hero boots up the moment you Enter.
+          Pass ?intro=off to skip the gate and boot the hero up on load. */}
+      {introGate && <SpiralIntro />}
 
       <style dangerouslySetInnerHTML={{ __html: PAGE_CSS }} />
 
@@ -126,23 +150,21 @@ export default function LandingPage() {
         Skip to content
       </a>
 
-      {/* Fixed atmospheric backdrop — one world under every section */}
+      {/* Fixed instrument plane — graph-paper grid (fine + major), no decorative
+          color blobs. Structure, not atmosphere. */}
       <div aria-hidden className="pointer-events-none fixed inset-0">
-        {/* Violet dawn falling from above */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_85%_50%_at_50%_-12%,rgba(139,92,246,0.08),transparent_62%)]" />
-        {/* Instrument grid, masked so it fades toward the edges */}
         <div
-          className="absolute inset-0 opacity-[0.35]"
+          className="absolute inset-0"
           style={{
             backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px)",
-            backgroundSize: "72px 72px",
-            maskImage: "radial-gradient(ellipse 75% 65% at 50% 35%, black 30%, transparent 75%)",
-            WebkitMaskImage: "radial-gradient(ellipse 75% 65% at 50% 35%, black 30%, transparent 75%)",
+              "linear-gradient(rgba(255,255,255,0.022) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.022) 1px, transparent 1px), linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
+            backgroundSize: "34px 34px, 34px 34px, 170px 170px, 170px 170px",
+            maskImage: "radial-gradient(ellipse 82% 72% at 50% 28%, black 36%, transparent 80%)",
+            WebkitMaskImage: "radial-gradient(ellipse 82% 72% at 50% 28%, black 36%, transparent 80%)",
           }}
         />
-        {/* Deep cyan undercurrent near the bottom of the viewport */}
-        <div className="absolute inset-x-0 bottom-0 h-1/3 bg-[radial-gradient(ellipse_70%_90%_at_50%_115%,rgba(34,211,238,0.05),transparent_70%)]" />
+        {/* One quiet cyan undercurrent — the only color in the field */}
+        <div className="absolute inset-x-0 bottom-0 h-1/3 bg-[radial-gradient(ellipse_55%_90%_at_50%_122%,rgba(34,211,238,0.04),transparent_72%)]" />
       </div>
 
       {/* Nav */}
@@ -171,7 +193,7 @@ export default function LandingPage() {
       <div className="relative">
         <main id="main-content">
         {/* Hero — The Lumora Field */}
-        <LumoraFieldHero />
+        <LumoraFieldHero introGate={introGate} />
 
         {/* Capabilities ticker */}
         <div className="overflow-hidden border-y border-lm-border/60 bg-black/20 py-2.5 backdrop-blur-sm">
@@ -205,6 +227,31 @@ export default function LandingPage() {
 
         <SignalDrop label="Four layers · one read" />
 
+        {/* 02b — How it works */}
+        <Reveal>
+          <section id="how" className="px-4 py-9" aria-labelledby="how-heading">
+            <div className="mx-auto max-w-6xl">
+              <div className="mb-5">
+                <span className="lm-section-title">How it works</span>
+                <h2 id="how-heading" className="lm-display mt-2 text-xl font-semibold tracking-tight text-lm-text">
+                  From raw order flow to a read you can actually act on.
+                </h2>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {HOW_STEPS.map((s, i) => (
+                  <Reveal key={s.title} delay={i * 0.1}>
+                    <Panel flush className="h-full p-4">
+                      <span className="num text-[12px] font-semibold text-lm-cyan">0{i + 1}</span>
+                      <h3 className="mt-2 text-[15px] font-semibold text-lm-text">{s.title}</h3>
+                      <p className="mt-1.5 text-[12.5px] leading-relaxed text-lm-text-dim">{s.body}</p>
+                    </Panel>
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+          </section>
+        </Reveal>
+
         {/* 03 — Market read examples */}
         <Reveal>
           <section className="px-4 py-9" aria-labelledby="read-heading">
@@ -212,11 +259,11 @@ export default function LandingPage() {
               <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
                 <div>
                   <span className="lm-section-title">03 · The read</span>
-                  <h2 id="read-heading" className="mt-2 text-xl font-semibold tracking-tight text-lm-text">
+                  <h2 id="read-heading" className="lm-display mt-2 text-xl font-semibold tracking-tight text-lm-text">
                     The output is a read, not another wall of charts.
                   </h2>
                   <p className="mt-1 text-[13px] text-lm-text-dim">
-                    Bias, score, risk — and the reason behind it, in one sentence.
+                    Bias, score, risk, and the reason behind it, in one sentence.
                   </p>
                 </div>
                 <StatusBadge variant="warning" size="sm">Illustrative</StatusBadge>
@@ -253,7 +300,7 @@ export default function LandingPage() {
               </div>
               <p className="mt-2.5 px-1 text-[10px] leading-snug text-lm-muted">
                 Illustrative examples, not live signals or trade recommendations. Reads describe
-                market structure — they do not predict outcomes.
+                market structure. They don&apos;t predict outcomes.
               </p>
             </div>
           </section>
@@ -264,6 +311,13 @@ export default function LandingPage() {
         {/* 04 — Live terminal preview */}
         <Reveal>
           <TerminalPreview />
+        </Reveal>
+
+        <SignalDrop label="Still skeptical? Good." />
+
+        {/* 06 — FAQ / objection handling (CRO) */}
+        <Reveal>
+          <FaqSection />
         </Reveal>
 
         {/* 05 — Early access CTA */}
@@ -284,12 +338,12 @@ export default function LandingPage() {
                   <span className="num text-[9px] uppercase tracking-[0.22em] text-lm-muted">
                     Early access
                   </span>
-                  <h2 id="cta-heading" className="mt-3 text-2xl font-semibold tracking-tight text-lm-text sm:text-[28px]">
+                  <h2 id="cta-heading" className="lm-display mt-3 text-2xl font-semibold tracking-tight text-lm-text sm:text-[30px]">
                     Step into the field.
                   </h2>
                   <p className="mx-auto mt-2.5 max-w-md text-[13px] leading-relaxed text-lm-text-dim">
                     We&apos;re onboarding a small group of traders during private beta. Leave your
-                    email for an invite, open the demo terminal today, or join the Discord.
+                    email for an invite, request beta access, or join the Discord.
                   </p>
 
                   <div className="mt-6">
@@ -304,10 +358,10 @@ export default function LandingPage() {
 
                   <div className="flex flex-col justify-center gap-2.5 sm:flex-row">
                     <Link
-                      href="/dashboard"
+                      href="/enter"
                       className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-cyan-400 px-5 py-2.5 text-[13px] font-semibold text-zinc-950 shadow-[0_0_28px_rgba(34,211,238,0.25)] transition-all hover:bg-cyan-300 hover:shadow-[0_0_36px_rgba(34,211,238,0.4)]"
                     >
-                      Open the demo terminal <ArrowRight className="h-3.5 w-3.5" />
+                      Request beta access <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
                     <a
                       href={DISCORD_URL}
@@ -320,11 +374,11 @@ export default function LandingPage() {
                     </a>
                   </div>
                   <p className="mt-4 num text-[10px] uppercase tracking-[0.18em] text-lm-text-dim">
-                    Free during private beta · limited seats this round
+                    Free during private beta · we onboard in small waves
                   </p>
                   <p className="mt-3 text-[10px] leading-snug text-lm-muted">
-                    Lumora provides informational market context only — no guaranteed outcomes,
-                    no financial advice.
+                    Lumora gives you market context for information only. No guaranteed outcomes,
+                    and no financial advice.
                   </p>
                 </div>
               </div>
@@ -335,32 +389,7 @@ export default function LandingPage() {
         </main>
 
         {/* Footer */}
-        <footer className="border-t border-lm-border px-4 py-7">
-          <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 sm:flex-row">
-            <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-lm-purple" />
-              <span className="lm-brand text-sm text-lm-text">Lumora</span>
-              <span className="ml-2 text-xs text-lm-muted">Liquidity intelligence terminal</span>
-              <a
-                href={DISCORD_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-2 inline-flex items-center gap-1.5 text-xs text-lm-text-dim transition-colors hover:text-lm-cyan"
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-                Discord
-              </a>
-            </div>
-            <div className="flex flex-col items-center gap-1 sm:items-end">
-              <p className="text-xs text-lm-muted">
-                © 2026 Lumora. Not financial advice. For informational use only.
-              </p>
-              <p className="num text-[9px] uppercase tracking-[0.18em] text-lm-muted/80">
-                Private beta · demo data shown
-              </p>
-            </div>
-          </div>
-        </footer>
+        <SiteFooter variant="full" />
       </div>
     </div>
   );

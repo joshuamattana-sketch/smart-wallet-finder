@@ -331,6 +331,12 @@ option {
   display: none;
 }
 
+/* Display / headline face — editorial serif (Fraunces). Var-driven so the face
+   can be swapped in one place (app/layout.tsx) and every heading follows. */
+.lm-display {
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
+}
+
 /* Brand wordmark — restrained, monospace-leaning */
 .lm-brand {
   font-family: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
@@ -413,6 +419,47 @@ textarea:focus-visible {
 /* Anchor jumps clear the 56px sticky nav. */
 :target {
   scroll-margin-top: 72px;
+}
+
+/* ── LM77A: Legal prose — readable long-form (15–16px), unlike terminal chrome ── */
+.lm-legal-prose {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #c8c8cf;
+}
+.lm-legal-prose h2 {
+  margin-top: 2.25rem;
+  margin-bottom: 0.6rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #e0e0e4;
+}
+.lm-legal-prose h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e0e0e4;
+}
+.lm-legal-prose p { margin-bottom: 0.9rem; }
+.lm-legal-prose ul {
+  margin: 0.4rem 0 1rem;
+  padding-left: 1.2rem;
+  list-style: disc;
+}
+.lm-legal-prose li { margin-bottom: 0.35rem; }
+.lm-legal-prose a {
+  color: #22d3ee;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.lm-legal-prose a:hover { color: #67e8f9; }
+.lm-legal-prose strong { color: #e0e0e4; font-weight: 600; }
+.lm-legal-prose address {
+  font-style: normal;
+  margin-bottom: 0.9rem;
+  white-space: pre-line;
 }
 
 /* Skip-to-content link — off-screen until focused, then pinned top-left. */

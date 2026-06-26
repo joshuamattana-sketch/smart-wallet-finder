@@ -39,7 +39,7 @@ const EVENTS = [
     tag: "WHALE SELL",
     tagClass: "text-red-400",
     dot: "bg-red-400",
-    text: "$7.1M market sell hits the tape — price rejects.",
+    text: "$7.1M market sell hits the tape. Price rejects.",
     val: "-$7.1M",
     valClass: "text-red-400/80",
   },
@@ -47,7 +47,7 @@ const EVENTS = [
     tag: "ABSORPTION",
     tagClass: "text-emerald-400",
     dot: "bg-emerald-400",
-    text: "Bids absorb the flush — 67,350 support holds twice.",
+    text: "Bids absorb the flush. 67,350 support holds twice.",
     val: "$26M",
     valClass: "text-emerald-400/80",
   },
@@ -55,7 +55,7 @@ const EVENTS = [
     tag: "LIQ BUILD",
     tagClass: "text-emerald-400",
     dot: "bg-emerald-400",
-    text: "Bid ladder thickens below price — demand stacking.",
+    text: "Bid ladder thickens below price. Demand is stacking.",
     val: "+$8.4M",
     valClass: "text-emerald-400/80",
   },
@@ -63,7 +63,7 @@ const EVENTS = [
     tag: "PRESSURE",
     tagClass: "text-amber-400",
     dot: "bg-amber-400",
-    text: "Futures pressure leans long — sweep risk fading.",
+    text: "Futures pressure leans long. Sweep risk is fading.",
     val: "OI +2.4%",
     valClass: "text-lm-text-dim",
   },
@@ -71,7 +71,7 @@ const EVENTS = [
     tag: "FUNDING",
     tagClass: "text-cyan-300",
     dot: "bg-cyan-300",
-    text: "Funding ticks positive — longs paying, crowd leaning in.",
+    text: "Funding ticks positive. Longs are paying, crowd leaning in.",
     val: "+0.012%",
     valClass: "text-lm-text-dim",
   },
@@ -79,7 +79,7 @@ const EVENTS = [
     tag: "SWEEP WATCH",
     tagClass: "text-amber-400",
     dot: "bg-amber-400",
-    text: "Stops clustered below 66,800 — flush risk if support breaks.",
+    text: "Stops clustered below 66,800. Flush risk if support breaks.",
     val: "ZONE 66.8K",
     valClass: "text-amber-400/80",
   },
@@ -143,7 +143,7 @@ export function MarketReplayStrip() {
         <div className="mb-2.5 flex flex-wrap items-end justify-between gap-2">
           <div>
             <span className="lm-section-title">01 · The signal</span>
-            <h2 className="mt-2 text-xl font-semibold tracking-tight text-lm-text">
+            <h2 className="lm-display mt-2 text-xl font-semibold tracking-tight text-lm-text">
               Raw market events, as they hit the tape.
             </h2>
           </div>

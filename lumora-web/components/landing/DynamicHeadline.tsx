@@ -40,7 +40,7 @@ export function DynamicHeadline() {
   const animate = mounted && !reduced;
 
   return (
-    <h1 className="mt-4 font-semibold leading-[1.06] tracking-[-0.02em] text-lm-text text-[clamp(1.65rem,8vw,2.25rem)] sm:text-[44px] lg:text-[50px]">
+    <h1 className="lm-display mt-5 font-semibold leading-[1.02] tracking-[-0.02em] text-lm-text text-[clamp(2.1rem,9vw,2.9rem)] sm:text-[58px] lg:text-[72px]">
       See the{" "}
       <span className="relative inline-grid whitespace-nowrap align-bottom">
         {/* Invisible stack of all candidates reserves the widest slot. */}

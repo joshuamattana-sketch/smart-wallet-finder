@@ -83,11 +83,11 @@ export function TerminalPreview() {
         <div className="mb-5 flex flex-wrap items-end justify-between gap-2">
           <div>
             <span className="lm-section-title">04 · The terminal</span>
-            <h2 className="mt-2 text-xl font-semibold tracking-tight text-lm-text sm:text-2xl">
+            <h2 className="lm-display mt-2 text-xl font-semibold tracking-tight text-lm-text sm:text-2xl">
               This is the instrument itself.
             </h2>
             <p className="mt-1 text-[13px] text-lm-text-dim">
-              Liquidity heat, whale tape and the current read — live in one screen.
+              Liquidity heat, whale tape and the current read, live in one screen.
             </p>
           </div>
           <StatusBadge variant="warning" size="sm">DEMO DATA</StatusBadge>
@@ -138,7 +138,7 @@ export function TerminalPreview() {
                     </span>
                   </div>
                   <p className="mt-3 text-[11px] leading-snug text-lm-text-dim">
-                    Bid intensity 58% vs 42% — buyers leading into a support band that has held twice.
+                    Bid intensity 58% vs 42%. Buyers leading into a support band that has held twice.
                   </p>
                   <div className="num mt-4 grid grid-cols-3 gap-2 border-t border-white/[0.05] pt-3 text-[8.5px] uppercase tracking-wider text-lm-muted">
                     <span>CONF <span className="block text-[11px] normal-case tracking-normal text-lm-text">68%</span></span>

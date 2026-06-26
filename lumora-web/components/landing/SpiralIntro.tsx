@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ── LM75B — Spiral intro gate ────────────────────────────────────────────────
 // A fullscreen branded spiral galaxy shown once per session before the landing.
@@ -30,7 +30,25 @@ export function SpiralIntro() {
   const [showEnter, setShowEnter] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Client-only: show unless already seen this session.
+  const exit = useCallback(() => {
+    try {
+      sessionStorage.setItem(SEEN_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    document.body.style.overflow = "";
+    // Signal the hero to begin its boot-up choreography as the gate dissolves.
+    try {
+      window.dispatchEvent(new Event("lumora:enter"));
+    } catch {
+      /* ignore */
+    }
+    setPhase("exiting");
+    window.setTimeout(() => setPhase("hidden"), 760);
+  }, []);
+
+  // Client-only: show once per session, and never under reduced motion — the
+  // gate is a brand flourish, not a required step, so accessibility skips it.
   useEffect(() => {
     let seen = false;
     try {
@@ -38,21 +56,31 @@ export function SpiralIntro() {
     } catch {
       seen = false;
     }
-    if (!seen) setPhase("in");
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!seen && !reduced) setPhase("in");
   }, []);
 
-  // Reveal the Enter affordance + lock scroll while the gate is up.
+  // While the gate is up: lock scroll, reveal the Enter affordance, and dissolve
+  // on the FIRST sign of intent — scroll, key, or touch (and click, on the
+  // container). No timer: the visitor enters when they choose, which reads as
+  // intentional rather than a stopwatch pre-loader.
   useEffect(() => {
     if (phase !== "in") return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const t = window.setTimeout(() => setShowEnter(true), reduced ? 0 : 1500);
+    const tEnter = window.setTimeout(() => setShowEnter(true), 600);
+    const onIntent = () => exit();
+    window.addEventListener("wheel", onIntent, { passive: true, once: true });
+    window.addEventListener("touchstart", onIntent, { passive: true, once: true });
+    window.addEventListener("keydown", onIntent, { once: true });
     return () => {
-      window.clearTimeout(t);
+      window.clearTimeout(tEnter);
+      window.removeEventListener("wheel", onIntent);
+      window.removeEventListener("touchstart", onIntent);
+      window.removeEventListener("keydown", onIntent);
       document.body.style.overflow = prevOverflow;
     };
-  }, [phase]);
+  }, [phase, exit]);
 
   // Spiral animation (runs while the gate is visible).
   useEffect(() => {
@@ -174,24 +202,14 @@ export function SpiralIntro() {
     };
   }, [phase]);
 
-  function enter() {
-    try {
-      sessionStorage.setItem(SEEN_KEY, "1");
-    } catch {
-      /* ignore */
-    }
-    document.body.style.overflow = "";
-    setPhase("exiting");
-    window.setTimeout(() => setPhase("hidden"), 760);
-  }
-
   if (phase === "hidden") return null;
 
   return (
     <div
       role="dialog"
-      aria-label="Lumora intro"
-      className="fixed inset-0 z-[120] bg-black transition-opacity duration-700 ease-out"
+      aria-label="Enter Lumora"
+      onClick={exit}
+      className="fixed inset-0 z-[120] cursor-pointer bg-black transition-opacity duration-700 ease-out"
       style={{
         opacity: phase === "exiting" ? 0 : 1,
         pointerEvents: phase === "exiting" ? "none" : "auto",
@@ -206,7 +224,7 @@ export function SpiralIntro() {
 
       <button
         type="button"
-        onClick={enter}
+        onClick={exit}
         autoFocus
         aria-label="Enter Lumora"
         className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl font-extralight uppercase tracking-[0.3em] text-white transition-all duration-700 ease-out [text-shadow:0_0_18px_rgba(0,0,0,0.55)] hover:tracking-[0.42em] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/60 ${

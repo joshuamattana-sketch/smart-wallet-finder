@@ -127,7 +127,7 @@ const FEATURES = [
   {
     icon: Layers,
     title: "Liquidity pressure",
-    desc: "Where size is actually resting. Walls, gaps and demand zones mapped over time — before price gets there.",
+    desc: "Where size is actually resting. Walls, gaps and demand zones mapped over time, before price gets there.",
     sample: "ASK WALL 68,000 · $38M · HELD 2X",
     sampleClass: "text-red-400/75",
     glow: "bg-red-500/10",
@@ -136,7 +136,7 @@ const FEATURES = [
   {
     icon: Zap,
     title: "Whale impact",
-    desc: "Large prints as they hit the tape — side, size and market impact, filtered so only meaningful flow gets through.",
+    desc: "Large prints as they hit the tape: side, size and market impact, filtered so only meaningful flow gets through.",
     sample: "SELL $7.1M · BINANCE · IMPACT HIGH",
     sampleClass: "text-red-400/75",
     glow: "bg-cyan-500/10",
@@ -154,7 +154,7 @@ const FEATURES = [
   {
     icon: Crosshair,
     title: "Market read",
-    desc: "Everything condenses into one bias, score and risk line — with the reason behind it in plain language.",
+    desc: "Everything condenses into one bias, score and risk line, with the reason behind it in plain language.",
     sample: "LONG · 72/100 · RISK MED",
     sampleClass: "text-lm-cyan/80",
     glow: "bg-cyan-500/10",
@@ -169,7 +169,7 @@ export function LandingFeatureGrid() {
       <div className="mx-auto max-w-6xl">
         <div className="mb-4">
           <span className="lm-section-title">02 · The structure</span>
-          <h2 className="mt-2 text-xl font-semibold tracking-tight text-lm-text">
+          <h2 className="lm-display mt-2 text-xl font-semibold tracking-tight text-lm-text">
             Four layers of market structure, one readable field.
           </h2>
           <p className="mt-1 text-[13px] text-lm-text-dim">
