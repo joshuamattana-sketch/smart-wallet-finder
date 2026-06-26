@@ -127,11 +127,29 @@ const ANNOTATIONS = [
   { text: "Read updating", cls: "text-lm-cyan", dot: "bg-lm-cyan" },
 ];
 
-const SYMBOL_TABS = [
-  { symbol: "BTCUSDT", active: true },
-  { symbol: "ETHUSDT", active: false },
-  { symbol: "SOLUSDT", active: false },
-];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] as const;
+type Sym = (typeof SYMBOLS)[number];
+
+// Per-symbol read shown in the hero instrument — clicking a tab switches it.
+// Illustrative; mirrors the landing's read examples (BTC long / ETH neutral / SOL short).
+type Instrument = {
+  bias: string;
+  biasClass: string;
+  score: number;
+  conf: string;
+  risk: string;
+  riskClass: string;
+  funding: string;
+  oi: string;
+  pressure: string;
+  pressureClass: string;
+  prices: readonly [string, string, string, string];
+};
+const INSTRUMENTS: Record<Sym, Instrument> = {
+  BTCUSDT: { bias: "LONG", biasClass: "text-emerald-400", score: 72, conf: "68%", risk: "MED", riskClass: "text-amber-400", funding: "+0.012%", oi: "+2.4%", pressure: "→ LONG", pressureClass: "text-emerald-400", prices: ["68.2k", "67.8k", "67.3k", "66.8k"] },
+  ETHUSDT: { bias: "NEUTRAL", biasClass: "text-lm-text-dim", score: 41, conf: "52%", risk: "LOW", riskClass: "text-emerald-400", funding: "+0.004%", oi: "-0.8%", pressure: "FLAT", pressureClass: "text-lm-text-dim", prices: ["3.62k", "3.58k", "3.54k", "3.50k"] },
+  SOLUSDT: { bias: "SHORT", biasClass: "text-red-400", score: 64, conf: "61%", risk: "HIGH", riskClass: "text-red-400", funding: "-0.018%", oi: "+3.1%", pressure: "→ SHORT", pressureClass: "text-red-400", prices: ["172.0", "169.5", "167.0", "164.5"] },
+};
 
 // Heatmap intensity cells inside the liquidity bands (deterministic — no
 // render-time randomness, so SSR and client markup always match).
@@ -180,13 +198,21 @@ const COPY_ITEM = {
   show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } },
 };
 
-function FieldSvg({ draw, animated }: { draw: boolean; animated: boolean }) {
+function FieldSvg({
+  draw,
+  animated,
+  prices,
+}: {
+  draw: boolean;
+  animated: boolean;
+  prices: readonly [string, string, string, string];
+}) {
   return (
     <svg
       viewBox="0 0 720 400"
       className="block h-auto w-full"
       role="img"
-      aria-label="The Lumora Field: a living market pressure scene for BTCUSDT showing a price path moving between liquidity bands, whale impact shockwaves, futures pressure streams and a sweep risk zone, summarized by a current read of LONG with score 72 and medium risk."
+      aria-label="The Lumora Field: a living market pressure scene for the selected market, showing a price path moving between liquidity bands, whale impact shockwaves, futures pressure streams and a sweep risk zone, summarized by a current read."
     >
       <defs>
         <linearGradient id="lmfPlane" x1="0" y1="0" x2="0" y2="1">
@@ -232,10 +258,10 @@ function FieldSvg({ draw, animated }: { draw: boolean; animated: boolean }) {
       ))}
 
       {/* Axes — price right, time bottom */}
-      <FieldLabel x={712} y={83} fill="#52525b" anchor="end" opacity={0.9} size={8}>68.2k</FieldLabel>
-      <FieldLabel x={712} y={163} fill="#52525b" anchor="end" opacity={0.9} size={8}>67.8k</FieldLabel>
-      <FieldLabel x={712} y={243} fill="#52525b" anchor="end" opacity={0.9} size={8}>67.3k</FieldLabel>
-      <FieldLabel x={712} y={323} fill="#52525b" anchor="end" opacity={0.9} size={8}>66.8k</FieldLabel>
+      <FieldLabel x={712} y={83} fill="#52525b" anchor="end" opacity={0.9} size={8}>{prices[0]}</FieldLabel>
+      <FieldLabel x={712} y={163} fill="#52525b" anchor="end" opacity={0.9} size={8}>{prices[1]}</FieldLabel>
+      <FieldLabel x={712} y={243} fill="#52525b" anchor="end" opacity={0.9} size={8}>{prices[2]}</FieldLabel>
+      <FieldLabel x={712} y={323} fill="#52525b" anchor="end" opacity={0.9} size={8}>{prices[3]}</FieldLabel>
       {[
         [120, "10:00"], [240, "11:00"], [360, "12:00"], [480, "13:00"], [600, "14:00"],
       ].map(([x, t]) => (
@@ -306,7 +332,7 @@ function FieldSvg({ draw, animated }: { draw: boolean; animated: boolean }) {
         <line x1="525" y1="222" x2="545" y2="222" />
         <line x1="648" y1="232" x2="668" y2="232" />
       </g>
-      <FieldLabel x={712} y={262} fill="#a1a1a6" anchor="end" opacity={0.5} size={8}>FUTURES PRESSURE → LONG</FieldLabel>
+      <FieldLabel x={712} y={262} fill="#a1a1a6" anchor="end" opacity={0.5} size={8}>FUTURES PRESSURE</FieldLabel>
 
       {/* Price path — glow underlay, crisp line (draws itself on entrance), flowing energy */}
       <path d={PATH_D} fill="none" stroke="#22d3ee" strokeWidth="6" opacity="0.12" strokeLinecap="round" />
@@ -362,6 +388,8 @@ export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
   const motionOkRef = useRef(false);
   const [motionOk, setMotionOk] = useState(false);
   const [annIdx, setAnnIdx] = useState(0);
+  const [sym, setSym] = useState<Sym>("BTCUSDT");
+  const inst = INSTRUMENTS[sym];
   // Reduced-motion via matchMedia — consistent with the intro gate and correct
   // at first client render (framer's useReducedMotion proved unreliable here).
   const reduced =
@@ -524,18 +552,21 @@ export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
               {/* Chrome — symbol tabs · market state · feed status */}
               <div className="flex items-center justify-between gap-2 border-b border-lm-border bg-lm-surface-muted/80 px-2.5 py-1.5">
                 <div className="flex items-center gap-1">
-                  {SYMBOL_TABS.map(({ symbol, active }) => (
-                    <span
+                  {SYMBOLS.map((symbol) => (
+                    <button
                       key={symbol}
+                      type="button"
+                      onClick={() => setSym(symbol)}
+                      aria-pressed={symbol === sym}
                       className={clsx(
-                        "num rounded px-2 py-1 text-[9px] font-semibold tracking-wider",
-                        active
+                        "num rounded px-2 py-1 text-[9px] font-semibold tracking-wider transition-colors",
+                        symbol === sym
                           ? "border border-lm-border bg-lm-surface text-lm-cyan"
-                          : "text-lm-muted",
+                          : "text-lm-muted hover:text-lm-text",
                       )}
                     >
                       {symbol}
-                    </span>
+                    </button>
                   ))}
                 </div>
                 <div className="num hidden items-center gap-2 text-[9px] uppercase tracking-wider text-lm-muted md:flex">
@@ -551,7 +582,7 @@ export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
 
               {/* The field */}
               <div className="relative">
-                <FieldSvg draw={revealed} animated={!reduced} />
+                <FieldSvg draw={revealed} animated={!reduced} prices={inst.prices} />
 
                 {/* Live annotation ticker */}
                 <div className="absolute left-2.5 top-2.5 flex items-center gap-1.5 rounded-md border border-lm-border bg-[#0c0c0e]/85 px-2.5 py-1.5">
@@ -568,9 +599,9 @@ export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
                 <div className="absolute right-2.5 top-2.5 rounded-md border border-lm-border bg-lm-surface/95 px-2.5 py-1.5">
                   <p className="num text-[7.5px] uppercase tracking-[0.2em] text-lm-muted">Current read</p>
                   <div className="mt-0.5 flex items-baseline gap-1.5">
-                    <span className="num text-[12px] font-bold leading-none text-emerald-400">LONG</span>
+                    <span className={clsx("num text-[12px] font-bold leading-none", inst.biasClass)}>{inst.bias}</span>
                     <span className="num text-[10px] leading-none text-lm-text">
-                      72<span className="text-lm-muted">/100</span>
+                      {inst.score}<span className="text-lm-muted">/100</span>
                     </span>
                   </div>
                 </div>
@@ -579,13 +610,13 @@ export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
               {/* Status bar — read, confidence, risk, futures context */}
               <div className="lm-no-scrollbar flex items-center justify-between gap-3 overflow-x-auto border-t border-lm-border bg-lm-surface-muted/80 px-3 py-1.5">
                 <div className="num flex items-center gap-3.5 whitespace-nowrap text-[9px] uppercase tracking-wider text-lm-muted">
-                  <span>READ <span className="font-semibold text-emerald-400">LONG</span></span>
-                  <span>SCORE <span className="text-lm-text">72/100</span></span>
-                  <span>CONF <span className="text-lm-text">68%</span></span>
-                  <span>RISK <span className="text-amber-400">MED</span></span>
-                  <span className="hidden md:inline">FUNDING <span className="text-lm-text">+0.012%</span></span>
-                  <span className="hidden md:inline">OI <span className="text-lm-text">+2.4%</span></span>
-                  <span className="hidden lg:inline">PRESSURE <span className="text-emerald-400">→ LONG</span></span>
+                  <span>READ <span className={clsx("font-semibold", inst.biasClass)}>{inst.bias}</span></span>
+                  <span>SCORE <span className="text-lm-text">{inst.score}/100</span></span>
+                  <span>CONF <span className="text-lm-text">{inst.conf}</span></span>
+                  <span>RISK <span className={inst.riskClass}>{inst.risk}</span></span>
+                  <span className="hidden md:inline">FUNDING <span className="text-lm-text">{inst.funding}</span></span>
+                  <span className="hidden md:inline">OI <span className="text-lm-text">{inst.oi}</span></span>
+                  <span className="hidden lg:inline">PRESSURE <span className={inst.pressureClass}>{inst.pressure}</span></span>
                 </div>
                 <span className="num whitespace-nowrap text-[9px] text-lm-muted">LAST EVENT 6s AGO</span>
               </div>
