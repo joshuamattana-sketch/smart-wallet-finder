@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Activity, AlertTriangle, ArrowLeft } from "lucide-react";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { LumoraMark } from "@/components/brand/LumoraMark";
 import { SiteFooter } from "@/components/ui/SiteFooter";
 import { LEGAL_DETAILS_FILLED, LEGAL_LAST_UPDATED } from "@/lib/site";
 
@@ -18,9 +19,7 @@ export function LegalShell({ title, subtitle, children }: Props) {
       <header className="border-b border-lm-border">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md border border-violet-400/30 bg-gradient-to-br from-violet-500/[0.22] to-cyan-400/[0.08]">
-              <Activity className="h-3.5 w-3.5 text-violet-200" strokeWidth={2.5} />
-            </span>
+            <LumoraMark size={24} />
             <span className="lm-brand text-[15px] text-lm-text">Lumora</span>
           </Link>
           <Link

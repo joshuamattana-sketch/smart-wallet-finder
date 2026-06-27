@@ -31,7 +31,7 @@ export type WaitlistResult = { ok: true } | { ok: false; error: string };
 export async function joinWaitlist(formData: FormData): Promise<WaitlistResult> {
   const ip = (headers().get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
   if (rateLimited(ip)) {
-    return { ok: false, error: "Too many attempts — please try again later." };
+    return { ok: false, error: "Too many attempts. Please try again later." };
   }
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
@@ -54,7 +54,7 @@ export async function joinWaitlist(formData: FormData): Promise<WaitlistResult> 
   if (error) {
     // 23505 = unique violation → already signed up; treat as success.
     if (error.code === "23505") return { ok: true };
-    return { ok: false, error: "Something went wrong — please try again." };
+    return { ok: false, error: "Something went wrong. Please try again." };
   }
 
   return { ok: true };

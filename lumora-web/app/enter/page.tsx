@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Activity, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
+import { LumoraMark } from "@/components/brand/LumoraMark";
 
 // LM76A — invite-code gate. Redeems a code via /api/beta-unlock; on success the
 // server sets the access cookie and we continue to the requested route.
@@ -49,9 +50,7 @@ export default function EnterPage() {
       />
       <div className="relative w-full max-w-sm">
         <div className="mb-6 flex items-center justify-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-violet-400/30 bg-gradient-to-br from-violet-500/25 to-cyan-400/10">
-            <Activity className="h-4 w-4 text-violet-200" strokeWidth={2.5} />
-          </span>
+          <LumoraMark size={26} />
           <span className="lm-brand text-lg text-lm-text">Lumora</span>
         </div>
 

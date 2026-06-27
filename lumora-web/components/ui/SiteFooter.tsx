@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Activity, MessageCircle } from "lucide-react";
+import { MessageCircle } from "lucide-react";
+import { LumoraMark } from "@/components/brand/LumoraMark";
 import { DISCORD_URL, LEGAL_LINKS } from "@/lib/site";
 
 // LM77A — one footer for every surface. `full` is the marketing footer on the
@@ -45,7 +46,7 @@ export function SiteFooter({ variant = "full" }: Props) {
       <div className="mx-auto flex max-w-6xl flex-col gap-5">
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-lm-purple" />
+            <LumoraMark size={18} />
             <span className="lm-brand text-sm text-lm-text">Lumora</span>
             <span className="ml-2 text-[13px] text-lm-muted">Liquidity intelligence terminal</span>
           </div>

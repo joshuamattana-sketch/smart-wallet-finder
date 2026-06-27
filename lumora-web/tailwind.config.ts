@@ -41,6 +41,25 @@ const config: Config = {
           bid: "#22c55e",
           ask: "#ef4444",
         },
+        // Isolated "clean fintech" brand for the Gold Bot signal product. Light,
+        // serious, Stripe-like — deliberately NOT Lumora's gold/violet. Used ONLY
+        // by components under app/bot + components/fintech. Never mix with lm-*.
+        fintech: {
+          bg: "#FFFFFF",
+          ink: "#0F172A",
+          "ink-soft": "#475569",
+          muted: "#64748B",
+          faint: "#94A3B8",
+          mist: "#F1F5F9",
+          line: "#E2E8F0",
+          "line-soft": "#E6E8EE",
+          indigo: "#4F46E5",
+          "indigo-ink": "#3730A3",
+          "indigo-soft": "#EEF0FE",
+          "indigo-line": "#DDE0FB",
+          pos: "#16A34A",
+          neg: "#DC2626",
+        },
       },
       backgroundImage: {
         "lumora-gradient": "linear-gradient(135deg, #0a0812 0%, #110d1f 50%, #0d0a1a 100%)",

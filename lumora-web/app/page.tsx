@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Activity, ArrowRight, MessageCircle } from "lucide-react";
+import { ArrowRight, MessageCircle } from "lucide-react";
+import { LumoraMark } from "@/components/brand/LumoraMark";
 import { Panel } from "@/components/ui/Panel";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { LumoraFieldHero } from "@/components/landing/LumoraFieldHero";
@@ -10,6 +11,7 @@ import { TerminalPreview } from "@/components/landing/TerminalPreview";
 import { FaqSection } from "@/components/landing/FaqSection";
 import { Reveal } from "@/components/landing/Reveal";
 import { WaitlistForm } from "@/components/landing/WaitlistForm";
+import { ProductSwitch } from "@/components/fintech/ProductSwitch";
 import { SiteFooter } from "@/components/ui/SiteFooter";
 import { DISCORD_URL } from "@/lib/site";
 import { clsx } from "clsx";
@@ -140,6 +142,7 @@ export default function LandingPage({
   const introGate = searchParams?.intro !== "off";
   return (
     <div className="relative min-h-screen overflow-x-clip bg-lm-bg">
+      <div className="lm-veil" aria-hidden />
       {/* Intro: galaxy gate, then the hero boots up the moment you Enter.
           Pass ?intro=off to skip the gate and boot the hero up on load. */}
       {introGate && <SpiralIntro />}
@@ -169,12 +172,16 @@ export default function LandingPage({
 
       {/* Nav */}
       <nav className="lm-topnav sticky top-0 z-50">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-[24px] w-[24px] items-center justify-center rounded-md border border-violet-400/30 bg-gradient-to-br from-violet-500/[0.22] to-cyan-400/[0.08] shadow-[0_0_12px_-4px_rgba(139,92,246,0.6)]">
-              <Activity className="h-3.5 w-3.5 text-violet-200" strokeWidth={2.5} />
-            </span>
+            <LumoraMark size={26} />
             <span className="lm-brand text-[15px] text-lm-text">Lumora</span>
+          </div>
+          {/* Centered, position-stable across both brands */}
+          <div className="pointer-events-none absolute inset-0 hidden items-center justify-center sm:flex">
+            <div className="pointer-events-auto">
+              <ProductSwitch active="terminal" variant="dark" />
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <StatusBadge variant="neutral" size="sm" className="hidden sm:inline-flex">

@@ -16,7 +16,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
-import { Activity, LayoutDashboard, Monitor, Layers, Bell, BookOpen, Bot } from "lucide-react";
+import { LayoutDashboard, Monitor, Layers, Bell, BookOpen, Bot } from "lucide-react";
+import { LumoraMark } from "@/components/brand/LumoraMark";
 
 // `gold: true` marks the private Gold Bot tab — its icon carries an amber
 // accent instead of the violet selection tone, so the tab reads as a
@@ -74,7 +75,7 @@ export function TopNav() {
           >
             {/* Mark tile — violet glass with animated outer glow on hover */}
             <span className="relative flex h-[28px] w-[28px] items-center justify-center rounded-[7px] border border-violet-400/35 bg-gradient-to-br from-violet-500/[0.28] via-violet-600/[0.14] to-cyan-400/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_0_18px_-5px_rgba(139,92,246,0.7)] transition-all duration-200 group-hover:border-violet-300/55 group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_0_24px_-4px_rgba(139,92,246,0.85),0_0_8px_-2px_rgba(139,92,246,0.4)]">
-              <Activity className="h-3.5 w-3.5 text-violet-200 drop-shadow-[0_0_4px_rgba(196,181,253,0.7)]" strokeWidth={2.5} />
+              <LumoraMark size={17} />
             </span>
             <span className="flex items-baseline gap-1.5">
               <span className="lm-brand text-[13.5px] tracking-[0.07em] text-white/90 drop-shadow-[0_0_10px_rgba(139,92,246,0.35)] transition-all duration-150 group-hover:text-white group-hover:drop-shadow-[0_0_14px_rgba(139,92,246,0.55)]">
