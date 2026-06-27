@@ -259,9 +259,67 @@ def _first_touch(future: list[HistoricalBar], entry: float, direction: str,
     return None
 
 
+def _first_touch_partial(
+    future: list[HistoricalBar], entry: float, direction: str,
+    sl_points: int | None, tp1_points: int, tp2_points: int,
+    point: float, partial_ratio: float = 0.5,
+) -> tuple[str, float | None]:
+    """Score a two-TP partial-close exit (50% at TP1, 50% at TP2).
+
+    Returns (detail_outcome, realized_gross_points):
+      "sl"          -> SL hit before TP1 (full loss)
+      "tp2"         -> both TPs hit (full partial win)
+      "tp1_then_sl" -> TP1 hit then SL hit (mixed; may still be net-positive)
+      "tp1_open"    -> TP1 hit, horizon ended before TP2/SL
+      "neutral"     -> nothing hit, horizon ended
+    """
+    if sl_points is None:
+        return "neutral", None
+    if direction == "LONG":
+        tp1 = entry + tp1_points * point
+        tp2 = entry + tp2_points * point
+        sl = entry - sl_points * point
+    else:
+        tp1 = entry - tp1_points * point
+        tp2 = entry - tp2_points * point
+        sl = entry + sl_points * point
+
+    tp1_hit = False
+    for f in future:
+        if direction == "LONG":
+            hits_tp1, hits_tp2, hits_sl = f.high >= tp1, f.high >= tp2, f.low <= sl
+        else:
+            hits_tp1, hits_tp2, hits_sl = f.low <= tp1, f.low <= tp2, f.high >= sl
+        if not tp1_hit:
+            if hits_sl and hits_tp1:  # conservative: adverse fills first
+                return "sl", -float(sl_points)
+            if hits_sl:
+                return "sl", -float(sl_points)
+            if hits_tp1 and hits_tp2:  # wide bar clears both TPs
+                realized = partial_ratio * tp1_points + (1.0 - partial_ratio) * tp2_points
+                return "tp2", realized
+            if hits_tp1:
+                tp1_hit = True
+        else:
+            if hits_tp2:
+                realized = partial_ratio * tp1_points + (1.0 - partial_ratio) * tp2_points
+                return "tp2", realized
+            if hits_sl:
+                realized = partial_ratio * tp1_points - (1.0 - partial_ratio) * float(sl_points)
+                return "tp1_then_sl", realized
+
+    if not future:
+        return "neutral", None
+    last_close = future[-1].close
+    dir_ret = (last_close - entry) / point if direction == "LONG" else (entry - last_close) / point
+    if tp1_hit:
+        return "tp1_open", partial_ratio * tp1_points + (1.0 - partial_ratio) * dir_ret
+    return "neutral", dir_ret
+
+
 def score_horizon(bars: list[HistoricalBar], index: int, *, decision: str, horizon: int,
                   sl_points: int | None, tp_points: int | None, point: float = POINT,
-                  cost_points: float = 0.0) -> dict:
+                  cost_points: float = 0.0, tp1_points: int | None = None) -> dict:
     """
     Score one horizon using ONLY bars after ``index``. Pure forward-looking.
     ``cost_points`` is the round-trip trading cost (spread + commission) in points,
@@ -308,20 +366,33 @@ def score_horizon(bars: list[HistoricalBar], index: int, *, decision: str, horiz
     })
 
     if decision in ("LONG", "SHORT"):
-        ft = _first_touch(future, entry, decision, sl_points, tp_points, point)
-        out["tp_hit"] = ft == "tp"
-        out["sl_hit"] = ft == "sl"
-        out["tp_sl_first"] = ft
-        out["outcome"] = "win" if ft == "tp" else "loss" if ft == "sl" else "neutral"
-        # Realized exit P&L (net): TP hit -> +tp, SL hit -> -sl, else exit at the
-        # horizon close. This models the ACTUAL exit, so SL/TP settings can be tuned.
-        if ft == "tp" and tp_points is not None:
-            realized_gross = float(tp_points)
-        elif ft == "sl" and sl_points is not None:
-            realized_gross = -float(sl_points)
+        if tp1_points is not None and tp_points is not None:
+            detail, partial_gross = _first_touch_partial(
+                future, entry, decision, sl_points, tp1_points, tp_points, point)
+            out.update({
+                "tp1_hit": detail in ("tp2", "tp1_then_sl", "tp1_open"),
+                "tp2_hit": detail == "tp2",
+                "tp_hit": detail == "tp2",
+                "sl_hit": detail == "sl",
+                "tp_sl_first": detail,
+                "partial_close": True,
+                "outcome": "win" if detail == "tp2" else "loss" if detail == "sl" else "neutral",
+            })
+            gross = partial_gross if partial_gross is not None else dir_ret
+            out["realized_return_points"] = round(gross - cost_points, 1)
         else:
-            realized_gross = dir_ret
-        out["realized_return_points"] = round(realized_gross - cost_points, 1)
+            ft = _first_touch(future, entry, decision, sl_points, tp_points, point)
+            out["tp_hit"] = ft == "tp"
+            out["sl_hit"] = ft == "sl"
+            out["tp_sl_first"] = ft
+            out["outcome"] = "win" if ft == "tp" else "loss" if ft == "sl" else "neutral"
+            if ft == "tp" and tp_points is not None:
+                realized_gross = float(tp_points)
+            elif ft == "sl" and sl_points is not None:
+                realized_gross = -float(sl_points)
+            else:
+                realized_gross = dir_ret
+            out["realized_return_points"] = round(realized_gross - cost_points, 1)
     else:
         out["outcome"] = "no_trade"
         out["realized_return_points"] = None
@@ -329,10 +400,10 @@ def score_horizon(bars: list[HistoricalBar], index: int, *, decision: str, horiz
 
 
 def score_forward(bars, index, *, decision, sl_points, tp_points, horizons, point=POINT,
-                  cost_points=0.0) -> dict:
+                  cost_points=0.0, tp1_points=None) -> dict:
     return {str(h): score_horizon(bars, index, decision=decision, horizon=h,
                                   sl_points=sl_points, tp_points=tp_points, point=point,
-                                  cost_points=cost_points)
+                                  cost_points=cost_points, tp1_points=tp1_points)
             for h in horizons}
 
 
@@ -356,6 +427,57 @@ def _next_replay_id(out_dir: Path, symbol: str, timeframe: str, now: datetime) -
     return f"{prefix}{len(existing) + 1:03d}"
 
 
+def compute_adx(bars: list[HistoricalBar], period: int = 14) -> float | None:
+    """Wilder's ADX (trend STRENGTH, 0-100) from the latest bars. None if too
+    few bars. Uses a trailing window so it is cheap to call per step; ADX
+    stabilises within ~2-3x the period so the window is plenty."""
+    n = len(bars)
+    if n < period * 2 + 1:
+        return None
+    window = bars[-(period * 5):] if n > period * 5 else bars
+    highs = [b.high for b in window]
+    lows = [b.low for b in window]
+    closes = [b.close for b in window]
+    m = len(window)
+    trs: list[float] = []
+    plus_dm: list[float] = []
+    minus_dm: list[float] = []
+    for i in range(1, m):
+        up = highs[i] - highs[i - 1]
+        dn = lows[i - 1] - lows[i]
+        plus_dm.append(up if (up > dn and up > 0) else 0.0)
+        minus_dm.append(dn if (dn > up and dn > 0) else 0.0)
+        trs.append(max(highs[i] - lows[i],
+                       abs(highs[i] - closes[i - 1]),
+                       abs(lows[i] - closes[i - 1])))
+    if len(trs) < period * 2:
+        return None
+
+    def _wilder(vals: list[float]) -> list[float]:
+        sm = [sum(vals[:period])]
+        for v in vals[period:]:
+            sm.append(sm[-1] - sm[-1] / period + v)
+        return sm
+
+    str_, sp, sm = _wilder(trs), _wilder(plus_dm), _wilder(minus_dm)
+    dxs: list[float] = []
+    for i in range(len(str_)):
+        tr = str_[i]
+        if tr == 0:
+            dxs.append(0.0)
+            continue
+        pdi = 100.0 * sp[i] / tr
+        mdi = 100.0 * sm[i] / tr
+        denom = pdi + mdi
+        dxs.append(100.0 * abs(pdi - mdi) / denom if denom else 0.0)
+    if len(dxs) < period:
+        return None
+    adx = sum(dxs[:period]) / period
+    for d in dxs[period:]:
+        adx = (adx * (period - 1) + d) / period
+    return adx
+
+
 def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
                history_dir: str | Path = DEFAULT_HISTORY_DIR,
                macro_history_dir: str | Path = DEFAULT_MACRO_HISTORY_DIR,
@@ -367,7 +489,10 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
                cost_points: float = 0.0, spread_cost: bool = False,
                max_spread_points: float | None = None,
                sl_points_override: int | None = None, tp_points_override: int | None = None,
+               tp1_points_override: int | None = None,
                use_trend_filter: bool = False, use_mean_reversion: bool = False,
+               trend_regime_only: bool = False,
+               adx_min: float | None = None, adx_period: int = 14,
                now: datetime | None = None) -> ReplayResult:
     """
     Run a no-lookahead replay. Reads local history only - NEVER MT5. dry_run
@@ -419,8 +544,12 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
         "cost_points": round(cost_points, 1),
         "spread_cost": spread_cost,
         "max_spread_points": max_spread_points,
+        "tp1_points_override": tp1_points_override,
         "use_trend_filter": use_trend_filter,
         "use_mean_reversion": use_mean_reversion,
+        "trend_regime_only": trend_regime_only,
+        "adx_min": adx_min,
+        "adx_period": adx_period,
         "expectancy_basis": "net_return_points" if (cost_points or spread_cost) else "gross",
         "generated_at": now.isoformat(),
     }
@@ -451,6 +580,22 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
                     and (step.current_bar.spread or 0.0) > max_spread_points):
                 idea.decision = "NO_TRADE"
                 idea.strategy = "no_trade_spread_filter"
+            # Regime filter: trade only in a "trend" regime, skip range/chop.
+            # Trend-followers bleed via whipsaws in range markets; this tests
+            # whether gating to trend-only cuts those losses (engine already
+            # classifies regime as trend|range).
+            if (trend_regime_only and idea.decision in ("LONG", "SHORT")
+                    and getattr(idea, "regime", "unknown") != "trend"):
+                idea.decision = "NO_TRADE"
+                idea.strategy = "no_trade_range_regime"
+            # ADX trend-strength filter: only trade when a real trend exists.
+            # ADX measures STRENGTH (not direction); low ADX = chop/range where
+            # trend-followers whipsaw. Skip entries below the threshold.
+            if (adx_min is not None and idea.decision in ("LONG", "SHORT")):
+                adx = compute_adx(step.visible_bars, period=adx_period)
+                if adx is None or adx < adx_min:
+                    idea.decision = "NO_TRADE"
+                    idea.strategy = "no_trade_low_adx"
             # ── forward scoring: STRICTLY future bars, AFTER the decision ────
             # Real round-trip cost: the entry bar's actual spread (when spread_cost)
             # plus any flat commission. This is scalp's true killer, measured.
@@ -459,7 +604,8 @@ def run_replay(*, symbol: str = "XAUUSD", timeframe: str = "M1",
             tp_pts = tp_points_override if tp_points_override is not None else idea.tp_points
             scores = score_forward(bars, step.index, decision=idea.decision,
                                    sl_points=sl_pts, tp_points=tp_pts,
-                                   horizons=horizons, cost_points=step_cost)
+                                   horizons=horizons, cost_points=step_cost,
+                                   tp1_points=tp1_points_override)
             row = {
                 "replay_id": replay_id, "step": step.step, "time": step.time.isoformat(),
                 "symbol": symbol, "timeframe": timeframe,

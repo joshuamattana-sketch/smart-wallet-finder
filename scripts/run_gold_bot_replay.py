@@ -75,10 +75,20 @@ def parse_args(argv=None):
                         "downtrend (long-SMA proxy). Aims to cut counter-trend scalps.")
     p.add_argument("--mean-reversion", action="store_true", dest="use_mean_reversion",
                    help="Add the mean-reversion detector (fade over-extended moves back to the mean).")
+    p.add_argument("--trend-regime-only", action="store_true", dest="trend_regime_only",
+                   help="Only trade in a 'trend' regime; skip range/chop bars (cuts whipsaw losses).")
+    p.add_argument("--adx-min", type=float, default=None, dest="adx_min",
+                   help="Only trade when ADX (trend strength) >= this (e.g. 20-25). Skips chop.")
+    p.add_argument("--adx-period", type=int, default=14, dest="adx_period",
+                   help="ADX period (default 14).")
     p.add_argument("--sl-points", type=int, default=None, dest="sl_points_override",
                    help="Override the engine SL distance (points) for scoring — tune exits.")
     p.add_argument("--tp-points", type=int, default=None, dest="tp_points_override",
                    help="Override the engine TP distance (points) for scoring — tune exits.")
+    p.add_argument("--tp1-points", type=int, default=None, dest="tp1_points_override",
+                   help="Partial-close first target (points). Closes 50%% of position at this level, "
+                        "remainder runs to --tp-points. Requires --tp-points. "
+                        "Example: --tp1-points 150 --tp-points 300")
     p.add_argument("--dry-run", action="store_true", dest="dry_run")
     p.add_argument("--json", action="store_true", dest="json_output")
     return p.parse_args(argv)
@@ -89,6 +99,10 @@ def main(argv=None) -> int:
     horizons = tuple(int(h) for h in args.horizons.split(",") if h.strip())
     from_time = _parse_iso(args.from_time) if args.from_time else None
     to_time = _parse_iso(args.to_time) if args.to_time else None
+    if args.tp1_points_override is not None and args.tp_points_override is None:
+        print("ERROR: --tp1-points requires --tp-points (the second target). "
+              "Example: --tp1-points 150 --tp-points 300", file=sys.stderr)
+        return 1
 
     try:
         result = run_replay(
@@ -101,7 +115,10 @@ def main(argv=None) -> int:
             cost_points=args.cost_points, spread_cost=args.spread_cost,
             max_spread_points=args.max_spread_points,
             sl_points_override=args.sl_points_override, tp_points_override=args.tp_points_override,
+            tp1_points_override=args.tp1_points_override,
             use_trend_filter=args.use_trend_filter, use_mean_reversion=args.use_mean_reversion,
+            trend_regime_only=args.trend_regime_only,
+            adx_min=args.adx_min, adx_period=args.adx_period,
         )
     except ReplayError as exc:
         print(f"REPLAY FAILED: {exc}", file=sys.stderr)
