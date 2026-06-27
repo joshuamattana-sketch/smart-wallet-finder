@@ -97,3 +97,7 @@ skills-lock.json
 
 # dukascopy-node download cache
 .dukascopy-cache/
+
+# Local test/run artifacts
+.playwright-mcp/
+push.log

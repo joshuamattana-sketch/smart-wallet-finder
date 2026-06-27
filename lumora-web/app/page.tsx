@@ -188,7 +188,7 @@ export default function LandingPage({
               PRIVATE BETA
             </StatusBadge>
             <Link
-              href="/dashboard"
+              href="/enter"
               className="rounded-md bg-cyan-400 px-3.5 py-1.5 text-[13px] font-semibold text-zinc-950 transition-colors hover:bg-cyan-300"
             >
               Launch terminal
@@ -305,10 +305,6 @@ export default function LandingPage({
                   </Reveal>
                 ))}
               </div>
-              <p className="mt-2.5 px-1 text-[10px] leading-snug text-lm-muted">
-                Illustrative examples, not live signals or trade recommendations. Reads describe
-                market structure. They don&apos;t predict outcomes.
-              </p>
             </div>
           </section>
         </Reveal>

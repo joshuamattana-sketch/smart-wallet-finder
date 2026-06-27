@@ -220,9 +220,6 @@ export function MarketReplayStrip() {
             </div>
           </div>
         </Panel>
-        <p className="mt-2 px-1 text-[10px] leading-snug text-lm-muted">
-          Looping replay of an illustrative staged sequence. Demo data, not live events.
-        </p>
       </div>
     </section>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useScroll, useTransform } from "framer-motion";
+import type { Variants } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DynamicHeadline } from "@/components/landing/DynamicHeadline";
@@ -189,11 +190,11 @@ function FieldLabel({
 // Entrance choreography (Option B) — the copy stack rises in sequence while the
 // instrument fades up and its price line draws itself. Runs once on first paint;
 // skipped entirely under reduced motion.
-const COPY_CONTAINER = {
+const COPY_CONTAINER: Variants = {
   hidden: {},
   show: { transition: { staggerChildren: 0.11, delayChildren: 0.12 } },
 };
-const COPY_ITEM = {
+const COPY_ITEM: Variants = {
   hidden: { opacity: 0, y: 14 },
   show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } },
 };
@@ -519,10 +520,6 @@ export function LumoraFieldHero({ introGate = true }: { introGate?: boolean }) {
                 See how it works
               </Link>
             </motion.div>
-            <motion.p variants={COPY_ITEM} className="mt-5 max-w-md text-[10.5px] leading-relaxed text-lm-muted">
-              Demo data shown for now, with live integrations rolling out during the beta. This is
-              market context for information only: no guaranteed outcomes, and not financial advice.
-            </motion.p>
           </motion.div>
         </motion.div>
 

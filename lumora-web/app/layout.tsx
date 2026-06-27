@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
+import { AnalyticsConsent } from "@/components/analytics/AnalyticsConsent";
 import {
   SITE_URL,
   SITE_NAME,
@@ -118,6 +119,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
         />
         {children}
+        <AnalyticsConsent />
       </body>
     </html>
   );

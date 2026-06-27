@@ -3,7 +3,6 @@ import { BOT_BRAND } from "@/lib/bot-brand";
 import { ProductPreview } from "@/components/fintech/ProductPreview";
 import { AccountProjector } from "@/components/fintech/AccountProjector";
 import { SignalChip } from "@/components/fintech/SignalChip";
-import { FounderNote } from "@/components/fintech/FounderNote";
 import { ComparisonTable } from "@/components/fintech/ComparisonTable";
 import { Roadmap } from "@/components/fintech/Roadmap";
 import { FintechFaq } from "@/components/fintech/FintechFaq";
@@ -154,15 +153,6 @@ export default async function BotLandingPage() {
         </div>
       </section>
 
-      {/* ── Founder note (human) ─────────────────────────────────────────── */}
-      <section className="border-y border-fintech-line-soft bg-fintech-mist">
-        <div className="mx-auto max-w-6xl px-6 py-16">
-          <Reveal>
-            <FounderNote />
-          </Reveal>
-        </div>
-      </section>
-
       {/* ── Comparison ───────────────────────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-6 py-16">
         <Reveal>
@@ -211,9 +201,6 @@ export default async function BotLandingPage() {
         <Reveal>
           <div className="mx-auto max-w-3xl px-6 py-20 text-center">
             <h2 className={`mx-auto max-w-[18ch] ${H2}`}>See the numbers, then make your own call.</h2>
-            <p className="mx-auto mt-4 max-w-[46ch] text-[16px] leading-[1.7] text-fintech-ink-soft">
-              {`+${gNet} pt net per trade on the guarded swing, across ${tradesLabel} scored trades. You place every trade yourself.`}
-            </p>
             <div className="mt-8">
               <EarlyAccessForm />
             </div>

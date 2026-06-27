@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { ACCESS_COOKIE, signAccessToken, cookieMaxAgeSeconds } from "@/lib/access";
+import { isRateLimited, clientIp } from "@/lib/rate-limit";
 
 // LM76A — redeem an invite code and, on success, set the signed access cookie.
 // Validation runs through the SECURITY DEFINER redeem_invite_code() RPC, so the
@@ -9,7 +10,20 @@ import { ACCESS_COOKIE, signAccessToken, cookieMaxAgeSeconds } from "@/lib/acces
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Invite codes are the only thing standing between the public and the app, so
+// the redeem endpoint is the brute-force target. Cap attempts per IP.
+const RL_MAX = 10;
+const RL_WINDOW_MS = 10 * 60 * 1000;
+
 export async function POST(req: Request) {
+  const ip = clientIp(req.headers);
+  if (isRateLimited(`beta-unlock:${ip}`, RL_MAX, RL_WINDOW_MS)) {
+    return NextResponse.json(
+      { ok: false, error: "Too many attempts. Please try again later." },
+      { status: 429 },
+    );
+  }
+
   const body = (await req.json().catch(() => null)) as { code?: unknown } | null;
   const code = String(body?.code ?? "").trim();
   if (!code || code.length > 64) {

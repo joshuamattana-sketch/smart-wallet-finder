@@ -1,13 +1,14 @@
 import { Check, X } from "lucide-react";
 
-// Every row is defensible from the methodology, no invented competitor claims.
+// Plain-language questions a normal person can grasp at a glance. Every row is
+// still defensible from the methodology, no invented competitor claims.
 const ROWS: { label: string; meridian: string; typical: string }[] = [
-  { label: "Sample size", meridian: "17,000+ scored trades", typical: "A few screenshots" },
-  { label: "Trading costs", meridian: "Net of spread", typical: "Gross, or unstated" },
-  { label: "Look-ahead", meridian: "None, graded bar by bar", typical: "Curve-fit in hindsight" },
-  { label: "Win rate", meridian: "Shown openly", typical: "Hidden" },
-  { label: "Your account", meridian: "You place every trade", typical: "Auto-trades your money" },
-  { label: "Losing trades", meridian: "Left in the average", typical: "Cropped out" },
+  { label: "How much is it tested on?", meridian: "17,000+ real trades", typical: "A few screenshots" },
+  { label: "Are trading costs counted?", meridian: "Yes, spread included", typical: "Usually ignored" },
+  { label: "Tested without hindsight?", meridian: "Yes, trade by trade", typical: "Tuned to fit old data" },
+  { label: "Is the win rate shown?", meridian: "Yes, in full", typical: "Hidden or cropped" },
+  { label: "Who places the trades?", meridian: "You do, every time", typical: "The bot, with your money" },
+  { label: "Are losing trades counted?", meridian: "Yes, left in", typical: "Quietly removed" },
 ];
 
 export function ComparisonTable() {

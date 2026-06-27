@@ -197,7 +197,7 @@ export function TerminalPreview() {
                     ))}
                   </div>
                   <Link
-                    href="/dashboard"
+                    href="/enter"
                     className="num mt-3.5 inline-flex items-center gap-1.5 border-t border-white/[0.05] pt-3 text-[9px] uppercase tracking-[0.18em] text-lm-cyan transition-colors hover:text-cyan-200"
                   >
                     Open full terminal <ArrowRight className="h-3 w-3" />
