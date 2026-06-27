@@ -15,6 +15,19 @@ export const dynamic = "force-dynamic";
 const RL_MAX = 10;
 const RL_WINDOW_MS = 10 * 60 * 1000;
 
+// Builds the success response with the signed, httpOnly access cookie.
+async function grantAccess(): Promise<NextResponse> {
+  const res = NextResponse.json({ ok: true });
+  res.cookies.set(ACCESS_COOKIE, await signAccessToken(), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: cookieMaxAgeSeconds(),
+  });
+  return res;
+}
+
 export async function POST(req: Request) {
   const ip = clientIp(req.headers);
   if (isRateLimited(`beta-unlock:${ip}`, RL_MAX, RL_WINDOW_MS)) {
@@ -28,6 +41,14 @@ export async function POST(req: Request) {
   const code = String(body?.code ?? "").trim();
   if (!code || code.length > 64) {
     return NextResponse.json({ ok: false, error: "Enter your invite code." }, { status: 400 });
+  }
+
+  // Owner master code (env-only secret). Checked before the DB so the owner can
+  // always get in — even while the invite DB is unavailable. Must be a strong,
+  // private value; never commit a real one. Disabled unless set to >=12 chars.
+  const ownerCode = process.env.LUMORA_OWNER_CODE;
+  if (ownerCode && ownerCode.length >= 12 && code === ownerCode) {
+    return grantAccess();
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -45,13 +66,5 @@ export async function POST(req: Request) {
     );
   }
 
-  const res = NextResponse.json({ ok: true });
-  res.cookies.set(ACCESS_COOKIE, await signAccessToken(), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: cookieMaxAgeSeconds(),
-  });
-  return res;
+  return grantAccess();
 }
