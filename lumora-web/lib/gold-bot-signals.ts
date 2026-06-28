@@ -16,10 +16,20 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-// Candidate roots for the track-record data, tried in order:
-//   1. App-local snapshot committed inside lumora-web — the only copy that ships
-//      with the deployed build (the repo-root data/ is gitignored and lives
-//      outside the app bundle, so it is absent in production).
+// Build-time bundled snapshots, keyed by `${SYMBOL}_${TF}`. These are the
+// reliable source in production: on Vercel a committed-but-untraced data file
+// is NOT guaranteed to ship in the serverless function bundle, but a static
+// JSON import is webpack-bundled into the function, so it always ships.
+// The fs read below still runs first so local dev / a VPS with the live logger
+// picks up fresher data when present.
+import bundledXauusdM15 from "../data/gold_bot/signals/signals_XAUUSD_M15.summary.json";
+
+const BUNDLED_SNAPSHOTS: Record<string, unknown> = {
+  XAUUSD_M15: bundledXauusdM15,
+};
+
+// Candidate roots for an on-disk track-record file, tried in order:
+//   1. App-local snapshot committed inside lumora-web.
 //   2. Repo-root data/ — present in local dev where the Python logger writes.
 const DATA_ROOTS = [
   path.resolve(process.cwd(), "data", "gold_bot"),
@@ -116,7 +126,15 @@ export async function loadGoldBotTrackRecord(
 ): Promise<GoldBotTrackRecord> {
   const warnings: string[] = [];
   const rel = `signals/signals_${symbol}_${timeframe}.summary.json`;
-  const doc = await readJsonFile(rel);
+  // Prefer a fresh on-disk file (dev / VPS); fall back to the build-time
+  // bundled snapshot so production always has the track record.
+  const fromDisk = await readJsonFile(rel);
+  const bundled = BUNDLED_SNAPSHOTS[`${symbol}_${timeframe}`];
+  const doc: Dict | null =
+    fromDisk ??
+    (bundled && typeof bundled === "object" && !Array.isArray(bundled)
+      ? (bundled as Dict)
+      : null);
 
   if (!doc) {
     warnings.push("no track record yet — run scripts/run_gold_bot_signal_logger.py");
