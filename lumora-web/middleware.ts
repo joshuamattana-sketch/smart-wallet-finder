@@ -42,5 +42,7 @@ export const config = {
     "/api/heatmap/:path*",
     "/api/whale-alerts",
     "/api/whale-alerts/:path*",
+    "/api/live-book",
+    "/api/live-whales",
   ],
 };

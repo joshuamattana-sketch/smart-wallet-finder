@@ -23,14 +23,21 @@ import { SetupCard } from "@/components/dashboard/SetupCard";
 import { fmtUsd } from "@/lib/format";
 import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
-import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
+import { mockWhaleAlerts } from "@/lib/mock-data";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
+import type { Setup } from "@/components/dashboard/SetupCard";
+import type { WhaleAlertView } from "@/lib/whale-alerts-loader";
 import {
   heatmapCurrentPrice,
   heatmapStrongestWall,
   heatmapResolvedStatus,
   heatmapIntensitySummary,
 } from "@/lib/heatmap-types";
+
+// Mock whale alerts conform to the WhaleAlertView shape — used as the instant
+// fallback before the live /api/whale-alerts fetch resolves, and whenever the
+// route reports it is serving demo data.
+const MOCK_WHALES = mockWhaleAlerts as unknown as WhaleAlertView[];
 
 // ── Dashboard-local visual layer (LM70C) ─────────────────────────────────────
 // Command-center accents: a breathing live ring on the read strip, glow-tipped
@@ -76,6 +83,29 @@ function ModuleHeader({
         aria-hidden
         className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-violet-500/25 via-white/[0.05] to-transparent"
       />
+    </div>
+  );
+}
+
+// Setup card placeholder — holds the grid cell while the symbol's first
+// heatmap payload is still in flight, so cards don't pop the layout.
+function SetupCardSkeleton({ sym }: { sym: string }) {
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-white/[0.06] bg-lm-surface/40 p-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1.5">
+          <span className="num text-[16px] font-semibold tracking-wide text-lm-text">{sym}</span>
+          <Skeleton variant="line" width="w-12" height="h-3" />
+        </div>
+        <Skeleton variant="line" width="w-12" height="h-12" className="rounded-full" />
+      </div>
+      <div className="mt-2.5 space-y-1.5">
+        <Skeleton variant="line" width="w-2/3" />
+        <Skeleton variant="line" width="w-full" />
+      </div>
+      <div className="mt-3 border-t border-lm-border/40 pt-3">
+        <Skeleton variant="line" width="w-1/2" height="h-3" />
+      </div>
     </div>
   );
 }
@@ -161,9 +191,104 @@ function riskVariant(r: TraderSignal["risk"]): "live" | "warning" | "error" {
   return r === "LOW" ? "live" : r === "MEDIUM" ? "warning" : "error";
 }
 
+// ── Setup derivation ─────────────────────────────────────────────────────────
+// Turns the live heatmap payload into the SetupCard shape: bias/score from the
+// same book-derived signal that drives the read strip, plus entry/target/stop
+// levels anchored to the real strongest walls. Levels are only emitted for an
+// actionable (non-weak, directional) read — a weak/neutral book renders as a
+// "monitor" card with no fabricated levels.
+const LEVEL_FMT = {
+  big: new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }),
+  mid: new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  small: new Intl.NumberFormat("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 }),
+};
+function fmtLevel(n: number): string {
+  const a = Math.abs(n);
+  if (a >= 1000) return LEVEL_FMT.big.format(n);
+  if (a >= 1) return LEVEL_FMT.mid.format(n);
+  return LEVEL_FMT.small.format(n);
+}
+
+// Level-derivation guards. A wall only anchors the stop when it sits close
+// enough to act as a real invalidation; a far wall (common in a stale book)
+// would blow out risk/reward, so we fall back to a default buffer + clean 1:2.
+const MAX_STOP_PCT = 0.015;     // wall must be within 1.5% of price to be the stop
+const DEFAULT_STOP_PCT = 0.008; // else stop a default 0.8% beyond entry
+const MAX_TARGET_PCT = 0.05;    // opposing wall only targets within 5%
+const MIN_TARGET_RR = 1.2;      // …and only if it clears this reward multiple
+const DEFAULT_RR = 2;           // otherwise project a clean 1:2
+
+// Returns {entry, target, stop} as display strings for an actionable read, or
+// dashes when the book is too weak/neutral to place honest levels.
+function deriveLevels(
+  bias: Bias,
+  price: number,
+  bidWall: { price_bucket: number } | null,
+  askWall: { price_bucket: number } | null,
+): { entry: string; target: string; stop: string } {
+  if (bias === "LONG") {
+    const stop = bidWall && bidWall.price_bucket < price && (price - bidWall.price_bucket) / price <= MAX_STOP_PCT
+      ? bidWall.price_bucket : price * (1 - DEFAULT_STOP_PCT);
+    const risk = price - stop;
+    const target = askWall && askWall.price_bucket > price
+      && (askWall.price_bucket - price) / price <= MAX_TARGET_PCT
+      && askWall.price_bucket - price >= risk * MIN_TARGET_RR
+      ? askWall.price_bucket : price + DEFAULT_RR * risk;
+    return { entry: fmtLevel(price), stop: fmtLevel(stop), target: fmtLevel(target) };
+  }
+  // SHORT
+  const stop = askWall && askWall.price_bucket > price && (askWall.price_bucket - price) / price <= MAX_STOP_PCT
+    ? askWall.price_bucket : price * (1 + DEFAULT_STOP_PCT);
+  const risk = stop - price;
+  const target = bidWall && bidWall.price_bucket < price
+    && (price - bidWall.price_bucket) / price <= MAX_TARGET_PCT
+    && price - bidWall.price_bucket >= risk * MIN_TARGET_RR
+    ? bidWall.price_bucket : price - DEFAULT_RR * risk;
+  return { entry: fmtLevel(price), stop: fmtLevel(stop), target: fmtLevel(target) };
+}
+
+function deriveSetup(sym: string, payload: HeatmapApiPayload | null): Setup | null {
+  const signal = deriveSignal(sym, payload);
+  if (!signal || !payload) return null;
+
+  const price = heatmapCurrentPrice(payload);
+  const bidWall = heatmapStrongestWall(payload, "bid");
+  const askWall = heatmapStrongestWall(payload, "ask");
+
+  // Thesis tags — at most three, all read off the live book.
+  const tags: string[] = [
+    signal.bias === "LONG" ? "Bid Pressure" : signal.bias === "SHORT" ? "Ask Pressure" : "Balanced Book",
+  ];
+  const dominantWall = signal.bias === "SHORT" ? askWall : bidWall;
+  if (dominantWall && dominantWall.intensity >= 55) {
+    tags.push(signal.bias === "SHORT" ? "Ask Wall" : "Bid Wall");
+  }
+  if (signal.quality === "Weak") tags.push("Monitor");
+  else if (signal.risk !== "LOW") tags.push(`${signal.risk} Risk`);
+
+  // Levels — only for an actionable directional read with a known price.
+  let entry = "—", target = "—", stop = "—";
+  const actionable = price !== null && signal.quality !== "Weak" && signal.bias !== "NEUTRAL";
+  if (actionable && price !== null) {
+    ({ entry, target, stop } = deriveLevels(signal.bias, price, bidWall, askWall));
+  }
+
+  return {
+    symbol: sym,
+    bias: signal.bias,
+    confidence: signal.score,
+    entry,
+    target,
+    stop,
+    reason: signal.reason,
+    tags,
+  };
+}
+
 // Active/primary market refreshes fast; the rest poll slowly in the background.
 const ACTIVE_REFRESH_MS = 2000;
 const BACKGROUND_REFRESH_MS = 9000;
+const WHALE_REFRESH_MS = 12000;
 /** Max number of watchlist rail rows shown next to the command surface. */
 const MAX_SECONDARY = 4;
 
@@ -213,13 +338,42 @@ export default function DashboardPage() {
   const [markets, setMarkets] = useState<Record<string, MarketState>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
-  // Fetch one market from the shared /api/heatmap live source. The route falls
-  // back live → fixture → mock server-side and reports what it served via
-  // meta.resolvedSource. On error the last good payload is kept.
+  // Whale tape — live large prints via /api/live-whales (Binance aggTrades, no
+  // Supabase). Seeded with mock so the tape is never empty, then replaced once
+  // the route answers. Source drives the honest badge: live or demo.
+  const [whaleAlerts, setWhaleAlerts] = useState<WhaleAlertView[]>(MOCK_WHALES);
+  const [whaleSource, setWhaleSource] = useState<"live" | "mock">("mock");
+
+  const loadWhales = useCallback(async () => {
+    try {
+      const res = await fetch("/api/live-whales?limit=12", { cache: "no-store" });
+      if (!res.ok) {
+        setWhaleSource("mock");
+        setWhaleAlerts(MOCK_WHALES);
+        return;
+      }
+      const data = await res.json();
+      const incoming: WhaleAlertView[] = Array.isArray(data.alerts) ? data.alerts : [];
+      if (incoming.length === 0) {
+        setWhaleSource("mock");
+        setWhaleAlerts(MOCK_WHALES);
+        return;
+      }
+      setWhaleSource(data.data_source === "binance" ? "live" : "mock");
+      setWhaleAlerts(incoming);
+    } catch {
+      // Network/JSON error → keep the seeded demo tape. Never breaks the page.
+      setWhaleSource("mock");
+    }
+  }, []);
+
+  // Fetch one market from /api/live-book — a live Binance order-book snapshot
+  // (no Supabase, no DB load) shaped as a HeatmapApiPayload tagged
+  // resolvedSource:"live". On error the last good payload is kept.
   const fetchSymbol = useCallback(async (sym: string) => {
     try {
       const res = await fetch(
-        `/api/heatmap?source=live&symbol=${sym}&exchange=binance_spot&timeframe=5m&_ts=${Date.now()}`,
+        `/api/live-book?symbol=${sym}&_ts=${Date.now()}`,
         { cache: "no-store" },
       );
       if (!res.ok) {
@@ -275,6 +429,16 @@ export default function DashboardPage() {
     // is derived from activeSymbol + backgroundSymbols and tracked by both.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchSymbol, activeSymbol, backgroundKey]);
+
+  // Whale tape: initial load, then a realtime refetch on each new whale_events
+  // INSERT. Events are sparse, so a push-triggered refetch beats polling.
+  // Whale tape polls /api/live-whales (Binance aggTrades update continuously).
+  // No Supabase realtime — the live source is the poll itself.
+  useEffect(() => {
+    void loadWhales();
+    const id = setInterval(() => void loadWhales(), WHALE_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [loadWhales]);
 
   // Overall header status derived from the active (primary) market.
   const headerStatus = heatmapResolvedStatus(markets[activeSymbol]?.payload ?? null);
@@ -496,10 +660,18 @@ export default function DashboardPage() {
             <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.05] shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)]">
               <ModuleHeader
                 title="Whale Tape · What Changed"
-                right={<StatusBadge variant="demo" size="sm">Demo</StatusBadge>}
+                right={
+                  whaleSource === "live" ? (
+                    <StatusBadge variant="live" size="sm" dot>
+                      Live
+                    </StatusBadge>
+                  ) : (
+                    <StatusBadge variant="demo" size="sm">Demo</StatusBadge>
+                  )
+                }
               />
               <div className="overflow-y-auto max-h-[360px] divide-y divide-lm-border/40">
-                {mockWhaleAlerts.map((a) => (
+                {whaleAlerts.map((a) => (
                   <div
                     key={a.id}
                     className={clsx(
@@ -517,7 +689,7 @@ export default function DashboardPage() {
                       >
                         {a.side}
                       </span>
-                      <span className="num text-[12px] font-semibold text-lm-text">{a.symbol}</span>
+                      <span className="num text-[12px] font-semibold text-lm-text">{a.symbol.replace(/USDT$/, "")}</span>
                       <span className="text-[10px] text-lm-muted uppercase tracking-wide truncate">{a.type}</span>
                       <span className="ml-auto lm-price text-[13px] text-lm-text">{a.size}</span>
                     </div>
@@ -545,12 +717,25 @@ export default function DashboardPage() {
           <Panel level="subtle" flush className="overflow-hidden ring-1 ring-white/[0.05] shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)]">
             <ModuleHeader
               title="Setups · What to Watch"
-              right={<StatusBadge variant="demo" size="sm">Demo</StatusBadge>}
+              right={
+                headerStatus.resolved === "live" ? (
+                  <StatusBadge variant="live" size="sm" dot>Live</StatusBadge>
+                ) : (
+                  <StatusBadge variant="demo" size="sm">
+                    {headerStatus.resolved ? headerStatus.label : "Loading"}
+                  </StatusBadge>
+                )
+              }
             />
             <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2">
-              {mockSetups.map((s) => (
-                <SetupCard key={s.symbol} setup={s} />
-              ))}
+              {dashSymbols.map((sym) => {
+                const setup = deriveSetup(sym, markets[sym]?.payload ?? null);
+                return setup ? (
+                  <SetupCard key={sym} setup={setup} />
+                ) : (
+                  <SetupCardSkeleton key={sym} sym={sym} />
+                );
+              })}
             </div>
           </Panel>
         </section>
