@@ -1,0 +1,111 @@
+{
+  "symbol": "XAUUSD",
+  "timeframe": "M15",
+  "risk_mode": "balanced",
+  "warmup_bars": 120,
+  "skip_forming_bar": true,
+  "use_trend_filter": true,
+  "use_mean_reversion": false,
+  "max_forward_bars": 192,
+  "cost_points": 0.0,
+  "spread_cost": true,
+  "expectancy_basis": "net_of_cost",
+  "new_signals_this_run": 33107,
+  "closed_this_run": 17230,
+  "no_lookahead": true,
+  "calls_mt5": false,
+  "generated_at": "2026-06-27T12:24:31.593640+00:00",
+  "warnings": [],
+  "total_signals": 33107,
+  "by_status": {
+    "no_trade": 15870,
+    "closed": 17230,
+    "open": 7
+  },
+  "closed_trades": 17230,
+  "per_preset": {
+    "conservative": {
+      "trades": 17230,
+      "wins": 5544,
+      "losses": 11686,
+      "neutral": 0,
+      "win_rate_pct": 32.2,
+      "total_realized_points": -526420.0,
+      "expectancy_points": -30.6
+    },
+    "balanced": {
+      "trades": 17230,
+      "wins": 5454,
+      "losses": 11776,
+      "neutral": 0,
+      "win_rate_pct": 31.7,
+      "total_realized_points": -329320.0,
+      "expectancy_points": -19.1
+    },
+    "runner": {
+      "trades": 17230,
+      "wins": 4288,
+      "losses": 12942,
+      "neutral": 0,
+      "win_rate_pct": 24.9,
+      "total_realized_points": -92320.0,
+      "expectancy_points": -5.4
+    },
+    "swing": {
+      "trades": 17230,
+      "wins": 8598,
+      "losses": 8632,
+      "neutral": 0,
+      "win_rate_pct": 49.9,
+      "total_realized_points": 2582235.6,
+      "expectancy_points": 149.9
+    },
+    "swing_guarded": {
+      "trades": 17230,
+      "wins": 5213,
+      "losses": 12017,
+      "neutral": 0,
+      "win_rate_pct": 30.3,
+      "total_realized_points": 1455512.0,
+      "expectancy_points": 84.5
+    }
+  },
+  "presets": {
+    "conservative": {
+      "label": "Conservative",
+      "description": "Bank 50% at 1R, let the rest run to 2R. Smoothest equity, lowest give-back; caps the upside.",
+      "tp_r": 2.0,
+      "tp1_r": 1.0,
+      "partial_ratio": 0.5
+    },
+    "balanced": {
+      "label": "Balanced",
+      "description": "Single fixed target at 2R. The bot's default reward:risk.",
+      "tp_r": 2.0,
+      "tp1_r": null,
+      "partial_ratio": 0.5
+    },
+    "runner": {
+      "label": "Runner",
+      "description": "Single fixed target at 3R. Fewer wins, bigger winners; more give-back when price reverses before 3R.",
+      "tp_r": 3.0,
+      "tp1_r": null,
+      "partial_ratio": 0.5
+    },
+    "swing": {
+      "label": "Swing (time exit)",
+      "description": "Hold ~30 bars then exit at market, no fixed target. The validated M15-swing edge: the move needs room, a tight bracket gets shaken out. No protective stop (pure hold).",
+      "tp_r": 0.0,
+      "tp1_r": null,
+      "partial_ratio": 0.5
+    },
+    "swing_guarded": {
+      "label": "Swing (guarded)",
+      "description": "Same time exit, but with a WIDE 3R safety stop to cap the tail risk of an unguarded hold. Trades a little edge for bounded downside \u2014 the retail-safe swing.",
+      "tp_r": 0.0,
+      "tp1_r": null,
+      "partial_ratio": 0.5
+    }
+  },
+  "default_preset": "swing"
+}
