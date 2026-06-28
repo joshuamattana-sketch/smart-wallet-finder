@@ -19,6 +19,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageShell } from "@/components/ui/PageShell";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker";
+import { SetupCard } from "@/components/dashboard/SetupCard";
 import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
@@ -549,63 +550,10 @@ export default function DashboardPage() {
               title="Setups · What to Watch"
               right={<StatusBadge variant="demo" size="sm">Demo</StatusBadge>}
             />
-            <div className="divide-y divide-lm-border/40">
-            {mockSetups.map((s) => (
-              <div
-                key={s.symbol}
-                className={clsx(
-                  "lmdc-module-row relative px-3 py-2.5 flex flex-col gap-2 sm:grid sm:grid-cols-[92px_1fr_150px_52px] sm:gap-3 sm:items-center",
-                  s.bias === "LONG" ? "lm-rail-bid pl-4" : s.bias === "SHORT" ? "lm-rail-ask pl-4" : "",
-                )}
-              >
-                {/* Symbol + bias (colored text, no chip) */}
-                <div className="min-w-0">
-                  <p className="num text-[13px] font-semibold text-lm-text leading-tight">{s.symbol}</p>
-                  <p className={clsx("num text-[10px] font-semibold uppercase mt-0.5", biasTone(s.bias as Bias))}>
-                    {s.bias}
-                  </p>
-                </div>
-
-                {/* Reason — one line; full text on hover */}
-                <p
-                  className="text-[11.5px] text-lm-text-dim leading-snug line-clamp-1 min-w-0"
-                  title={s.reason}
-                >
-                  {s.reason}
-                </p>
-
-                {/* Levels — Entry / Target / Invalidation */}
-                <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] num">
-                  <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Entry</span>
-                  <span className="text-right text-lm-text">{s.entry}</span>
-                  <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Target</span>
-                  <span className="text-right text-emerald-400">{s.target}</span>
-                  <span className="text-[9px] uppercase tracking-wide text-lm-muted self-center">Invalid</span>
-                  <span className="text-right text-red-400">{s.stop}</span>
-                </div>
-
-                {/* Score */}
-                <div className="text-right">
-                  <p className="num text-[14px] font-semibold text-lm-text leading-none">
-                    {s.confidence}
-                    <span className="text-[9px] text-lm-muted">/100</span>
-                  </p>
-                  <div className="h-1 mt-1 rounded-full bg-black/40 shadow-[inset_0_1px_1px_rgba(0,0,0,0.5)] overflow-hidden">
-                    <div
-                      className={clsx(
-                        "lmdc-bar-tip h-full rounded-full",
-                        s.bias === "LONG"
-                          ? "bg-emerald-400/70 text-emerald-400"
-                          : s.bias === "SHORT"
-                            ? "bg-rose-400/70 text-rose-400"
-                            : "bg-lm-cyan/70 text-cyan-400",
-                      )}
-                      style={{ width: `${s.confidence}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
+            <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2">
+              {mockSetups.map((s) => (
+                <SetupCard key={s.symbol} setup={s} />
+              ))}
             </div>
           </Panel>
         </section>
