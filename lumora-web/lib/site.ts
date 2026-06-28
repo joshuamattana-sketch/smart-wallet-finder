@@ -3,7 +3,7 @@
 // drift. Override the origin per-environment with NEXT_PUBLIC_SITE_URL.
 
 export const SITE_URL = (
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumora.app"
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumora-app.app"
 ).replace(/\/$/, "");
 
 export const SITE_NAME = "Lumora";

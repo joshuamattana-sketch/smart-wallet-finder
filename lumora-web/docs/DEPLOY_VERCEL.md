@@ -11,7 +11,7 @@ Sicherheit steht. Reihenfolge genau so abarbeiten. Du brauchst keinen Code anzuf
 2. Links unten **Verwaltung** (Zahnrad) → **Property erstellen**.
    - Name: `Lumora`. Zeitzone Deutschland, Währung Euro. Weiter bis fertig.
 3. Es fragt nach einer **Datenerfassung / Plattform**: wähle **Web**.
-   - Website-URL: deine spätere Domain (z. B. `lumora.app`). Stream-Name: `Lumora Web`.
+   - Website-URL: deine Domain `lumora-app.app`. Stream-Name: `Lumora Web`.
 4. Danach zeigt es dir eine **Mess-ID** in der Form `G-XXXXXXXXXX`.
    **Diese ID kopieren** und kurz parken (brauchst du in Teil C).
 
@@ -47,7 +47,7 @@ Nach Änderungen einmal **Redeploy** drücken, sonst greifen sie nicht.
 | Name | Wert | Pflicht? |
 |------|------|----------|
 | `NEXT_PUBLIC_GA_ID` | deine `G-XXXXXXXXXX` aus Teil A | ja (sonst kein Zählen) |
-| `NEXT_PUBLIC_SITE_URL` | deine finale URL, z. B. `https://lumora.app` | ja |
+| `NEXT_PUBLIC_SITE_URL` | `https://lumora-app.app` | ja |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase Projekt-URL (`https://xxx.supabase.co`) | ja |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase **publishable**-Key (`sb_publishable_…`) | ja |
 | `SUPABASE_URL` | gleiche Supabase-URL wie oben | ja |
@@ -93,10 +93,10 @@ Bescheid, wenn du die Daten hast, dann trage ich sie für dich ein.
 Häng an deinen Link sogenannte UTM-Parameter. Dann siehst du in GA sauber, wie
 viele über TikTok kamen, statt nur "direct".
 
-Statt nur `https://lumora.app` nimm in der TikTok-Bio / Pinned-Comment:
+Statt nur `https://lumora-app.app` nimm in der TikTok-Bio / Pinned-Comment:
 
 ```
-https://lumora.app/?utm_source=tiktok&utm_medium=social&utm_campaign=launch1
+https://lumora-app.app/?utm_source=tiktok&utm_medium=social&utm_campaign=launch1
 ```
 
 - `utm_source=tiktok` → erscheint in GA als Quelle "tiktok"
