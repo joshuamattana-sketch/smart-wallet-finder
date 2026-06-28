@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
+import { notifyNewSignup } from "@/lib/email";
 
 // LM73A — waitlist email capture. Runs on the server; inserts into the
 // insert-only `waitlist` table (RLS). Never reads the list back.
@@ -52,10 +53,14 @@ export async function joinWaitlist(formData: FormData): Promise<WaitlistResult> 
     .insert({ email, source: "landing" });
 
   if (error) {
-    // 23505 = unique violation → already signed up; treat as success.
+    // 23505 = unique violation → already signed up; treat as success (no
+    // duplicate notification).
     if (error.code === "23505") return { ok: true };
     return { ok: false, error: "Something went wrong. Please try again." };
   }
+
+  // Fresh signup → notify the owner. Best-effort; never fail the signup over it.
+  await notifyNewSignup(email).catch(() => {});
 
   return { ok: true };
 }

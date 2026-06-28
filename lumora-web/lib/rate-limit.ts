@@ -24,7 +24,11 @@ export function isRateLimited(key: string, max: number, windowMs: number): boole
   return false;
 }
 
-/** First hop of x-forwarded-for, or "unknown" behind a proxy that strips it. */
-export function clientIp(headers: Headers): string {
+/**
+ * First hop of x-forwarded-for, or "unknown" behind a proxy that strips it.
+ * Accepts both a Request's `Headers` and next/headers' `ReadonlyHeaders` (only
+ * `get` is needed).
+ */
+export function clientIp(headers: { get(name: string): string | null }): string {
   return (headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
 }
