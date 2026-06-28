@@ -25,33 +25,37 @@ export const DISCORD_URL =
 //
 // ⚠️ BEFORE RELEASE: fill every "[ … ]" value below, then set
 //    LEGAL_DETAILS_FILLED = true. That removes the warning banners.
-export const LEGAL_DETAILS_FILLED = false;
+export const LEGAL_DETAILS_FILLED = true;
 
 export const OPERATOR = {
-  // Required for the Impressum (DDG §5). A private individual running the beta
-  // needs at minimum: name, postal address, email.
-  name: "[ OPERATOR NAME: full legal name or company ]",
-  // If a company (GmbH/UG): also fill register + represented-by below.
-  representedBy: "", // e.g. "Managing Director: …" (leave "" for a sole operator)
-  street: "[ STREET & NUMBER ]",
-  city: "[ POSTAL CODE & CITY ]",
-  country: "Germany",
-  email: "[ contact@yourdomain ]",
+  // Swiss private operator (UWG Art. 3 Abs. 1 lit. s). Minimum: full name,
+  // postal address, contact email. Street is optional for a free, non-commerce
+  // beta — add it once paid plans launch.
+  name: "Joshua Mattana",
+  // Company only (GmbH/AG/UG): managing director / authorised representative.
+  representedBy: "", // leave "" for a sole private operator
+  street: "", // optional — add street & number once Lumora sells anything
+  city: "8200 Schaffhausen",
+  country: "Switzerland",
+  email: "legal.lumora@gmail.com",
   phone: "", // optional
-  registerCourt: "", // e.g. "Amtsgericht …, HRB ……" (company only)
-  vatId: "", // e.g. "DE………" (if VAT-registered)
+  registerCourt: "", // company only (Handelsregister entry)
+  vatId: "", // company only (CHE-… MWST, if VAT-registered)
 } as const;
 
 // Hosting / data processors named in the Datenschutzerklärung. Update if the
-// stack changes. Supabase is the email/waitlist + invite-code processor; the
-// host is whoever serves the Next.js app (Vercel by default — change if not).
+// stack changes. Verify each address against the provider's current DPA before
+// relying on it. Analytics only runs after the visitor consents (LM78A).
 export const PROCESSORS = {
-  host: "[ HOSTING PROVIDER: e.g. Vercel Inc., 340 S Lemon Ave #4133, Walnut, CA 91789, USA ]",
-  database: "Supabase, Inc., 970 Toa Payoh North #07-04, Singapore 318992 (database, waitlist + invite codes)",
+  host: "Vercel Inc., 340 S Lemon Ave #4133, Walnut, CA 91789, USA (hosting, server logs)",
+  database:
+    "Supabase, Inc., 970 Toa Payoh North #07-04, Singapore 318992 (database, waitlist + invite codes)",
+  analytics:
+    "Google Ireland Ltd., Gordon House, Barrow Street, Dublin 4, Ireland (Google Analytics 4 — only after consent)",
 } as const;
 
 // Bump when legal copy materially changes.
-export const LEGAL_LAST_UPDATED = "25 June 2026";
+export const LEGAL_LAST_UPDATED = "28 June 2026";
 
 // Footer legal links — one place so landing + app + legal pages stay in sync.
 export const LEGAL_LINKS: ReadonlyArray<{ href: string; label: string }> = [

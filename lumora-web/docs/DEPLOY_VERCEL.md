@@ -9,7 +9,7 @@ Sicherheit steht. Reihenfolge genau so abarbeiten. Du brauchst keinen Code anzuf
 
 1. Geh auf https://analytics.google.com und melde dich mit deinem Google-Konto an.
 2. Links unten **Verwaltung** (Zahnrad) → **Property erstellen**.
-   - Name: `Lumora`. Zeitzone Deutschland, Währung Euro. Weiter bis fertig.
+   - Name: `Lumora`. Zeitzone Zürich (Schweiz), Währung nach Wahl. Weiter bis fertig.
 3. Es fragt nach einer **Datenerfassung / Plattform**: wähle **Web**.
    - Website-URL: deine Domain `lumora-app.app`. Stream-Name: `Lumora Web`.
 4. Danach zeigt es dir eine **Mess-ID** in der Form `G-XXXXXXXXXX`.
@@ -69,22 +69,26 @@ aneinanderhängen. Diesen Wert geheim halten. Ändern = alle Beta-Logins fliegen
 
 ---
 
-## Teil D — PFLICHT vor echtem Traffic (rechtlich)
+## Teil D — Rechtliches (Impressum + Datenschutz) — ERLEDIGT
 
-In Deutschland ist ein **Impressum gesetzlich Pflicht**, sobald die Seite öffentlich
-ist. Aktuell stehen dort Platzhalter. Mit echten Besuchern ohne echtes Impressum =
-Abmahnrisiko.
+Betreiber sitzt in der **Schweiz** (Privatperson). Impressum + Datenschutz sind
+bereits ausgefüllt und auf Schweizer Recht umgestellt:
 
-1. Datei `lumora-web/lib/site.ts` öffnen.
-2. Im Block `OPERATOR` deine echten Daten eintragen: Name, Straße, PLZ/Stadt, E-Mail.
-   (Privatperson reicht: Name + Adresse + E-Mail.)
-3. Bei `PROCESSORS.host` den Hoster eintragen (Vercel-Adresse steht als Beispiel drin).
-4. Ganz oben `LEGAL_DETAILS_FILLED = false` auf **`true`** setzen.
-   Das entfernt die roten "vor Release ausfüllen"-Warnbanner.
-5. Speichern → Vercel deployt automatisch neu (oder manuell **Redeploy**).
+- **Impressum** (`/impressum`): Schweizer UWG Art. 3 Abs. 1 lit. s — Joshua Mattana,
+  8200 Schaffhausen, `legal.lumora@gmail.com`. (Kein deutsches DDG, keine EU-OS-Plattform.)
+- **Datenschutz** (`/datenschutz`): Schweizer revDSG primär, DSGVO zusätzlich für
+  EU-Besucher. Bearbeiter: Vercel (Hosting), Supabase (DB), Google Analytics (nur
+  nach Zustimmung). Aufsicht: EDÖB Bern.
+- In `lumora-web/lib/site.ts` ist `LEGAL_DETAILS_FILLED = true` → keine Warnbanner mehr.
 
-Das ist der einzige Punkt, den nur du machen kannst (deine echten Daten). Sag
-Bescheid, wenn du die Daten hast, dann trage ich sie für dich ein.
+**Noch offen (vor echtem Traffic prüfen):**
+
+1. **Provider-Adressen verifizieren** — die Adressen von Vercel / Supabase / Google
+   in `PROCESSORS` (site.ts) gegen deren aktuelle DPA/Datenschutz-Seiten gegenchecken.
+2. **Strasse nachtragen**, sobald Lumora bezahlte Pläne anbietet (E-Commerce →
+   vollständige Adresse Pflicht). Feld `OPERATOR.street` in site.ts, aktuell leer.
+3. **Anwaltlicher Check** empfohlen — die Texte sind Templates, kein Rechtsrat,
+   besonders der CH+EU-Doppelansatz.
 
 ---
 

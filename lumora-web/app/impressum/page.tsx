@@ -7,21 +7,26 @@ export const metadata: Metadata = {
   description: "Legal notice and operator information for Lumora.",
 };
 
-// LM77A — Impressum / legal notice (DDG §5). Values come from OPERATOR in
-// lib/site.ts. Until filled they render as visible placeholders and the shell
-// shows a warning banner.
+// LM77A — Impressum / legal notice. Swiss operator → UWG Art. 3 Abs. 1 lit. s
+// (not the German DDG §5). Values come from OPERATOR in lib/site.ts. Until
+// filled they render as visible placeholders and the shell shows a warning
+// banner.
 export default function ImpressumPage() {
   return (
     <LegalShell
       title="Impressum"
-      subtitle="Legal notice / Angaben gemäß § 5 DDG (Digitale-Dienste-Gesetz)."
+      subtitle="Legal notice / Angaben gemäss Art. 3 Abs. 1 lit. s UWG."
     >
-      <h2>Operator (Diensteanbieter)</h2>
+      <h2>Operator (Betreiber)</h2>
       <address>
         {OPERATOR.name}
         {"\n"}
-        {OPERATOR.street}
-        {"\n"}
+        {OPERATOR.street && (
+          <>
+            {OPERATOR.street}
+            {"\n"}
+          </>
+        )}
         {OPERATOR.city}
         {"\n"}
         {OPERATOR.country}
@@ -63,16 +68,6 @@ export default function ImpressumPage() {
 
       <h2>Responsible for content (Inhaltlich verantwortlich)</h2>
       <p>{OPERATOR.name}, address as above.</p>
-
-      <h2>EU dispute resolution</h2>
-      <p>
-        The European Commission provides a platform for online dispute resolution (OS):{" "}
-        <a href="https://ec.europa.eu/consumers/odr/" target="_blank" rel="noopener noreferrer">
-          https://ec.europa.eu/consumers/odr/
-        </a>
-        . We are neither obliged nor willing to participate in dispute resolution proceedings
-        before a consumer arbitration board.
-      </p>
 
       <h2>Disclaimer</h2>
       <p>
