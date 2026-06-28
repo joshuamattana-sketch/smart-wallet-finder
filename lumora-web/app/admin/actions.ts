@@ -1,5 +1,6 @@
 "use server";
 
+import crypto from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import {
@@ -62,18 +63,36 @@ export async function sendInvite(email: string): Promise<InviteResult> {
   const clean = email.trim().toLowerCase();
   if (!clean) return { ok: false, error: "No email." };
 
-  // Mint a single-use code via the SECURITY DEFINER function (setup SQL).
-  const { data: code, error: rpcErr } = await sb.rpc("create_beta_invite", { p_email: clean });
-  if (rpcErr || !code) {
-    return { ok: false, error: rpcErr?.message ?? "Code generation failed — run the setup SQL." };
+  // Mint a single-use code directly in invite_codes via the service role (no DB
+  // function needed). A fresh random code makes collisions astronomically
+  // unlikely; retry once on the off chance of a unique-violation (23505).
+  let codeStr = "";
+  let insErr: { code?: string; message: string } | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    codeStr = "LMR-" + crypto.randomBytes(5).toString("hex").toUpperCase();
+    const { error } = await sb
+      .from("invite_codes")
+      .insert({ code: codeStr, max_uses: 1, used_count: 0, active: true });
+    if (!error) {
+      insErr = null;
+      break;
+    }
+    insErr = error;
+    if (error.code !== "23505") break; // not a collision → real error, stop
   }
-  const codeStr = String(code);
+  if (insErr) {
+    return { ok: false, error: `Code generation failed: ${insErr.message}` };
+  }
 
-  // Stamp the waitlist row so the UI shows it as invited (needs the new columns).
-  const { error: updErr } = await sb
+  // Best-effort: stamp the waitlist row so the UI shows "invited" across
+  // reloads. Optional polish — only persists once the waitlist has the
+  // invited_at/invite_code columns (supabase/beta_invites.sql). Failure here
+  // never affects the actual invite, so it is intentionally swallowed.
+  await sb
     .from("waitlist")
     .update({ invited_at: new Date().toISOString(), invite_code: codeStr })
-    .eq("email", clean);
+    .eq("email", clean)
+    .then(undefined, () => {});
 
   // Deliver the code. If email isn't configured or fails, the code is still
   // returned so the owner can send it by hand — nothing is lost.
@@ -91,10 +110,5 @@ export async function sendInvite(email: string): Promise<InviteResult> {
   }
 
   revalidatePath("/admin");
-  return {
-    ok: true,
-    code: codeStr,
-    emailed,
-    error: sendError ?? (updErr ? `Code sent, but waitlist update failed: ${updErr.message}` : undefined),
-  };
+  return { ok: true, code: codeStr, emailed, error: sendError };
 }
