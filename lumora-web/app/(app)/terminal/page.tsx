@@ -8,6 +8,7 @@ import { MetricStrip } from "@/components/ui/MetricStrip";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { IntelligenceChartPanel } from "@/components/charts/IntelligenceChartPanel";
 import { mockOrderbook } from "@/lib/mock-data";
+import { fmtNum, fmtUsd } from "@/lib/format";
 import { clsx } from "clsx";
 import { ChevronDown, Info, AlertCircle } from "lucide-react";
 import type { HeatmapApiPayload } from "@/lib/heatmap-types";
@@ -173,31 +174,31 @@ export default function TerminalPage() {
           {
             label: "Last",
             value: livePrice !== null
-              ? `$${livePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+              ? fmtUsd(livePrice, 2)
               : "—",
             valueClassName: "text-2xl text-lm-cyan",
           },
           {
             label: "Best Bid",
-            value: lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—",
+            value: lastPoint?.bestBid != null ? fmtNum(lastPoint.bestBid) : "—",
             valueClassName: "text-lg text-emerald-400",
           },
           {
             label: "Best Ask",
-            value: lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—",
+            value: lastPoint?.bestAsk != null ? fmtNum(lastPoint.bestAsk) : "—",
             valueClassName: "text-lg text-red-400",
           },
           {
             label: "Spread",
             value: spread != null
-              ? spread.toLocaleString(undefined, { maximumFractionDigits: 2 })
+              ? fmtNum(spread, 2)
               : "—",
           },
           {
             label: "Walls",
             value: payload ? payload.meta.wallCount : "—",
             sub: strongestWall
-              ? `top $${strongestWall.price_bucket.toLocaleString()}`
+              ? `top ${fmtUsd(strongestWall.price_bucket)}`
               : undefined,
           },
           {
@@ -267,19 +268,19 @@ export default function TerminalPage() {
                 <div className="px-3 py-2">
                   <p className="text-[10px] text-lm-muted uppercase tracking-wide">Best Bid</p>
                   <p className="lm-price text-[13px] text-emerald-400 mt-0.5 leading-none">
-                    {lastPoint?.bestBid != null ? lastPoint.bestBid.toLocaleString() : "—"}
+                    {lastPoint?.bestBid != null ? fmtNum(lastPoint.bestBid) : "—"}
                   </p>
                 </div>
                 <div className="px-3 py-2">
                   <p className="text-[10px] text-lm-muted uppercase tracking-wide">Spread</p>
                   <p className="lm-price text-[13px] text-lm-text mt-0.5 leading-none">
-                    {spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
+                    {spread != null ? fmtNum(spread, 2) : "—"}
                   </p>
                 </div>
                 <div className="px-3 py-2">
                   <p className="text-[10px] text-lm-muted uppercase tracking-wide">Best Ask</p>
                   <p className="lm-price text-[13px] text-red-400 mt-0.5 leading-none">
-                    {lastPoint?.bestAsk != null ? lastPoint.bestAsk.toLocaleString() : "—"}
+                    {lastPoint?.bestAsk != null ? fmtNum(lastPoint.bestAsk) : "—"}
                   </p>
                 </div>
               </div>
@@ -297,7 +298,7 @@ export default function TerminalPage() {
                 <div className="lm-rail-bid relative pl-2.5">
                   <p className="text-[10px] text-lm-muted uppercase tracking-wide">Strongest Bid</p>
                   <p className="num text-[12px] text-lm-text mt-0.5">
-                    {bidWall ? `$${bidWall.price_bucket.toLocaleString()}` : "—"}
+                    {bidWall ? fmtUsd(bidWall.price_bucket) : "—"}
                   </p>
                   <p className="num text-[10px] text-lm-muted">
                     {bidWall ? `$${(bidWall.total_usd / 1_000_000).toFixed(2)}M` : ""}
@@ -306,7 +307,7 @@ export default function TerminalPage() {
                 <div className="lm-rail-ask relative pl-2.5">
                   <p className="text-[10px] text-lm-muted uppercase tracking-wide">Strongest Ask</p>
                   <p className="num text-[12px] text-lm-text mt-0.5">
-                    {askWall ? `$${askWall.price_bucket.toLocaleString()}` : "—"}
+                    {askWall ? fmtUsd(askWall.price_bucket) : "—"}
                   </p>
                   <p className="num text-[10px] text-lm-muted">
                     {askWall ? `$${(askWall.total_usd / 1_000_000).toFixed(2)}M` : ""}
@@ -358,7 +359,7 @@ export default function TerminalPage() {
                       >
                         {w.side.toUpperCase()}
                       </StatusBadge>
-                      <span className="num text-[12px] text-lm-text">${w.price_bucket.toLocaleString()}</span>
+                      <span className="num text-[12px] text-lm-text">{fmtUsd(w.price_bucket)}</span>
                       <span className="num text-[11px] text-lm-text-dim">
                         ${(w.total_usd / 1_000_000).toFixed(2)}M
                       </span>

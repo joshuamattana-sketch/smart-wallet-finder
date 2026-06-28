@@ -20,6 +20,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { WatchlistPriorityPicker } from "@/components/ui/WatchlistPriorityPicker";
 import { SetupCard } from "@/components/dashboard/SetupCard";
+import { fmtUsd } from "@/lib/format";
 import { useWatchlist } from "@/lib/watchlist";
 import { clsx } from "clsx";
 import { mockSetups, mockWhaleAlerts } from "@/lib/mock-data";
@@ -405,9 +406,7 @@ export default function DashboardPage() {
                 className="lmdc-breathe pointer-events-none absolute -inset-2 rounded-full bg-cyan-400/[0.07] blur-md"
               />
               <span className="lm-price relative text-[16px] leading-none text-lm-cyan drop-shadow-[0_0_8px_rgba(34,211,238,0.35)]">
-                {activePrice !== null
-                  ? `$${activePrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                  : "—"}
+                {activePrice !== null ? fmtUsd(activePrice) : "—"}
               </span>
             </span>
             <StatusBadge variant={activeStatus.variant} size="sm" dot={activeStatus.variant === "live"}>
@@ -459,9 +458,7 @@ export default function DashboardPage() {
                             {signal.bias}
                           </span>
                           <span className="lm-price text-[14px] text-lm-text ml-auto">
-                            {price !== null
-                              ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                              : "—"}
+                            {price !== null ? fmtUsd(price) : "—"}
                           </span>
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">

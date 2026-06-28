@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { HeatmapApiPayload, HeatmapCell } from "@/lib/heatmap-types";
 import { intensityToColor, wallColor, profileColor } from "@/lib/heatmap-colors";
+import { fmtNum } from "@/lib/format";
 
 interface HeatmapCanvasProps {
   payload: HeatmapApiPayload;
@@ -472,7 +473,7 @@ export function HeatmapCanvas({
           ctx.font = "bold 10px sans-serif";
           ctx.textAlign = "right";
           ctx.fillText(
-            last.price.toLocaleString(undefined, { maximumFractionDigits: 1 }),
+            fmtNum(last.price, 1),
             PAD_LEFT + plotW - 6,
             Math.max(PAD_TOP + 9, last.y - 5),
           );
@@ -503,7 +504,7 @@ export function HeatmapCanvas({
         ctx.font = "bold 10px sans-serif";
         ctx.textAlign = "right";
         ctx.fillText(
-          currentPrice.toLocaleString(),
+          fmtNum(currentPrice),
           PAD_LEFT + plotW - 6,
           y - 4,
         );

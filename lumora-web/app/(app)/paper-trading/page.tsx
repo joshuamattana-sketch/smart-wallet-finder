@@ -3,6 +3,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PageShell } from "@/components/ui/PageShell";
 import { MetricStrip } from "@/components/ui/MetricStrip";
 import { mockPaperTrades, mockJournal } from "@/lib/mock-data";
+import { fmtNum, fmtUsd } from "@/lib/format";
 import { clsx } from "clsx";
 import { TrendingUp, TrendingDown, BookOpen } from "lucide-react";
 
@@ -14,8 +15,8 @@ export default function PaperTradingPage() {
   const winCount = mockJournal.filter((j) => j.pnl > 0).length;
   const winRate = Math.round((winCount / mockJournal.length) * 100);
 
-  const fmtUsd = (n: number) =>
-    `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString()}`;
+  const fmtSignedUsd = (n: number) =>
+    `${n < 0 ? "-" : ""}${fmtUsd(Math.abs(n))}`;
 
   return (
     <PageShell
@@ -34,12 +35,12 @@ export default function PaperTradingPage() {
         metrics={[
           {
             label: "Mock Equity",
-            value: `$${equity.toLocaleString()}`,
-            sub: `base $${MOCK_BALANCE.toLocaleString()}`,
+            value: fmtUsd(equity),
+            sub: `base ${fmtUsd(MOCK_BALANCE)}`,
           },
           {
             label: "Open P&L",
-            value: `${totalPnl >= 0 ? "+" : ""}${fmtUsd(totalPnl)}`,
+            value: `${totalPnl >= 0 ? "+" : ""}${fmtSignedUsd(totalPnl)}`,
             valueClassName: clsx(
               "text-2xl",
               totalPnl >= 0 ? "text-emerald-400" : "text-red-400",
@@ -148,10 +149,10 @@ export default function PaperTradingPage() {
                           </StatusBadge>
                         </td>
                         <td className="px-2 py-2 num text-right text-lm-muted">
-                          {t.entry.toLocaleString()}
+                          {fmtNum(t.entry)}
                         </td>
                         <td className="px-2 py-2 num text-right text-lm-text">
-                          {t.current.toLocaleString()}
+                          {fmtNum(t.current)}
                         </td>
                         <td className="px-2 py-2 num text-right text-lm-muted">{t.size}</td>
                         <td className={clsx(

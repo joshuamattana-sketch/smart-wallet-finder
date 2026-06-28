@@ -36,14 +36,11 @@ export const config = {
     "/whale-alerts/:path*",
     "/paper-trading",
     "/paper-trading/:path*",
-    "/gold-bot",
-    "/gold-bot/:path*",
     // ── Gated app data APIs (these are only ever called by the gated pages;
     //    no public page touches them, so the cookie requirement is safe) ───
     "/api/heatmap",
     "/api/heatmap/:path*",
     "/api/whale-alerts",
     "/api/whale-alerts/:path*",
-    "/api/gold-bot/:path*",
   ],
 };

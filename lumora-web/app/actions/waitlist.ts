@@ -48,19 +48,31 @@ export async function joinWaitlist(formData: FormData): Promise<WaitlistResult> 
   }
 
   const supabase = createClient(url, key, { auth: { persistSession: false } });
-  const { error } = await supabase
-    .from("waitlist")
-    .insert({ email, source: "landing" });
 
-  if (error) {
-    // 23505 = unique violation → already signed up; treat as success (no
-    // duplicate notification).
-    if (error.code === "23505") return { ok: true };
-    return { ok: false, error: "Something went wrong. Please try again." };
+  // The waitlist shares the DB with everything else, so a transient jam (a
+  // PostgREST 503 / brief connection hiccup) can fail an otherwise valid
+  // signup. Retry a few times with a short backoff so a momentary blip doesn't
+  // cost a real lead. A duplicate (23505) is success; only a sustained outage
+  // reaches the honest error below.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error } = await supabase
+      .from("waitlist")
+      .insert({ email, source: "landing" });
+
+    if (!error) {
+      // Fresh signup → notify the owner. Best-effort; never fail over it.
+      await notifyNewSignup(email).catch(() => {});
+      return { ok: true };
+    }
+    if (error.code === "23505") return { ok: true }; // already on the list
+
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+    }
   }
 
-  // Fresh signup → notify the owner. Best-effort; never fail the signup over it.
-  await notifyNewSignup(email).catch(() => {});
-
-  return { ok: true };
+  return {
+    ok: false,
+    error: "We couldn't reach our servers just now. Please try again in a moment.",
+  };
 }

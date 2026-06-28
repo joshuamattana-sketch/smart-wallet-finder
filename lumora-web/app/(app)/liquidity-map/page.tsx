@@ -13,6 +13,7 @@ import type { HeatmapApiPayload, HeatmapDataStatus } from "@/lib/heatmap-types";
 import { heatmapResolvedStatus, heatmapCurrentPrice } from "@/lib/heatmap-types";
 import { intensityToColor } from "@/lib/heatmap-colors";
 import { getSupabaseBrowser } from "@/lib/supabase-browser";
+import { fmtUsd } from "@/lib/format";
 import { HeatmapCanvas } from "@/components/liquidity/HeatmapCanvas";
 import {
   MARKET_SOURCES,
@@ -311,10 +312,10 @@ export default function LiquidityMapPage() {
   const topAskWall    = payload?.walls.find(w => w.side === "ask");
 
   const bidWallLabel  = topBidWall
-    ? `$${topBidWall.price_bucket.toLocaleString()}`
+    ? fmtUsd(topBidWall.price_bucket)
     : "$67,350";
   const askWallLabel  = topAskWall
-    ? `$${topAskWall.price_bucket.toLocaleString()}`
+    ? fmtUsd(topAskWall.price_bucket)
     : "$68,000";
   const bidWallSub    = topBidWall
     ? `${Math.round(topBidWall.intensity)}% intensity · ${topBidWall.label}`
@@ -323,7 +324,7 @@ export default function LiquidityMapPage() {
     ? `${Math.round(topAskWall.intensity)}% intensity · ${topAskWall.label}`
     : "95% intensity · major wall";
   const priceRangeLabel = summaryData
-    ? `$${summaryData.price_min.toLocaleString()}–$${summaryData.price_max.toLocaleString()}`
+    ? `${fmtUsd(summaryData.price_min)}–${fmtUsd(summaryData.price_max)}`
     : "$65,800";
   const frameCountSub   = summaryData
     ? `${summaryData.frame_count} frames · step $${payload?.priceStep ?? 10}`
@@ -559,7 +560,7 @@ export default function LiquidityMapPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                         <p className="num text-sm font-semibold text-lm-text">
-                          ${w.price_bucket.toLocaleString()}
+                          {fmtUsd(w.price_bucket)}
                         </p>
                         <StatusBadge variant={isAsk ? "ask" : "bid"} size="sm">
                           {badge}
@@ -588,7 +589,7 @@ export default function LiquidityMapPage() {
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                      <p className="num text-sm font-semibold text-lm-text">${z.price.toLocaleString()}</p>
+                      <p className="num text-sm font-semibold text-lm-text">{fmtUsd(z.price)}</p>
                       <StatusBadge variant={z.side === "ASK" ? "ask" : "bid"} size="sm">
                         {z.badge}
                       </StatusBadge>
