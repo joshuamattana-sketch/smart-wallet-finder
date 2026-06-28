@@ -16,8 +16,15 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-// process.cwd() at runtime is the lumora-web directory; the data lives one up.
-const DATA_ROOT = path.resolve(process.cwd(), "..", "data", "gold_bot");
+// Candidate roots for the track-record data, tried in order:
+//   1. App-local snapshot committed inside lumora-web — the only copy that ships
+//      with the deployed build (the repo-root data/ is gitignored and lives
+//      outside the app bundle, so it is absent in production).
+//   2. Repo-root data/ — present in local dev where the Python logger writes.
+const DATA_ROOTS = [
+  path.resolve(process.cwd(), "data", "gold_bot"),
+  path.resolve(process.cwd(), "..", "data", "gold_bot"),
+];
 
 export interface PresetRecord {
   name: string;
@@ -57,13 +64,16 @@ const asStr = (v: unknown): string | null =>
   typeof v === "string" && v ? v : null;
 
 async function readJsonFile(rel: string): Promise<Dict | null> {
-  try {
-    const raw = await fs.readFile(path.join(DATA_ROOT, rel), "utf-8");
-    const obj = JSON.parse(raw);
-    return obj && typeof obj === "object" && !Array.isArray(obj) ? (obj as Dict) : null;
-  } catch {
-    return null; // ENOENT / parse error / anything → absent
+  for (const root of DATA_ROOTS) {
+    try {
+      const raw = await fs.readFile(path.join(root, rel), "utf-8");
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj as Dict;
+    } catch {
+      // ENOENT / parse error → try the next candidate root
+    }
   }
+  return null; // absent in every candidate root
 }
 
 // Stable display order: low risk → high edge. Featured pick = swing_guarded.
