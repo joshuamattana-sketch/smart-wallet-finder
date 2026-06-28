@@ -1,10 +1,13 @@
 import { ImageResponse } from "next/og";
 import { SITE_NAME } from "@/lib/site";
 
-// LM81B — generated social card. Deliberately uses NO remote font fetch (the
-// previous next/og attempt crashed on a flaky Google-font request); the
-// built-in font keeps it reliable on edge. Dark terminal look: graph-paper
-// grid, violet/cyan glow, the wordmark, and the one-line product promise.
+// LM81B — generated social card. Uses NO remote font fetch (the prior next/og
+// attempt crashed on a flaky Google-font request); the built-in font keeps it
+// reliable on edge. CSS is kept to what Satori (the @vercel/og renderer)
+// actually supports: solid backgroundColor + a single gradient via
+// backgroundImage, gradients written angle-first with explicit stops. (An
+// earlier graph-paper grid via a stop-less linear-gradient 500'd at render —
+// Satori can't parse it.)
 export const runtime = "edge";
 export const alt = "Lumora — liquidity intelligence terminal for crypto";
 export const size = { width: 1200, height: 630 };
@@ -21,42 +24,36 @@ export default function OpengraphImage() {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: 72,
-          background:
-            "radial-gradient(120% 120% at 15% 0%, #14132b 0%, #0a0b12 55%, #07070d 100%)",
+          backgroundColor: "#0a0b14",
           backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
+            "radial-gradient(circle at 18% 0%, #17142f 0%, #0a0b14 55%, #06060c 100%)",
           color: "#e8e8f0",
           fontFamily: "sans-serif",
         }}
       >
         {/* Top: brand row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <div style={{ display: "flex", alignItems: "center" }}>
           <div
             style={{
               display: "flex",
               width: 46,
               height: 46,
               borderRadius: 12,
-              background: "linear-gradient(150deg, #8b5cf6 0%, #6366f1 60%, #22d3ee 100%)",
+              marginRight: 18,
+              backgroundImage: "linear-gradient(135deg, #8b5cf6 0%, #22d3ee 100%)",
               boxShadow: "0 0 40px -6px rgba(139,92,246,0.8)",
             }}
           />
-          <div
-            style={{
-              fontSize: 30,
-              letterSpacing: 8,
-              fontWeight: 700,
-              color: "#ffffff",
-            }}
-          >
+          <div style={{ fontSize: 30, letterSpacing: 8, fontWeight: 700, color: "#ffffff" }}>
             {SITE_NAME.toUpperCase()}
           </div>
-          <div style={{ fontSize: 18, letterSpacing: 6, color: "#6b7299" }}>TERMINAL</div>
+          <div style={{ fontSize: 18, letterSpacing: 6, color: "#6b7299", marginLeft: 16 }}>
+            TERMINAL
+          </div>
         </div>
 
         {/* Middle: the promise */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           <div
             style={{
               fontSize: 76,
@@ -64,12 +61,12 @@ export default function OpengraphImage() {
               lineHeight: 1.05,
               letterSpacing: -1.5,
               color: "#ffffff",
-              maxWidth: 980,
+              maxWidth: 1000,
             }}
           >
             See the liquidity behind the price.
           </div>
-          <div style={{ fontSize: 30, color: "#9aa0c2", maxWidth: 900, lineHeight: 1.3 }}>
+          <div style={{ fontSize: 30, color: "#9aa0c2", maxWidth: 900, marginTop: 20 }}>
             Orderbook depth, whale flow, funding and sweep-risk zones — distilled into one
             market read.
           </div>
@@ -82,7 +79,6 @@ export default function OpengraphImage() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 12,
               fontSize: 20,
               letterSpacing: 4,
               color: "#a5f3fc",
@@ -93,7 +89,8 @@ export default function OpengraphImage() {
                 width: 12,
                 height: 12,
                 borderRadius: 999,
-                background: "#22d3ee",
+                marginRight: 12,
+                backgroundColor: "#22d3ee",
                 boxShadow: "0 0 14px 2px rgba(34,211,238,0.7)",
               }}
             />
