@@ -6,7 +6,9 @@
 -- invited across page reloads (the "invited · CODE" badge). Without them the
 -- flow still works; the badge just won't persist.
 --
--- Run once in Supabase → SQL Editor if you want the persistent badge.
+-- Already applied to the live project on 2026-06-28 (migration
+-- "waitlist_invite_tracking"). Kept here as the source of record; re-running is
+-- safe (idempotent).
 
 alter table public.waitlist
   add column if not exists invited_at timestamptz,

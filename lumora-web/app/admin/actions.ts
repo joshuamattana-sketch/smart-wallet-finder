@@ -70,9 +70,11 @@ export async function sendInvite(email: string): Promise<InviteResult> {
   let insErr: { code?: string; message: string } | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     codeStr = "LMR-" + crypto.randomBytes(5).toString("hex").toUpperCase();
+    // invite_codes columns: code, label, active, max_uses, uses, created_at.
+    // label records who the personal code was issued to (visible in the table).
     const { error } = await sb
       .from("invite_codes")
-      .insert({ code: codeStr, max_uses: 1, used_count: 0, active: true });
+      .insert({ code: codeStr, label: clean, max_uses: 1, uses: 0, active: true });
     if (!error) {
       insErr = null;
       break;
